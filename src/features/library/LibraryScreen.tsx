@@ -54,7 +54,7 @@ export default function LibraryScreen() {
   const [manualOrderSnapshot, setManualOrderSnapshot] = useState<MockBook[] | null>(null);
   const [manualOrderingMode, setManualOrderingMode] = useState(false);
 
-  const gridItemWidth = Math.max(0, (width - tokens.spacing.screen * 2 - tokens.spacing.item) / 2);
+  const gridItemWidth = Math.max(0, (width - tokens.spacing.screen * 2 - tokens.spacing.grid) / 2);
   const selectedBookSet = useMemo(() => new Set(selectedBookIds), [selectedBookIds]);
   const isAllSelected = books.length > 0 && selectedBookIds.length === books.length;
 
@@ -250,7 +250,6 @@ export default function LibraryScreen() {
             {continueReadingBook ? <ContinueReading book={continueReadingBook} /> : null}
             <View style={styles.sectionHeader}>
               <Text selectable style={styles.sectionTitle}>全部图书</Text>
-              <Text selectable style={styles.sectionMetadata}>{filterLabels[filterMode]} · {sortLabels[sortMode]}</Text>
             </View>
             <View style={displayMode === 'grid' ? styles.grid : styles.list}>{visibleBooks.map(renderBook)}</View>
             {visibleBooks.length === 0 ? <Text selectable style={styles.noResults}>没有符合此筛选条件的图书</Text> : null}
@@ -343,7 +342,7 @@ function ContinueReading({ book }: { book: MockBook }) {
       <Pressable accessibilityLabel={`继续阅读，${book.title}`} accessibilityRole="button" style={styles.continueSection}>
         <Text selectable style={styles.sectionTitle}>继续阅读</Text>
         <View style={styles.continueBook}>
-          <BookCover book={book} width={tokens.cover.continueWidth} />
+          <BookCover book={book} width={tokens.cover.continueWidth} presentation="continue" />
           <View style={styles.continueMetadata}>
             <Text selectable numberOfLines={2} style={styles.continueTitle}>{book.title}</Text>
             <Text selectable numberOfLines={1} style={styles.author}>{book.author}</Text>
@@ -360,7 +359,7 @@ function GridBook({ book, width, selected, manualOrdering }: { book: MockBook; w
   return (
     <View style={[styles.gridBook, { width }]}>
       <View style={styles.coverWrap}>
-        <BookCover book={book} width={width} />
+        <BookCover book={book} width={width} presentation="grid" />
         {selected ? <SelectionIndicator selected /> : null}
       </View>
       <Text selectable numberOfLines={2} style={styles.gridTitle}>{book.title}</Text>
@@ -374,7 +373,7 @@ function ListBook({ book, selected, manualOrdering }: { book: MockBook; selected
   return (
     <View style={styles.listBook}>
       <View style={styles.listCoverWrap}>
-        <BookCover book={book} width={tokens.cover.listWidth} />
+        <BookCover book={book} width={tokens.cover.listWidth} presentation="list" />
         {selected ? <SelectionIndicator selected /> : null}
       </View>
       <View style={styles.listMetadata}>
@@ -387,19 +386,34 @@ function ListBook({ book, selected, manualOrdering }: { book: MockBook; selected
   );
 }
 
-function BookCover({ book, width }: { book: MockBook; width: number }) {
+function BookCover({
+  book,
+  width,
+  presentation,
+}: {
+  book: MockBook;
+  width: number;
+  presentation: 'grid' | 'continue' | 'list';
+}) {
   const height = width / tokens.cover.gridAspectRatio;
   const isLightTone = book.coverTone === 'paper' || book.coverTone === 'mist';
+  const shadowStyle = presentation === 'grid'
+    ? styles.coverShadowGrid
+    : presentation === 'continue'
+      ? styles.coverShadowContinue
+      : styles.coverShadowList;
 
   return (
     <View
       accessibilityLabel={`${book.title}的${book.hasGeneratedCover ? '默认' : '模拟'}封面`}
-      style={[styles.cover, { width, height, backgroundColor: tokens.coverTones[book.coverTone] }]}
+      style={[styles.coverShadow, shadowStyle, { width, height, backgroundColor: tokens.coverTones[book.coverTone] }]}
     >
-      <View style={styles.coverAccent} />
-      <Text numberOfLines={3} style={[styles.coverTitle, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>{book.title}</Text>
-      <Text numberOfLines={1} style={[styles.coverAuthor, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>{book.author}</Text>
-      {book.hasGeneratedCover ? <Text style={[styles.coverGeneratedLabel, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>阅读</Text> : null}
+      <View style={[styles.cover, { backgroundColor: tokens.coverTones[book.coverTone] }]}>
+        <View style={styles.coverAccent} />
+        <Text numberOfLines={3} style={[styles.coverTitle, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>{book.title}</Text>
+        <Text numberOfLines={1} style={[styles.coverAuthor, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>{book.author}</Text>
+        {book.hasGeneratedCover ? <Text style={[styles.coverGeneratedLabel, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>阅读</Text> : null}
+      </View>
     </View>
   );
 }
@@ -437,32 +451,35 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: tokens.colors.background },
   scrollContent: { paddingHorizontal: tokens.spacing.screen, paddingBottom: tokens.spacing.section * 2, gap: tokens.spacing.section },
   continueSection: { gap: tokens.spacing.item },
-  continueBook: { flexDirection: 'row', gap: tokens.spacing.section, minHeight: 138 },
+  continueBook: { flexDirection: 'row', gap: tokens.spacing.medium, minHeight: 138 },
   continueMetadata: { flex: 1, justifyContent: 'center', gap: tokens.spacing.compact },
-  continueTitle: { color: tokens.colors.label, fontSize: tokens.typography.bookTitle, fontWeight: '600', lineHeight: 21 },
-  author: { color: tokens.colors.secondaryLabel, fontSize: tokens.typography.metadata, lineHeight: 20 },
-  progressText: { color: tokens.colors.secondaryLabel, fontSize: tokens.typography.metadata, fontVariant: ['tabular-nums'] },
-  progressTrack: { height: 2, borderRadius: 1, backgroundColor: tokens.colors.fill, overflow: 'hidden' },
-  progressFill: { height: 2, borderRadius: 1, backgroundColor: tokens.colors.label },
+  continueTitle: { color: tokens.colors.label, fontSize: tokens.typography.bookTitle, fontWeight: '500', lineHeight: 20 },
+  author: { color: tokens.colors.secondaryLabel, fontSize: tokens.typography.metadata, lineHeight: 19 },
+  progressText: { color: tokens.colors.tertiaryLabel, fontSize: 13, fontVariant: ['tabular-nums'] },
+  progressTrack: { height: 1, borderRadius: 1, backgroundColor: tokens.colors.fill, overflow: 'hidden' },
+  progressFill: { height: 1, borderRadius: 1, backgroundColor: tokens.colors.secondaryLabel },
   sectionHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: tokens.spacing.item },
-  sectionTitle: { color: tokens.colors.label, fontSize: tokens.typography.sectionTitle, fontWeight: '700', letterSpacing: -0.2 },
-  sectionMetadata: { color: tokens.colors.tertiaryLabel, fontSize: 13 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: tokens.spacing.item, rowGap: tokens.spacing.section },
+  sectionTitle: { color: tokens.colors.label, fontSize: tokens.typography.sectionTitle, fontWeight: '700', letterSpacing: -0.15 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: tokens.spacing.grid, rowGap: tokens.spacing.gridRow },
   list: { gap: 0 },
   bookPressable: { minHeight: 44 },
-  gridBook: { gap: 5 },
+  gridBook: { gap: 4 },
   coverWrap: { position: 'relative' },
-  gridTitle: { color: tokens.colors.label, fontSize: tokens.typography.metadata, fontWeight: '500', lineHeight: 19, minHeight: 19 },
-  gridState: { color: tokens.colors.secondaryLabel, fontSize: 14, fontVariant: ['tabular-nums'] },
-  listBook: { minHeight: 92, flexDirection: 'row', alignItems: 'center', gap: tokens.spacing.item, borderBottomColor: tokens.colors.separator, borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: tokens.spacing.item },
+  gridTitle: { color: tokens.colors.label, fontSize: 14, fontWeight: '600', lineHeight: 18, minHeight: 18 },
+  gridState: { color: tokens.colors.secondaryLabel, fontSize: 12, fontVariant: ['tabular-nums'] },
+  listBook: { minHeight: 82, flexDirection: 'row', alignItems: 'center', gap: tokens.spacing.grid, paddingVertical: tokens.spacing.listRowVertical },
   listCoverWrap: { position: 'relative' },
-  listMetadata: { flex: 1, gap: 2 },
-  listTitle: { color: tokens.colors.label, fontSize: tokens.typography.bookTitle, fontWeight: '600', lineHeight: 21 },
-  listState: { color: tokens.colors.secondaryLabel, fontSize: 14, fontVariant: ['tabular-nums'] },
-  cover: { justifyContent: 'space-between', overflow: 'hidden', padding: tokens.spacing.item, borderCurve: 'continuous', borderRadius: tokens.radius.cover },
-  coverAccent: { width: 28, height: 3, backgroundColor: 'rgba(255,255,255,0.52)', borderRadius: 2 },
-  coverTitle: { fontSize: 18, fontWeight: '700', lineHeight: 23, letterSpacing: -0.25 },
-  coverAuthor: { fontSize: 11, fontWeight: '500', opacity: 0.78 },
+  listMetadata: { alignSelf: 'stretch', borderBottomColor: tokens.colors.separator, borderBottomWidth: StyleSheet.hairlineWidth, flex: 1, gap: 1, justifyContent: 'center' },
+  listTitle: { color: tokens.colors.label, fontSize: tokens.typography.bookTitle, fontWeight: '600', lineHeight: 20 },
+  listState: { color: tokens.colors.tertiaryLabel, fontSize: 13, fontVariant: ['tabular-nums'] },
+  coverShadow: { borderRadius: tokens.radius.cover },
+  coverShadowGrid: { shadowColor: tokens.shadows.coverGrid.color, shadowOpacity: tokens.shadows.coverGrid.opacity, shadowRadius: tokens.shadows.coverGrid.radius, shadowOffset: { width: 0, height: tokens.shadows.coverGrid.offsetY } },
+  coverShadowContinue: { shadowColor: tokens.shadows.coverContinue.color, shadowOpacity: tokens.shadows.coverContinue.opacity, shadowRadius: tokens.shadows.coverContinue.radius, shadowOffset: { width: 0, height: tokens.shadows.coverContinue.offsetY } },
+  coverShadowList: { shadowColor: tokens.shadows.coverList.color, shadowOpacity: tokens.shadows.coverList.opacity, shadowRadius: tokens.shadows.coverList.radius, shadowOffset: { width: 0, height: tokens.shadows.coverList.offsetY } },
+  cover: { flex: 1, justifyContent: 'space-between', overflow: 'hidden', padding: tokens.spacing.coverInset, borderCurve: 'continuous', borderRadius: tokens.radius.cover },
+  coverAccent: { width: 18, height: 1, backgroundColor: 'rgba(255,255,255,0.42)', borderRadius: 1 },
+  coverTitle: { fontSize: 15, fontWeight: '600', lineHeight: 19, letterSpacing: -0.15 },
+  coverAuthor: { fontSize: 10, fontWeight: '500', opacity: 0.72 },
   coverTitleLight: { color: '#FFFFFF' },
   coverTitleDark: { color: '#2C2C2E' },
   coverGeneratedLabel: { alignSelf: 'flex-start', fontSize: 11, fontWeight: '600', letterSpacing: 1.4, textTransform: 'uppercase' },

@@ -7,6 +7,7 @@ export default function LibraryStackLayout() {
         name="index"
         options={{
           headerLargeTitleEnabled: true,
+          headerLargeTitleShadowVisible: false,
           title: '书库',
         }}
       />
