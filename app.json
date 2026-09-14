@@ -3,6 +3,9 @@
     "name": "Reader App",
     "slug": "reader-app-oyyh2",
     "scheme": "reader-app",
+    "experiments": {
+      "typedRoutes": true
+    },
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -27,6 +30,12 @@
       "eas": {
         "projectId": "f0a85ad3-9977-4484-bd0f-e178f18a0da5"
       }
-    }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      "expo-sqlite",
+      "expo-sharing"
+    ]
   }
 }
