@@ -47,6 +47,7 @@ yarn-error.*
 credentials.json
 .credentials/
 secrets/
+.local-eas-credentials.ps1
 
 # generated native folders
 /ios

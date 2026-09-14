@@ -12,7 +12,10 @@
     "userInterfaceStyle": "light",
     "ios": {
       "bundleIdentifier": "com.3wxss.4hd2",
-      "supportsTablet": false
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
