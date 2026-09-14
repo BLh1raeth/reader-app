@@ -8,7 +8,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "bundleIdentifier": "com.oyyh2.readerapp",
+      "bundleIdentifier": "com.3wxss.4hd2",
       "supportsTablet": false
     },
     "android": {
