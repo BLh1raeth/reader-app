@@ -1,9 +1,31 @@
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
+import { usePathname } from 'expo-router';
+
+import { LibraryViewProvider, useLibraryView } from '../../src/features/library/library-view-context';
 
 export default function TabLayout() {
   return (
-    <NativeTabs>
-      <NativeTabs.Trigger name="library">
+    <LibraryViewProvider>
+      <AppTabs />
+    </LibraryViewProvider>
+  );
+}
+
+function AppTabs() {
+  const pathname = usePathname();
+  const { toggleDisplayMode } = useLibraryView();
+
+  return (
+    <NativeTabs
+      screenListeners={({ route }) => ({
+        tabPress: () => {
+          if (route.name === '(library)' && pathname === '/') {
+            toggleDisplayMode();
+          }
+        },
+      })}
+    >
+      <NativeTabs.Trigger name="(library)" disablePopToTop disableScrollToTop>
         <NativeTabs.Trigger.Icon sf="books.vertical" />
         <NativeTabs.Trigger.Label>书库</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
