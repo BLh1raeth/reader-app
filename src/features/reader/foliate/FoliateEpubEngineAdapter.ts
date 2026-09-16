@@ -8,11 +8,15 @@ type FoliateRawLocation = {
 
 type FoliateSection = { cfi?: string };
 
+type FoliateBook = {
+  transformTarget?: EventTarget;
+};
+
 type FoliateView = HTMLElement & {
   book?: { sections?: FoliateSection[]; toc?: unknown[] };
   renderer?: HTMLElement;
   lastLocation?: FoliateRawLocation | null;
-  open: (book: File | Blob) => Promise<void>;
+  open: (book: File | Blob | FoliateBook) => Promise<void>;
   init: (options: { lastLocation: string | null; showTextStart: boolean }) => Promise<void>;
   next: () => Promise<void>;
   prev: () => Promise<void>;
@@ -31,6 +35,17 @@ function base64ToBytes(base64: string) {
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
+}
+
+async function cssText(value: unknown): Promise<string> {
+  const resolved = await value;
+  if (typeof resolved === 'string') return resolved;
+  if (resolved instanceof Blob) return resolved.text();
+  if (resolved instanceof ArrayBuffer) return new TextDecoder().decode(resolved);
+  if (ArrayBuffer.isView(resolved)) {
+    return new TextDecoder().decode(new Uint8Array(resolved.buffer, resolved.byteOffset, resolved.byteLength));
+  }
+  return resolved == null ? '' : String(resolved);
 }
 
 function clampPercentage(value: number) {
@@ -65,7 +80,7 @@ export class FoliateEpubEngineAdapter {
     const openedAt = performance.now();
     this.destroy();
     this.restoreState = 'opening';
-    await import('foliate-js/view.js');
+    const { makeBook } = await import('foliate-js/view.js');
 
     const view = document.createElement('foliate-view') as FoliateView;
     view.style.display = 'block';
@@ -82,7 +97,16 @@ export class FoliateEpubEngineAdapter {
     // bridge payload only after the DOM host is ready, then release it with the
     // adapter input once foliate has opened its Blob-backed ZIP reader.
     const epubFile = new File([base64ToBytes(input.base64)], input.fileName, { type: 'application/epub+zip' });
-    await view.open(epubFile);
+    const book = await makeBook(epubFile) as FoliateBook;
+    // A few real-world EPUBs expose stylesheet bytes/Blobs through their
+    // manifest. foliate's paginator expects CSS to be a string and otherwise
+    // calls `.replace()` on that value. Register before `view.open()` so this
+    // narrow compatibility normalizer runs before the paginator listener.
+    book.transformTarget?.addEventListener('data', (event) => {
+      const dataEvent = event as CustomEvent<{ type?: unknown; data?: unknown }>;
+      if (dataEvent.detail.type === 'text/css') dataEvent.detail.data = cssText(dataEvent.detail.data);
+    });
+    await view.open(book);
     const engineOpenedAt = performance.now();
     this.onDiagnostic({ event: 'ENGINE_OPENED' });
     // `foliate-view` owns an internal `foliate-paginator`; its margin is not
