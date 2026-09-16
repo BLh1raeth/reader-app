@@ -30,11 +30,10 @@ export type ReaderEngineDiagnostic =
 
 export type ReaderEpubSource = {
   sessionId: string;
+  fileUri: string;
   fileName: string;
   byteLength: number;
-  base64: string;
-  sourceKind: 'memory-cache' | 'file-read';
-  sourceReadMs: number;
+  sourceKind: 'native-file-blob';
 };
 
 export type ReaderTocItem = {
