@@ -37,6 +37,7 @@ export function useReaderController(bookId: string | undefined) {
   const engineReadyRef = useRef(false);
   const restoreStateRef = useRef<ReaderRestoreState>('opening');
   const hasActiveLocationChangeRef = useRef(false);
+  const lastPersistedCfiRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const writeQueueRef = useRef(Promise.resolve());
 
@@ -44,6 +45,7 @@ export function useReaderController(bookId: string | undefined) {
     const book = currentBookRef.current;
     const location = latestLocationRef.current;
     if (!engineReadyRef.current || restoreStateRef.current !== 'active' || !hasActiveLocationChangeRef.current || !book || !location) return;
+    if (lastPersistedCfiRef.current === location.cfi) return;
     const progress = toProgress(book.id, location);
     writeQueueRef.current = writeQueueRef.current
       .catch(() => undefined)
@@ -56,6 +58,7 @@ export function useReaderController(bookId: string | undefined) {
         }));
         await readingProgressRepository.upsert(progress);
         await bookRepository.recordReading(book.id);
+        lastPersistedCfiRef.current = progress.cfi;
         const persisted = await readingProgressRepository.readRawForDebug(book.id);
         console.log('[PROGRESS_WRITE]', JSON.stringify({
           bookId: book.id,
@@ -76,7 +79,7 @@ export function useReaderController(bookId: string | undefined) {
     saveTimerRef.current = setTimeout(() => {
       saveTimerRef.current = null;
       void flushLocation().catch(() => undefined);
-    }, 300);
+    }, 800);
   }, [flushLocation]);
 
   const activateEngine = useCallback((location: ReaderLocation, source: 'dom-location' | 'engine-ready') => {
@@ -178,6 +181,7 @@ export function useReaderController(bookId: string | undefined) {
     let active = true;
     engineReadyRef.current = false;
     latestLocationRef.current = null;
+    lastPersistedCfiRef.current = null;
     setCurrentLocation(null);
     currentBookRef.current = null;
     if (!bookId) {
@@ -199,6 +203,7 @@ export function useReaderController(bookId: string | undefined) {
           readingProgressRepository.getByBookId(book.id),
         ]);
         if (!active) return;
+        lastPersistedCfiRef.current = savedProgress?.cfi ?? null;
         markReaderOpen(book.id, 'EPUB_FILE_READ_END', book.fileSize, {
           sourceKind: source.sourceKind,
           sourceReadMs: source.sourceReadMs,
