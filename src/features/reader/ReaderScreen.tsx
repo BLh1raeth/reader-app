@@ -82,6 +82,7 @@ export default function ReaderScreen() {
           onDiagnostic={controller.onDiagnostic}
           onChromeRequest={toggleChrome}
           onError={controller.onEngineError}
+          onResourceRequest={controller.onResourceRequest}
           dom={{ scrollEnabled: false, style: styles.domReader }}
         />
       ) : null}

@@ -1,4 +1,11 @@
-import type { ReaderEngineDiagnostic, ReaderLocation, ReaderRestoreState, ReaderTocItem } from '../reader-types';
+import type {
+  ReaderEngineDiagnostic,
+  ReaderLocation,
+  ReaderResourcePayload,
+  ReaderRestoreState,
+  ReaderTocItem,
+  ReaderZipEntry,
+} from '../reader-types';
 
 type FoliateRawLocation = {
   cfi?: string;
@@ -25,9 +32,12 @@ type FoliateView = HTMLElement & {
 };
 
 export type FoliateOpenInput = {
-  base64: string;
+  base64?: string;
+  entries?: ReaderZipEntry[];
   fileName: string;
+  onResourceRequest: (name: string) => Promise<ReaderResourcePayload | null>;
   restoreCfi: string | null;
+  sourceKind: 'zip-resource-loader' | 'full-base64-fallback';
 };
 
 function base64ToBytes(base64: string) {
@@ -46,6 +56,36 @@ async function cssText(value: unknown): Promise<string> {
     return new TextDecoder().decode(new Uint8Array(resolved.buffer, resolved.byteOffset, resolved.byteLength));
   }
   return resolved == null ? '' : String(resolved);
+}
+
+function normalizeBookStyles(book: FoliateBook) {
+  // A few real-world EPUBs expose stylesheet bytes/Blobs through their
+  // manifest. foliate's paginator expects CSS to be a string and otherwise
+  // calls `.replace()` on that value. Register before `view.open()` so this
+  // narrow compatibility normalizer runs before the paginator listener.
+  book.transformTarget?.addEventListener('data', (event) => {
+    const dataEvent = event as CustomEvent<{ type?: unknown; data?: unknown }>;
+    if (dataEvent.detail.type === 'text/css') dataEvent.detail.data = cssText(dataEvent.detail.data);
+  });
+}
+
+async function createOnDemandBook(input: FoliateOpenInput): Promise<FoliateBook> {
+  const entries = new Map((input.entries ?? []).map((entry) => [entry.name, entry]));
+  const decoder = new TextDecoder();
+  const loadBytes = async (name: string) => {
+    const resource = await input.onResourceRequest(name);
+    if (!resource) return null;
+    return base64ToBytes(resource.base64);
+  };
+  const { EPUB } = await import('foliate-js/epub.js');
+  return new EPUB({
+    loadText: async (name: string) => {
+      const bytes = await loadBytes(name);
+      return bytes ? decoder.decode(bytes) : '';
+    },
+    loadBlob: async (name: string) => (await loadBytes(name)) ?? new Uint8Array(),
+    getSize: (name: string) => entries.get(name)?.uncompressedSize ?? 0,
+  }).init() as Promise<FoliateBook>;
 }
 
 function clampPercentage(value: number) {
@@ -93,19 +133,10 @@ export class FoliateEpubEngineAdapter {
     this.host.replaceChildren(view);
     this.view = view;
 
-    // Expo DOM's current web runtime cannot import expo-file-system. Decode the
-    // bridge payload only after the DOM host is ready, then release it with the
-    // adapter input once foliate has opened its Blob-backed ZIP reader.
-    const epubFile = new File([base64ToBytes(input.base64)], input.fileName, { type: 'application/epub+zip' });
-    const book = await makeBook(epubFile) as FoliateBook;
-    // A few real-world EPUBs expose stylesheet bytes/Blobs through their
-    // manifest. foliate's paginator expects CSS to be a string and otherwise
-    // calls `.replace()` on that value. Register before `view.open()` so this
-    // narrow compatibility normalizer runs before the paginator listener.
-    book.transformTarget?.addEventListener('data', (event) => {
-      const dataEvent = event as CustomEvent<{ type?: unknown; data?: unknown }>;
-      if (dataEvent.detail.type === 'text/css') dataEvent.detail.data = cssText(dataEvent.detail.data);
-    });
+    const book = input.sourceKind === 'zip-resource-loader'
+      ? await createOnDemandBook(input)
+      : await makeBook(new File([base64ToBytes(input.base64 ?? '')], input.fileName, { type: 'application/epub+zip' })) as FoliateBook;
+    normalizeBookStyles(book);
     await view.open(book);
     const engineOpenedAt = performance.now();
     this.onDiagnostic({ event: 'ENGINE_OPENED' });

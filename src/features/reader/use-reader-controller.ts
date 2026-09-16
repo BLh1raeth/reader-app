@@ -4,9 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { bookRepository } from '../library/book-repository';
 import type { Book } from '../library/library-types';
 import { readingProgressRepository, type ReadingProgress } from './reading-progress-repository';
-import { createReaderEpubSource } from './reader-resource-bridge';
+import { createFullEpubSource, createReaderEpubSource, readReaderEpubResource } from './reader-resource-bridge';
 import { markReaderOpen } from './reader-open-performance';
-import type { ReaderEngineDiagnostic, ReaderEpubSource, ReaderLocation, ReaderRestoreState } from './reader-types';
+import type { ReaderEngineDiagnostic, ReaderEpubSource, ReaderLocation, ReaderResourcePayload, ReaderRestoreState } from './reader-types';
 
 export type ReaderControllerState =
   | { kind: 'loading'; message: string }
@@ -34,6 +34,9 @@ export function useReaderController(bookId: string | undefined) {
   const [currentLocation, setCurrentLocation] = useState<ReaderLocation | null>(null);
   const latestLocationRef = useRef<ReaderLocation | null>(null);
   const currentBookRef = useRef<Book | null>(null);
+  const sourceRef = useRef<ReaderEpubSource | null>(null);
+  const restoreCfiRef = useRef<string | null>(null);
+  const hasFallbackAttemptRef = useRef(false);
   const engineReadyRef = useRef(false);
   const restoreStateRef = useRef<ReaderRestoreState>('opening');
   const hasActiveLocationChangeRef = useRef(false);
@@ -127,6 +130,23 @@ export function useReaderController(bookId: string | undefined) {
     // by an active reader interaction becomes the first writable value.
   }, [activateEngine]);
 
+  const onResourceRequest = useCallback(async (name: string): Promise<ReaderResourcePayload | null> => {
+    const book = currentBookRef.current;
+    const source = sourceRef.current;
+    if (!book || !source) return null;
+    const resource = await readReaderEpubResource(book, source, name);
+    if (resource) {
+      console.log('[READER_RESOURCE_LOAD]', JSON.stringify({
+        bookId: book.id,
+        name,
+        byteLength: resource.byteLength,
+        cacheHit: resource.cacheHit,
+        readMs: resource.readMs,
+      }));
+    }
+    return resource;
+  }, []);
+
   const onDiagnostic = useCallback(async (diagnostic: ReaderEngineDiagnostic) => {
     const book = currentBookRef.current;
     switch (diagnostic.event) {
@@ -174,6 +194,22 @@ export function useReaderController(bookId: string | undefined) {
     hasActiveLocationChangeRef.current = false;
     latestLocationRef.current = null;
     setCurrentLocation(null);
+    const book = currentBookRef.current;
+    const source = sourceRef.current;
+    if (book && source?.sourceKind === 'zip-resource-loader' && !hasFallbackAttemptRef.current) {
+      hasFallbackAttemptRef.current = true;
+      setState({ kind: 'loading', message: '正在使用兼容方式打开 EPUB' });
+      try {
+        const fallback = await createFullEpubSource(book);
+        sourceRef.current = fallback;
+        console.warn('[READER_RESOURCE]', '按需加载失败，已切换至完整 EPUB 兼容模式。', message);
+        setState({ kind: 'opening', book, source: fallback, restoreCfi: restoreCfiRef.current });
+        return;
+      } catch (fallbackError) {
+        setState({ kind: 'error', message: fallbackError instanceof Error ? fallbackError.message : message });
+        return;
+      }
+    }
     setState({ kind: 'error', message });
   }, []);
 
@@ -182,6 +218,9 @@ export function useReaderController(bookId: string | undefined) {
     engineReadyRef.current = false;
     latestLocationRef.current = null;
     lastPersistedCfiRef.current = null;
+    sourceRef.current = null;
+    restoreCfiRef.current = null;
+    hasFallbackAttemptRef.current = false;
     setCurrentLocation(null);
     currentBookRef.current = null;
     if (!bookId) {
@@ -204,9 +243,12 @@ export function useReaderController(bookId: string | undefined) {
         ]);
         if (!active) return;
         lastPersistedCfiRef.current = savedProgress?.cfi ?? null;
+        restoreCfiRef.current = savedProgress?.cfi ?? null;
+        sourceRef.current = source;
         markReaderOpen(book.id, 'EPUB_FILE_READ_END', book.fileSize, {
           sourceKind: source.sourceKind,
           sourceReadMs: source.sourceReadMs,
+          zipEntryCount: source.entries?.length ?? null,
         });
         console.log('[READER_RESOURCE]', JSON.stringify({
           bookId: book.id,
@@ -217,7 +259,8 @@ export function useReaderController(bookId: string | undefined) {
         markReaderOpen(book.id, 'DOM_MOUNT_START', book.fileSize);
         markReaderOpen(book.id, 'EPUB_TRANSFER_START', book.fileSize, {
           sourceKind: source.sourceKind,
-          base64Length: source.base64.length,
+          base64Length: source.base64?.length ?? null,
+          zipEntryCount: source.entries?.length ?? null,
         });
         console.log('[PROGRESS_READ]', JSON.stringify({
           bookId: book.id,
@@ -249,5 +292,5 @@ export function useReaderController(bookId: string | undefined) {
     return () => subscription.remove();
   }, [flushLocation]);
 
-  return { state, currentLocation, flushLocation, onLocation, onEngineReady, onDiagnostic, onEngineError };
+  return { state, currentLocation, flushLocation, onLocation, onEngineReady, onDiagnostic, onEngineError, onResourceRequest };
 }

@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react';
 
 import { FoliateEpubEngineAdapter } from './foliate/FoliateEpubEngineAdapter';
-import type { ReaderEngineDiagnostic, ReaderEpubSource, ReaderLocation, ReaderRestoreState } from './reader-types';
+import type { ReaderEngineDiagnostic, ReaderEpubSource, ReaderLocation, ReaderResourcePayload, ReaderRestoreState } from './reader-types';
 
 type Props = {
   source: ReaderEpubSource | null;
@@ -13,15 +13,16 @@ type Props = {
   onDiagnostic: (diagnostic: ReaderEngineDiagnostic) => Promise<void>;
   onChromeRequest: () => Promise<void>;
   onError: (message: string) => Promise<void>;
+  onResourceRequest: (name: string) => Promise<ReaderResourcePayload | null>;
   dom?: import('expo/dom').DOMProps;
 };
 
-export default function FoliateReaderDom({ source, restoreCfi, onReady, onLocation, onDiagnostic, onChromeRequest, onError }: Props) {
+export default function FoliateReaderDom({ source, restoreCfi, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<FoliateEpubEngineAdapter | null>(null);
   const loadedSessionRef = useRef<string | null>(null);
-  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError });
-  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError };
+  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest });
+  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest };
 
   useEffect(() => {
     document.documentElement.style.height = '100%';
@@ -48,8 +49,11 @@ export default function FoliateReaderDom({ source, restoreCfi, onReady, onLocati
     void callbacksRef.current.onDiagnostic({ event: 'FOLIATE_OPEN_START' });
     void adapter.open({
       base64: nextSource.base64,
+      entries: nextSource.entries,
       fileName: nextSource.fileName,
+      onResourceRequest: (name) => callbacksRef.current.onResourceRequest(name),
       restoreCfi,
+      sourceKind: nextSource.sourceKind,
     }).then((location) => {
       if (active) return callbacksRef.current.onReady(location);
       return undefined;

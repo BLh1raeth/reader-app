@@ -28,13 +28,29 @@ export type ReaderEngineDiagnostic =
   | { event: 'LOCATION_CHANGED'; cfi: string | null; restoreState: ReaderRestoreState }
   | { event: 'ENGINE_DESTROY' };
 
+export type ReaderZipEntry = {
+  name: string;
+  compressedSize: number;
+  compressionMethod: 0 | 8;
+  localHeaderOffset: number;
+  uncompressedSize: number;
+};
+
+export type ReaderResourcePayload = {
+  base64: string;
+  byteLength: number;
+  cacheHit: boolean;
+  readMs: number;
+};
+
 export type ReaderEpubSource = {
   sessionId: string;
   fileName: string;
   byteLength: number;
-  /** Kept inside the bridge layer; the engine only receives a File. */
-  base64: string;
-  sourceKind: 'memory-cache' | 'file-read';
+  /** The complete EPUB is present only in compatibility fallback mode. */
+  base64?: string;
+  entries?: ReaderZipEntry[];
+  sourceKind: 'zip-resource-loader' | 'full-base64-fallback';
   sourceReadMs: number;
 };
 
