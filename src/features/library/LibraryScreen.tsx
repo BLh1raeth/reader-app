@@ -9,7 +9,6 @@ import type { SFSymbol } from 'sf-symbols-typescript';
 import {
   Alert,
   Image,
-  InteractionManager,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -36,7 +35,6 @@ import Animated, {
 import { tokens } from '../../design-system/tokens';
 import { bookRepository } from './book-repository';
 import { beginReaderOpen } from '../reader/reader-open-performance';
-import ReaderDomPrewarm from '../reader/ReaderDomPrewarm';
 import {
   importPickedEpubs,
   removeBooks as removeStoredBooks,
@@ -105,7 +103,6 @@ export default function LibraryScreen() {
   const { displayMode, setTabBarHidden } = useLibraryView();
   const [books, setBooks] = useState<LibraryBook[]>([]);
   const [libraryReady, setLibraryReady] = useState(false);
-  const [shouldPrewarmReader, setShouldPrewarmReader] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('manual');
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
   const [selectionMode, setSelectionMode] = useState(false);
@@ -129,26 +126,6 @@ export default function LibraryScreen() {
   useFocusEffect(useCallback(() => {
     void reloadBooks().catch(() => setLibraryReady(true));
   }, [reloadBooks]));
-
-  useEffect(() => {
-    if (!libraryReady || books.length === 0 || shouldPrewarmReader) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const interaction = InteractionManager.runAfterInteractions(() => {
-      timer = setTimeout(() => {
-        if (!cancelled) setShouldPrewarmReader(true);
-      }, 900);
-    });
-    return () => {
-      cancelled = true;
-      interaction.cancel();
-      if (timer) clearTimeout(timer);
-    };
-  }, [books.length, libraryReady, shouldPrewarmReader]);
-
-  const onReaderPrewarmReady = useCallback(async () => {
-    console.log('[READER_PREWARM]', JSON.stringify({ state: 'ready' }));
-  }, []);
 
   const gridItemWidth = Math.max(0, (width - tokens.spacing.screen * 2 - tokens.spacing.grid) / 2);
   const selectedBookSet = useMemo(() => new Set(selectedBookIds), [selectedBookIds]);
@@ -503,12 +480,6 @@ export default function LibraryScreen() {
 
   return (
     <>
-      {shouldPrewarmReader ? (
-        <ReaderDomPrewarm
-          dom={{ scrollEnabled: false, style: styles.readerDomPrewarm }}
-          onReady={onReaderPrewarmReady}
-        />
-      ) : null}
       <GestureHandlerRootView style={styles.safeArea}>
         <Animated.ScrollView
           contentInsetAdjustmentBehavior={nativeHeaderVisible ? 'automatic' : 'never'}
@@ -1172,7 +1143,6 @@ function readingStateLabel(book: LibraryBook) {
 }
 
 const styles = StyleSheet.create({
-  readerDomPrewarm: { height: 1, opacity: 0, position: 'absolute', width: 1 },
   safeArea: { flex: 1, backgroundColor: tokens.colors.background },
   screen: { flex: 1, backgroundColor: tokens.colors.background },
   libraryHeaderSpacer: { height: 44 },
