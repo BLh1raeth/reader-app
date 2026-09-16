@@ -78,29 +78,49 @@ export function useReaderController(bookId: string | undefined) {
     }, 300);
   }, [flushLocation]);
 
-  const onLocation = useCallback(async (location: ReaderLocation, domRestoreState: ReaderRestoreState) => {
-    console.log('[LOCATION_CHANGED]', JSON.stringify({ cfi: location.cfi, restoreState: domRestoreState }));
-    // This is the persistence boundary: foliate's text-start relocation is
-    // observable for diagnostics but cannot alter Native state or SQLite.
-    if (restoreStateRef.current !== 'active' || domRestoreState !== 'active') return;
-    hasActiveLocationChangeRef.current = true;
-    latestLocationRef.current = location;
-    setCurrentLocation(location);
-    scheduleLocationFlush();
-  }, [scheduleLocationFlush]);
-
-  const onEngineReady = useCallback(async (location: ReaderLocation) => {
+  const activateEngine = useCallback((location: ReaderLocation, source: 'dom-location' | 'engine-ready') => {
+    if (restoreStateRef.current === 'active' && engineReadyRef.current) return;
     restoreStateRef.current = 'active';
     latestLocationRef.current = location;
     setCurrentLocation(location);
     engineReadyRef.current = true;
-    // Drop the native bridge string immediately; foliate now owns its File/Blob.
+    // The DOM bridge delivers its first `active` relocation before its
+    // `open()` promise callback can always reach Native. Treat that event as
+    // the authoritative ready boundary, but do not make it writable.
     setState((current) => current.kind === 'opening'
       ? { kind: 'ready', book: current.book, restoreCfi: current.restoreCfi }
       : current);
+    console.log('[ENGINE_ACTIVE]', JSON.stringify({ bookId: currentBookRef.current?.id ?? null, cfi: location.cfi, source }));
+  }, []);
+
+  const onLocation = useCallback(async (location: ReaderLocation, domRestoreState: ReaderRestoreState) => {
+    const nativeRestoreState = restoreStateRef.current;
+    const isFirstActiveLocation = domRestoreState === 'active' && nativeRestoreState !== 'active';
+    console.log('[LOCATION_CHANGED]', JSON.stringify({
+      cfi: location.cfi,
+      restoreState: domRestoreState,
+      nativeRestoreState,
+      accepted: !isFirstActiveLocation && nativeRestoreState === 'active' && engineReadyRef.current,
+    }));
+    // This is the persistence boundary: foliate's text-start relocation is
+    // observable for diagnostics but cannot alter Native state or SQLite.
+    if (domRestoreState !== 'active') return;
+    if (isFirstActiveLocation) {
+      activateEngine(location, 'dom-location');
+      return;
+    }
+    if (restoreStateRef.current !== 'active' || !engineReadyRef.current) return;
+    hasActiveLocationChangeRef.current = true;
+    latestLocationRef.current = location;
+    setCurrentLocation(location);
+    scheduleLocationFlush();
+  }, [activateEngine, scheduleLocationFlush]);
+
+  const onEngineReady = useCallback(async (location: ReaderLocation) => {
+    activateEngine(location, 'engine-ready');
     // Hydration itself must never write a location. The first location caused
     // by an active reader interaction becomes the first writable value.
-  }, []);
+  }, [activateEngine]);
 
   const onDiagnostic = useCallback(async (diagnostic: ReaderEngineDiagnostic) => {
     const book = currentBookRef.current;
