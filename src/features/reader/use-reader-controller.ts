@@ -178,6 +178,12 @@ export function useReaderController(bookId: string | undefined) {
           readingProgressRepository.getByBookId(book.id),
         ]);
         if (!active) return;
+        console.log('[READER_RESOURCE]', JSON.stringify({
+          bookId: book.id,
+          byteLength: source.byteLength,
+          sourceKind: source.sourceKind,
+          sourceReadMs: source.sourceReadMs,
+        }));
         console.log('[PROGRESS_READ]', JSON.stringify({
           bookId: book.id,
           savedCfi: savedProgress?.cfi ?? null,

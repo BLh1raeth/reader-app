@@ -62,6 +62,7 @@ export class FoliateEpubEngineAdapter {
   ) {}
 
   async open(input: FoliateOpenInput): Promise<ReaderLocation> {
+    const openedAt = performance.now();
     this.destroy();
     this.restoreState = 'opening';
     await import('foliate-js/view.js');
@@ -83,31 +84,30 @@ export class FoliateEpubEngineAdapter {
       type: 'application/epub+zip',
     });
     await view.open(epubFile);
+    const engineOpenedAt = performance.now();
     this.onDiagnostic({ event: 'ENGINE_OPENED' });
     // `foliate-view` owns an internal `foliate-paginator`; its margin is not
     // inherited from the outer custom element. Give the reader a deliberate
     // top/bottom breathing area without adding a visible container or card.
     view.renderer?.setAttribute('margin', '88px');
     view.renderer?.setAttribute('gap', '7%');
-    // First let foliate finish its own deterministic text-start layout. A
-    // direct restore after that avoids a delayed initial relocate event
-    // replacing a valid saved CFI with the beginning of the book.
+    // This is the same one-pass restore path proven by the Spike: foliate
+    // resolves the CFI while it builds the paginator, rather than first
+    // laying out the book start and then performing a second `goTo()` layout.
     this.restoreState = 'restoring';
     const targetCfi = input.restoreCfi?.startsWith('epubcfi(') ? input.restoreCfi : null;
     this.onDiagnostic({ event: 'RESTORE_REQUEST', targetCfi });
-    await view.init({ lastLocation: null, showTextStart: true });
-    if (targetCfi) {
-      try {
-        await view.goTo(targetCfi);
-        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      } catch {
-        // A CFI can become invalid if its EPUB was replaced. Keep the already
-        // loaded first text position rather than showing a white reader.
-      }
-    }
+    await view.init({ lastLocation: targetCfi, showTextStart: true });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
     const location = this.getLocation();
     this.onDiagnostic({ event: 'RESTORE_RESULT', targetCfi, actualCurrentCfi: location.cfi });
+    console.log('[READER_TIMING]', JSON.stringify({
+      decodeAndOpenMs: Math.round(engineOpenedAt - openedAt),
+      paginateAndRestoreMs: Math.round(performance.now() - engineOpenedAt),
+      totalDomOpenMs: Math.round(performance.now() - openedAt),
+      restored: Boolean(targetCfi),
+    }));
     this.restoreState = 'active';
     view.style.visibility = 'visible';
     this.onLocation(location, this.restoreState);

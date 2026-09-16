@@ -21,6 +21,8 @@ function sourceFromCache(book: Book, cached: RecentBookCache): ReaderEpubSource 
     fileName: `${book.id}.epub`,
     byteLength: cached.byteLength,
     base64: cached.base64,
+    sourceKind: 'memory-cache',
+    sourceReadMs: 0,
   };
 }
 
@@ -33,6 +35,7 @@ function sourceFromCache(book: Book, cached: RecentBookCache): ReaderEpubSource 
  * repeat disk read + base64 bridge work.
  */
 export async function createReaderEpubSource(book: Book): Promise<ReaderEpubSource> {
+  const startedAt = globalThis.performance?.now?.() ?? Date.now();
   const file = new File(book.fileUri);
   if (!file.exists) throw new Error('这本书的 EPUB 文件已不存在。');
 
@@ -57,5 +60,7 @@ export async function createReaderEpubSource(book: Book): Promise<ReaderEpubSour
     fileName: `${book.id}.epub`,
     byteLength: file.size,
     base64,
+    sourceKind: 'file-read',
+    sourceReadMs: Math.round((globalThis.performance?.now?.() ?? Date.now()) - startedAt),
   };
 }

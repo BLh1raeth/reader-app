@@ -30,6 +30,8 @@ export type ReaderEpubSource = {
   fileName: string;
   byteLength: number;
   base64: string;
+  sourceKind: 'memory-cache' | 'file-read';
+  sourceReadMs: number;
 };
 
 export type ReaderTocItem = {
