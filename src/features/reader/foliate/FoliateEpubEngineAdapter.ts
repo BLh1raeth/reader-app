@@ -10,6 +10,7 @@ type FoliateSection = { cfi?: string };
 
 type FoliateView = HTMLElement & {
   book?: { sections?: FoliateSection[]; toc?: unknown[] };
+  renderer?: HTMLElement;
   lastLocation?: FoliateRawLocation | null;
   open: (book: File | Blob) => Promise<void>;
   init: (options: { lastLocation: string | null; showTextStart: boolean }) => Promise<void>;
@@ -68,8 +69,6 @@ export class FoliateEpubEngineAdapter {
     view.style.height = '100%';
     view.style.visibility = 'hidden';
     view.setAttribute('flow', 'paginated');
-    view.setAttribute('margin', '24px');
-    view.setAttribute('gap', '7%');
     view.addEventListener('relocate', this.handleRelocate);
     view.addEventListener('load', this.handleDocumentLoad as EventListener);
     this.host.replaceChildren(view);
@@ -81,6 +80,11 @@ export class FoliateEpubEngineAdapter {
       type: 'application/epub+zip',
     });
     await view.open(epubFile);
+    // `foliate-view` owns an internal `foliate-paginator`; its margin is not
+    // inherited from the outer custom element. Give the reader a deliberate
+    // top/bottom breathing area without adding a visible container or card.
+    view.renderer?.setAttribute('margin', '72px');
+    view.renderer?.setAttribute('gap', '7%');
     try {
       await view.init({ lastLocation: input.restoreCfi, showTextStart: true });
     } catch (error) {
@@ -188,7 +192,12 @@ export class FoliateEpubEngineAdapter {
     const style = doc.createElement('style');
     style.textContent = `
       html, body { max-width: 100% !important; overflow-x: hidden !important; }
-      img, svg, video { max-width: 100% !important; height: auto !important; }
+      img, svg, video {
+        display: block !important;
+        max-width: 100% !important;
+        height: auto !important;
+        margin: 14px auto 20px !important;
+      }
       table { max-width: 100% !important; }
     `;
     doc.head.append(style);
