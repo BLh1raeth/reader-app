@@ -74,6 +74,7 @@ export default function ReaderScreen() {
           restoreCfi={controller.state.restoreCfi}
           onReady={controller.onEngineReady}
           onLocation={controller.onLocation}
+          onDiagnostic={controller.onDiagnostic}
           onChromeRequest={toggleChrome}
           onError={controller.onEngineError}
           dom={{ scrollEnabled: false, style: styles.domReader }}

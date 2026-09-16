@@ -3,24 +3,25 @@
 import { useEffect, useRef } from 'react';
 
 import { FoliateEpubEngineAdapter } from './foliate/FoliateEpubEngineAdapter';
-import type { ReaderEpubSource, ReaderLocation } from './reader-types';
+import type { ReaderEngineDiagnostic, ReaderEpubSource, ReaderLocation, ReaderRestoreState } from './reader-types';
 
 type Props = {
   source: ReaderEpubSource | null;
   restoreCfi: string | null;
   onReady: (location: ReaderLocation) => Promise<void>;
-  onLocation: (location: ReaderLocation) => Promise<void>;
+  onLocation: (location: ReaderLocation, restoreState: ReaderRestoreState) => Promise<void>;
+  onDiagnostic: (diagnostic: ReaderEngineDiagnostic) => Promise<void>;
   onChromeRequest: () => Promise<void>;
   onError: (message: string) => Promise<void>;
   dom?: import('expo/dom').DOMProps;
 };
 
-export default function FoliateReaderDom({ source, restoreCfi, onReady, onLocation, onChromeRequest, onError }: Props) {
+export default function FoliateReaderDom({ source, restoreCfi, onReady, onLocation, onDiagnostic, onChromeRequest, onError }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<FoliateEpubEngineAdapter | null>(null);
   const loadedSessionRef = useRef<string | null>(null);
-  const callbacksRef = useRef({ onReady, onLocation, onChromeRequest, onError });
-  callbacksRef.current = { onReady, onLocation, onChromeRequest, onError };
+  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError });
+  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError };
 
   useEffect(() => {
     document.documentElement.style.height = '100%';
@@ -34,10 +35,12 @@ export default function FoliateReaderDom({ source, restoreCfi, onReady, onLocati
     const nextSource = source;
     if (!nextSource || loadedSessionRef.current === nextSource.sessionId || !hostRef.current) return;
     let active = true;
+    void callbacksRef.current.onDiagnostic({ event: 'DOM_READY' });
     const adapter = adapterRef.current ?? new FoliateEpubEngineAdapter(
       hostRef.current,
-      (location) => { void callbacksRef.current.onLocation(location); },
+      (location, restoreState) => { void callbacksRef.current.onLocation(location, restoreState); },
       () => { void callbacksRef.current.onChromeRequest(); },
+      (diagnostic) => { void callbacksRef.current.onDiagnostic(diagnostic); },
     );
     adapterRef.current = adapter;
     loadedSessionRef.current = nextSource.sessionId;

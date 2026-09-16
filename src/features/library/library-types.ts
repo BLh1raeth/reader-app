@@ -17,7 +17,8 @@ export type Book = {
   addedAt: string;
   lastOpenedAt: string | null;
   readingStatus: ReadingStatus;
-  readingProgress: number;
+  /** Canonical ReadingProgress fraction joined by BookRepository; never write this to books. */
+  readingProgress: number | null;
   manualOrder: number;
   originalTitle: string;
   originalAuthor: string | null;

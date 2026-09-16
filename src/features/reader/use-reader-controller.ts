@@ -5,7 +5,7 @@ import { bookRepository } from '../library/book-repository';
 import type { Book } from '../library/library-types';
 import { readingProgressRepository, type ReadingProgress } from './reading-progress-repository';
 import { createReaderEpubSource } from './reader-resource-bridge';
-import type { ReaderEpubSource, ReaderLocation } from './reader-types';
+import type { ReaderEngineDiagnostic, ReaderEpubSource, ReaderLocation, ReaderRestoreState } from './reader-types';
 
 export type ReaderControllerState =
   | { kind: 'loading'; message: string }
@@ -18,7 +18,9 @@ function toProgress(bookId: string, location: ReaderLocation): ReadingProgress {
     bookId,
     cfi: location.cfi,
     spineIndex: location.spineIndex,
-    percentage: location.percentage,
+    // Persist a location fraction; only the Library view formats it as a
+    // rounded percent string.
+    percentage: location.percentage / 100,
     currentPage: location.currentPage,
     totalPages: location.totalPages,
     updatedAt: new Date().toISOString(),
@@ -32,19 +34,37 @@ export function useReaderController(bookId: string | undefined) {
   const latestLocationRef = useRef<ReaderLocation | null>(null);
   const currentBookRef = useRef<Book | null>(null);
   const engineReadyRef = useRef(false);
+  const restoreStateRef = useRef<ReaderRestoreState>('opening');
+  const hasActiveLocationChangeRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const writeQueueRef = useRef(Promise.resolve());
 
   const flushLocation = useCallback(async () => {
     const book = currentBookRef.current;
     const location = latestLocationRef.current;
-    if (!engineReadyRef.current || !book || !location) return;
+    if (!engineReadyRef.current || restoreStateRef.current !== 'active' || !hasActiveLocationChangeRef.current || !book || !location) return;
     const progress = toProgress(book.id, location);
     writeQueueRef.current = writeQueueRef.current
       .catch(() => undefined)
       .then(async () => {
+        console.log('[PROGRESS_WRITE]', JSON.stringify({
+          bookId: book.id,
+          cfi: progress.cfi,
+          restoreState: restoreStateRef.current,
+          percentage: progress.percentage,
+        }));
         await readingProgressRepository.upsert(progress);
-        await bookRepository.recordReading(book.id, progress.percentage);
+        await bookRepository.recordReading(book.id);
+        const persisted = await readingProgressRepository.readRawForDebug(book.id);
+        console.log('[PROGRESS_WRITE]', JSON.stringify({
+          bookId: book.id,
+          cfi: persisted?.cfi ?? null,
+          restoreState: restoreStateRef.current,
+          percentage: persisted?.percentage ?? null,
+          spineIndex: persisted?.spine_index ?? null,
+          updatedAt: persisted?.updated_at ?? null,
+          verified: true,
+        }));
       });
     await writeQueueRef.current;
   }, []);
@@ -58,13 +78,19 @@ export function useReaderController(bookId: string | undefined) {
     }, 300);
   }, [flushLocation]);
 
-  const onLocation = useCallback(async (location: ReaderLocation) => {
+  const onLocation = useCallback(async (location: ReaderLocation, domRestoreState: ReaderRestoreState) => {
+    console.log('[LOCATION_CHANGED]', JSON.stringify({ cfi: location.cfi, restoreState: domRestoreState }));
+    // This is the persistence boundary: foliate's text-start relocation is
+    // observable for diagnostics but cannot alter Native state or SQLite.
+    if (restoreStateRef.current !== 'active' || domRestoreState !== 'active') return;
+    hasActiveLocationChangeRef.current = true;
     latestLocationRef.current = location;
     setCurrentLocation(location);
     scheduleLocationFlush();
   }, [scheduleLocationFlush]);
 
   const onEngineReady = useCallback(async (location: ReaderLocation) => {
+    restoreStateRef.current = 'active';
     latestLocationRef.current = location;
     setCurrentLocation(location);
     engineReadyRef.current = true;
@@ -72,11 +98,38 @@ export function useReaderController(bookId: string | undefined) {
     setState((current) => current.kind === 'opening'
       ? { kind: 'ready', book: current.book, restoreCfi: current.restoreCfi }
       : current);
-    await flushLocation().catch(() => undefined);
-  }, [flushLocation]);
+    // Hydration itself must never write a location. The first location caused
+    // by an active reader interaction becomes the first writable value.
+  }, []);
+
+  const onDiagnostic = useCallback(async (diagnostic: ReaderEngineDiagnostic) => {
+    const book = currentBookRef.current;
+    switch (diagnostic.event) {
+      case 'DOM_READY':
+      case 'ENGINE_OPENED':
+      case 'ENGINE_DESTROY':
+        console.log(`[${diagnostic.event}]`, JSON.stringify({ bookId: book?.id ?? null }));
+        return;
+      case 'RESTORE_REQUEST':
+        restoreStateRef.current = 'restoring';
+        console.log('[RESTORE_REQUEST]', JSON.stringify({ bookId: book?.id ?? null, targetCfi: diagnostic.targetCfi }));
+        return;
+      case 'RESTORE_RESULT':
+        console.log('[RESTORE_RESULT]', JSON.stringify({
+          bookId: book?.id ?? null,
+          targetCfi: diagnostic.targetCfi,
+          actualCurrentCfi: diagnostic.actualCurrentCfi,
+        }));
+        return;
+      case 'LOCATION_CHANGED':
+        return;
+    }
+  }, []);
 
   const onEngineError = useCallback(async (message: string) => {
     engineReadyRef.current = false;
+    restoreStateRef.current = 'opening';
+    hasActiveLocationChangeRef.current = false;
     latestLocationRef.current = null;
     setCurrentLocation(null);
     setState({ kind: 'error', message });
@@ -105,6 +158,13 @@ export function useReaderController(bookId: string | undefined) {
           readingProgressRepository.getByBookId(book.id),
         ]);
         if (!active) return;
+        console.log('[PROGRESS_READ]', JSON.stringify({
+          bookId: book.id,
+          savedCfi: savedProgress?.cfi ?? null,
+          spineIndex: savedProgress?.spineIndex ?? null,
+          percentage: savedProgress?.percentage ?? null,
+          updatedAt: savedProgress?.updatedAt ?? null,
+        }));
         setState({ kind: 'opening', book, source, restoreCfi: savedProgress?.cfi ?? null });
       } catch (error) {
         if (!active) return;
@@ -128,5 +188,5 @@ export function useReaderController(bookId: string | undefined) {
     return () => subscription.remove();
   }, [flushLocation]);
 
-  return { state, currentLocation, flushLocation, onLocation, onEngineReady, onEngineError };
+  return { state, currentLocation, flushLocation, onLocation, onEngineReady, onDiagnostic, onEngineError };
 }

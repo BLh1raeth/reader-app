@@ -112,7 +112,7 @@ async function writePreparedImport(
       addedAt: now,
       lastOpenedAt: null,
       readingStatus: 'unread',
-      readingProgress: 0,
+      readingProgress: null,
       manualOrder: allBooks.length,
       originalTitle: title,
       originalAuthor: prepared.parsed.author,
@@ -191,5 +191,5 @@ export async function shareBook(book: Book) {
 }
 
 export async function updateBookReadingStatus(book: Book, status: ReadingStatus) {
-  await bookRepository.updateReadingStatus(book.id, status, status === 'finished' ? 100 : 0);
+  await bookRepository.updateReadingStatus(book.id, status);
 }

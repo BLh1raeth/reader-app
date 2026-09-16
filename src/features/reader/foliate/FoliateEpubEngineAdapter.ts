@@ -1,4 +1,4 @@
-import type { ReaderLocation, ReaderTocItem } from '../reader-types';
+import type { ReaderEngineDiagnostic, ReaderLocation, ReaderRestoreState, ReaderTocItem } from '../reader-types';
 
 type FoliateRawLocation = {
   cfi?: string;
@@ -52,17 +52,18 @@ function mapToc(items: unknown): ReaderTocItem[] {
 export class FoliateEpubEngineAdapter {
   private view: FoliateView | null = null;
   private loadedDocuments: Document[] = [];
-  private acceptRelocations = false;
+  private restoreState: ReaderRestoreState = 'opening';
 
   constructor(
     private readonly host: HTMLElement,
-    private readonly onLocation: (location: ReaderLocation) => void,
+    private readonly onLocation: (location: ReaderLocation, restoreState: ReaderRestoreState) => void,
     private readonly onCenterTap: () => void,
+    private readonly onDiagnostic: (diagnostic: ReaderEngineDiagnostic) => void,
   ) {}
 
   async open(input: FoliateOpenInput): Promise<ReaderLocation> {
     this.destroy();
-    this.acceptRelocations = false;
+    this.restoreState = 'opening';
     await import('foliate-js/view.js');
 
     const view = document.createElement('foliate-view') as FoliateView;
@@ -82,6 +83,7 @@ export class FoliateEpubEngineAdapter {
       type: 'application/epub+zip',
     });
     await view.open(epubFile);
+    this.onDiagnostic({ event: 'ENGINE_OPENED' });
     // `foliate-view` owns an internal `foliate-paginator`; its margin is not
     // inherited from the outer custom element. Give the reader a deliberate
     // top/bottom breathing area without adding a visible container or card.
@@ -90,10 +92,13 @@ export class FoliateEpubEngineAdapter {
     // First let foliate finish its own deterministic text-start layout. A
     // direct restore after that avoids a delayed initial relocate event
     // replacing a valid saved CFI with the beginning of the book.
+    this.restoreState = 'restoring';
+    const targetCfi = input.restoreCfi?.startsWith('epubcfi(') ? input.restoreCfi : null;
+    this.onDiagnostic({ event: 'RESTORE_REQUEST', targetCfi });
     await view.init({ lastLocation: null, showTextStart: true });
-    if (input.restoreCfi?.startsWith('epubcfi(')) {
+    if (targetCfi) {
       try {
-        await view.goTo(input.restoreCfi);
+        await view.goTo(targetCfi);
         await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       } catch {
         // A CFI can become invalid if its EPUB was replaced. Keep the already
@@ -101,13 +106,11 @@ export class FoliateEpubEngineAdapter {
       }
     }
 
-    // Ignore every initial relocation (including the text-start event) until
-    // the requested CFI has settled. Otherwise that delayed first event can
-    // overwrite the resumed location in SQLite after ReaderScreen is ready.
-    this.acceptRelocations = true;
     const location = this.getLocation();
+    this.onDiagnostic({ event: 'RESTORE_RESULT', targetCfi, actualCurrentCfi: location.cfi });
+    this.restoreState = 'active';
     view.style.visibility = 'visible';
-    this.onLocation(location);
+    this.onLocation(location, this.restoreState);
     return location;
   }
 
@@ -158,7 +161,8 @@ export class FoliateEpubEngineAdapter {
   removeAnnotation() { throw new Error('Reader Core A 尚未启用标注。'); }
 
   destroy() {
-    this.acceptRelocations = false;
+    if (this.view) this.onDiagnostic({ event: 'ENGINE_DESTROY' });
+    this.restoreState = 'opening';
     for (const doc of this.loadedDocuments) doc.removeEventListener('click', this.handleDocumentClick);
     this.loadedDocuments = [];
     if (this.view) {
@@ -172,9 +176,10 @@ export class FoliateEpubEngineAdapter {
   }
 
   private readonly handleRelocate = () => {
-    if (!this.acceptRelocations) return;
     try {
-      this.onLocation(this.getLocation());
+      const location = this.getLocation();
+      this.onDiagnostic({ event: 'LOCATION_CHANGED', cfi: location.cfi, restoreState: this.restoreState });
+      this.onLocation(location, this.restoreState);
     } catch {
       // A transient relocation without a CFI is not a persisted position.
     }

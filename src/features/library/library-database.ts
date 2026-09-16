@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 
 const DATABASE_NAME = 'reader-library.db';
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -58,7 +58,7 @@ async function bootstrapDatabase() {
           location TEXT NOT NULL,
           spine_index INTEGER NOT NULL,
           block_index INTEGER NOT NULL,
-          percentage REAL NOT NULL DEFAULT 0 CHECK (percentage >= 0 AND percentage <= 100),
+          percentage REAL NOT NULL DEFAULT 0 CHECK (percentage >= 0 AND percentage <= 1),
           current_page INTEGER,
           total_pages INTEGER,
           updated_at TEXT NOT NULL
@@ -83,6 +83,21 @@ async function bootstrapDatabase() {
       // formal reader stores its stable EPUB CFI explicitly.
       await transaction.execAsync(`
         ALTER TABLE reading_progress ADD COLUMN cfi TEXT;
+        PRAGMA user_version = 4;
+      `);
+    });
+  }
+  if (currentVersion < 5) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      // v2-v4 stored a display percentage (0-100). The sole Reader progress
+      // source now stores the layout-independent fraction (0-1).
+      await transaction.execAsync(`
+        UPDATE reading_progress
+        SET percentage = CASE WHEN percentage > 1 THEN percentage / 100.0 ELSE percentage END;
+        -- books.reading_progress was a legacy display cache. Progress now
+        -- comes only from the joined reading_progress row, so stale/mock
+        -- values cannot re-enter the Library path.
+        UPDATE books SET reading_progress = 0;
         PRAGMA user_version = ${SCHEMA_VERSION};
       `);
     });

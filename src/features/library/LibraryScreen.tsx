@@ -48,10 +48,7 @@ import { useLibraryView } from './library-view-context';
 
 type SortMode = 'manual' | 'recentlyRead' | 'recentlyAdded' | 'title' | 'author';
 type FilterMode = 'all' | ReadingStatus;
-type LibraryBook = Book & { lastReadAt?: string; progress: number; state: ReadingStatus };
-// Kept as an internal view-model alias while the existing visual components
-// transition from the former mock source to the SQLite-backed repository.
-type MockBook = LibraryBook;
+type LibraryBook = Book & { lastReadAt?: string; progress: number | null; state: ReadingStatus };
 type BookMenuHandlers = {
   onEditCover: (book: LibraryBook) => void;
   onEditTitle: (book: LibraryBook) => void;
@@ -90,6 +87,10 @@ const filterLabels: Record<FilterMode, string> = {
 
 function toLibraryBook(book: Book): LibraryBook {
   return { ...book, lastReadAt: book.lastOpenedAt ?? undefined, progress: book.readingProgress, state: book.readingStatus };
+}
+
+function displayProgress(book: LibraryBook) {
+  return book.progress === null ? null : Math.round(book.progress * 100);
 }
 
 export default function LibraryScreen() {
@@ -180,7 +181,7 @@ export default function LibraryScreen() {
   const continueReadingBook = useMemo(
     () =>
       books
-        .filter((book) => book.state === 'reading' && book.lastReadAt)
+        .filter((book) => book.state === 'reading' && book.lastReadAt && book.progress !== null)
         .sort(
           (left, right) => new Date(right.lastReadAt ?? 0).getTime() - new Date(left.lastReadAt ?? 0).getTime(),
         )[0],
@@ -594,7 +595,7 @@ export default function LibraryScreen() {
 }
 
 function BookTitleMenu({ book, children, handlers }: {
-  book: MockBook;
+  book: LibraryBook;
   children: ReactNode;
   handlers?: BookMenuHandlers;
 }) {
@@ -725,7 +726,7 @@ function LibraryMenuTrigger({ selectionProgress }: { selectionProgress: SharedVa
   return <View style={styles.menuTriggerFallback}>{trigger}</View>;
 }
 
-function ContinueReading({ book, selectionMode }: { book: MockBook; selectionMode: boolean }) {
+function ContinueReading({ book, selectionMode }: { book: LibraryBook; selectionMode: boolean }) {
   const selectionProgress = useSharedValue(1);
 
   useEffect(() => {
@@ -742,8 +743,8 @@ function ContinueReading({ book, selectionMode }: { book: MockBook; selectionMod
       <View style={styles.continueMetadata}>
         <Text selectable numberOfLines={2} style={styles.continueTitle}>{book.title}</Text>
         {book.author ? <Text selectable numberOfLines={1} style={styles.author}>{book.author}</Text> : null}
-        <Text selectable style={styles.progressText}>已读 {book.progress}%</Text>
-        <ProgressBar progress={book.progress} />
+        <Text selectable style={styles.progressText}>已读 {displayProgress(book)}%</Text>
+        <ProgressBar progress={displayProgress(book) ?? 0} />
       </View>
     </View>
   );
@@ -776,7 +777,7 @@ function SelectionBook({
   width,
 }: {
   active: boolean;
-  book: MockBook;
+  book: LibraryBook;
   content: ReactNode;
   displayMode: 'grid' | 'list';
   exiting: boolean;
@@ -976,7 +977,7 @@ function ReorderableBook({
   );
 }
 
-function GridBook({ book, manualOrdering, onOpenReader, titleMenu, width, selected, selectionMode }: { book: MockBook; manualOrdering: boolean; onOpenReader?: () => void; titleMenu?: BookMenuHandlers; width: number; selected: boolean; selectionMode: boolean }) {
+function GridBook({ book, manualOrdering, onOpenReader, titleMenu, width, selected, selectionMode }: { book: LibraryBook; manualOrdering: boolean; onOpenReader?: () => void; titleMenu?: BookMenuHandlers; width: number; selected: boolean; selectionMode: boolean }) {
   return (
     <View style={[styles.gridBook, { width }]}>
       <View style={styles.coverWrap}>
@@ -1002,7 +1003,7 @@ function GridBook({ book, manualOrdering, onOpenReader, titleMenu, width, select
   );
 }
 
-function ListBook({ book, manualOrdering, onOpenReader, titleMenu, selected, selectionMode }: { book: MockBook; manualOrdering: boolean; onOpenReader?: () => void; titleMenu?: BookMenuHandlers; selected: boolean; selectionMode: boolean }) {
+function ListBook({ book, manualOrdering, onOpenReader, titleMenu, selected, selectionMode }: { book: LibraryBook; manualOrdering: boolean; onOpenReader?: () => void; titleMenu?: BookMenuHandlers; selected: boolean; selectionMode: boolean }) {
   return (
     <View style={styles.listBook}>
       <View style={styles.listCoverWrap}>
@@ -1034,7 +1035,7 @@ function BookCover({
   width,
   presentation,
 }: {
-  book: MockBook;
+  book: LibraryBook;
   width: number;
   presentation: 'grid' | 'continue' | 'list';
 }) {
@@ -1131,10 +1132,10 @@ function EmptyLibrary({ onImport }: { onImport: () => void }) {
   );
 }
 
-function readingStateLabel(book: MockBook) {
+function readingStateLabel(book: LibraryBook) {
   if (book.state === 'finished') return '已读完';
-  if (book.state === 'unread') return '未开始';
-  return `${book.progress}%`;
+  if (book.progress === null) return '未开始';
+  return `${displayProgress(book)}%`;
 }
 
 const styles = StyleSheet.create({

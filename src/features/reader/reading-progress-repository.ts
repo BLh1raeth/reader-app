@@ -34,7 +34,7 @@ function mapRow(row: ReadingProgressRow): ReadingProgress {
     // Reader Core writes the same CFI to both columns during the transition.
     cfi: candidateCfi,
     spineIndex: row.spine_index,
-    percentage: row.percentage,
+    percentage: Math.max(0, Math.min(1, row.percentage)),
     currentPage: row.current_page,
     totalPages: row.total_pages,
     updatedAt: row.updated_at,
@@ -79,6 +79,15 @@ export const readingProgressRepository = {
       progress.currentPage,
       progress.totalPages,
       progress.updatedAt,
+    );
+  },
+
+  /** Diagnostic read used by the Reader controller after a debounced write. */
+  async readRawForDebug(bookId: string) {
+    const database = await getLibraryDatabase();
+    return database.getFirstAsync<ReadingProgressRow>(
+      'SELECT book_id, cfi, spine_index, percentage, updated_at FROM reading_progress WHERE book_id = ?;',
+      bookId,
     );
   },
 };

@@ -11,6 +11,20 @@ export type ReaderLocation = {
   totalPages: number | null;
 };
 
+/**
+ * A Reader session is deliberately inert until a requested CFI has either
+ * settled or cleanly fallen back. Only `active` locations may be persisted.
+ */
+export type ReaderRestoreState = 'opening' | 'restoring' | 'active';
+
+export type ReaderEngineDiagnostic =
+  | { event: 'DOM_READY' }
+  | { event: 'ENGINE_OPENED' }
+  | { event: 'RESTORE_REQUEST'; targetCfi: string | null }
+  | { event: 'RESTORE_RESULT'; targetCfi: string | null; actualCurrentCfi: string | null }
+  | { event: 'LOCATION_CHANGED'; cfi: string | null; restoreState: ReaderRestoreState }
+  | { event: 'ENGINE_DESTROY' };
+
 export type ReaderEpubSource = {
   sessionId: string;
   fileName: string;
