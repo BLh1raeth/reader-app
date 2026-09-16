@@ -30,10 +30,12 @@ export type ReaderEngineDiagnostic =
 
 export type ReaderEpubSource = {
   sessionId: string;
-  fileUri: string;
   fileName: string;
   byteLength: number;
-  sourceKind: 'native-file-blob';
+  /** Kept inside the bridge layer; the engine only receives a File. */
+  base64: string;
+  sourceKind: 'memory-cache' | 'file-read';
+  sourceReadMs: number;
 };
 
 export type ReaderTocItem = {

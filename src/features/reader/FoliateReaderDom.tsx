@@ -47,7 +47,7 @@ export default function FoliateReaderDom({ source, restoreCfi, onReady, onLocati
     loadedSessionRef.current = nextSource.sessionId;
     void callbacksRef.current.onDiagnostic({ event: 'FOLIATE_OPEN_START' });
     void adapter.open({
-      fileUri: nextSource.fileUri,
+      base64: nextSource.base64,
       fileName: nextSource.fileName,
       restoreCfi,
     }).then((location) => {

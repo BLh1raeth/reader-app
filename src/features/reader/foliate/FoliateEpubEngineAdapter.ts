@@ -1,5 +1,3 @@
-import { File as ExpoFile } from 'expo-file-system';
-
 import type { ReaderEngineDiagnostic, ReaderLocation, ReaderRestoreState, ReaderTocItem } from '../reader-types';
 
 type FoliateRawLocation = {
@@ -23,10 +21,17 @@ type FoliateView = HTMLElement & {
 };
 
 export type FoliateOpenInput = {
-  fileUri: string;
+  base64: string;
   fileName: string;
   restoreCfi: string | null;
 };
+
+function base64ToBytes(base64: string) {
+  const binary = globalThis.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
 
 function clampPercentage(value: number) {
   return Math.max(0, Math.min(100, value));
@@ -73,10 +78,10 @@ export class FoliateEpubEngineAdapter {
     this.host.replaceChildren(view);
     this.view = view;
 
-    // Expo FileSystem File implements Blob. foliate's ZIP reader uses
-    // slice()/arrayBuffer() for its central directory and requested entries,
-    // so the full EPUB never crosses Native -> DOM as base64.
-    const epubFile = new ExpoFile(input.fileUri) as unknown as File;
+    // Expo DOM's current web runtime cannot import expo-file-system. Decode the
+    // bridge payload only after the DOM host is ready, then release it with the
+    // adapter input once foliate has opened its Blob-backed ZIP reader.
+    const epubFile = new File([base64ToBytes(input.base64)], input.fileName, { type: 'application/epub+zip' });
     await view.open(epubFile);
     const engineOpenedAt = performance.now();
     this.onDiagnostic({ event: 'ENGINE_OPENED' });

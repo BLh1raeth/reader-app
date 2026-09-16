@@ -201,15 +201,18 @@ export function useReaderController(bookId: string | undefined) {
         if (!active) return;
         markReaderOpen(book.id, 'EPUB_FILE_READ_END', book.fileSize, {
           sourceKind: source.sourceKind,
+          sourceReadMs: source.sourceReadMs,
         });
         console.log('[READER_RESOURCE]', JSON.stringify({
           bookId: book.id,
           byteLength: source.byteLength,
           sourceKind: source.sourceKind,
+          sourceReadMs: source.sourceReadMs,
         }));
         markReaderOpen(book.id, 'DOM_MOUNT_START', book.fileSize);
         markReaderOpen(book.id, 'EPUB_TRANSFER_START', book.fileSize, {
           sourceKind: source.sourceKind,
+          base64Length: source.base64.length,
         });
         console.log('[PROGRESS_READ]', JSON.stringify({
           bookId: book.id,

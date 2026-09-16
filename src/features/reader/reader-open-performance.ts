@@ -66,8 +66,8 @@ export function reportReaderOpen(bookId: string) {
   const trace = activeTrace;
   if (!trace || trace.bookId !== bookId) return;
   const order: ReaderOpenStage[] = [
-    'BOOK_TAP', 'READER_ROUTE_MOUNTED', 'BOOK_DATA_READY', 'EPUB_FILE_READ_START', 'EPUB_FILE_READ_END', 'DOM_MOUNT_START', 'DOM_READY',
-    'EPUB_TRANSFER_START', 'EPUB_TRANSFER_END', 'FOLIATE_OPEN_START', 'FOLIATE_OPEN_END',
+    'BOOK_TAP', 'READER_ROUTE_MOUNTED', 'BOOK_DATA_READY', 'EPUB_FILE_READ_START', 'EPUB_FILE_READ_END', 'DOM_MOUNT_START', 'EPUB_TRANSFER_START',
+    'DOM_READY', 'EPUB_TRANSFER_END', 'FOLIATE_OPEN_START', 'FOLIATE_OPEN_END',
     'RESTORE_START', 'RESTORE_END', 'FIRST_PAGE_RENDERED', 'READER_VISIBLE',
   ];
   const durations = order.flatMap((stage, index) => {
