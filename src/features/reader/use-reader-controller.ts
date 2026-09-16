@@ -55,7 +55,7 @@ export function useReaderController(bookId: string | undefined) {
     saveTimerRef.current = setTimeout(() => {
       saveTimerRef.current = null;
       void flushLocation().catch(() => undefined);
-    }, 700);
+    }, 300);
   }, [flushLocation]);
 
   const onLocation = useCallback(async (location: ReaderLocation) => {

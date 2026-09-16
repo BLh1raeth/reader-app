@@ -85,13 +85,18 @@ export class FoliateEpubEngineAdapter {
     // top/bottom breathing area without adding a visible container or card.
     view.renderer?.setAttribute('margin', '88px');
     view.renderer?.setAttribute('gap', '7%');
-    try {
-      await view.init({ lastLocation: input.restoreCfi, showTextStart: true });
-    } catch (error) {
-      if (!input.restoreCfi) throw error;
-      // A CFI can become invalid when a user replaces a book file. A clean
-      // first-location fallback is safer than a white reader surface.
-      await view.init({ lastLocation: null, showTextStart: true });
+    // First let foliate finish its own deterministic text-start layout. A
+    // direct restore after that avoids a delayed initial relocate event
+    // replacing a valid saved CFI with the beginning of the book.
+    await view.init({ lastLocation: null, showTextStart: true });
+    if (input.restoreCfi) {
+      try {
+        await view.goTo(input.restoreCfi);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      } catch {
+        // A CFI can become invalid if its EPUB was replaced. Keep the already
+        // loaded first text position rather than showing a white reader.
+      }
     }
 
     const location = this.getLocation();
