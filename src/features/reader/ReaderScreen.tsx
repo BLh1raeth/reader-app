@@ -1,5 +1,7 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { StatusBar } from 'expo-status-bar';
+import { SymbolView } from 'expo-symbols';
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,6 +14,27 @@ function progressLabel(location: ReaderLocation | null) {
   if (!location) return '';
   if (location.currentPage && location.totalPages) return `${location.currentPage} / ${location.totalPages}`;
   return `${Math.round(location.percentage)}%`;
+}
+
+function ReaderGlassButton({
+  accessibilityLabel,
+  icon,
+  onPress,
+}: {
+  accessibilityLabel: string;
+  icon: 'xmark' | 'line.3.horizontal';
+  onPress: () => void;
+}) {
+  const content = (
+    <Pressable accessibilityLabel={accessibilityLabel} accessibilityRole="button" hitSlop={10} onPress={onPress} style={styles.glassButtonContent}>
+      <SymbolView name={icon} size={icon === 'xmark' ? 23 : 25} tintColor="#171719" weight="semibold" />
+    </Pressable>
+  );
+
+  if (isGlassEffectAPIAvailable()) {
+    return <GlassView colorScheme="light" glassEffectStyle="regular" isInteractive style={styles.glassButton}>{content}</GlassView>;
+  }
+  return <View style={styles.glassButtonFallback}>{content}</View>;
 }
 
 export default function ReaderScreen() {
@@ -74,17 +97,24 @@ export default function ReaderScreen() {
         </View>
       ) : null}
 
-      {readerInput && chromeVisible ? (
+      {readerInput ? (
         <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-          <View pointerEvents="box-none" style={[styles.chromeHeader, { paddingTop: insets.top + 10 }]}>
-            <Text numberOfLines={1} style={styles.chromeTitle}>{readerInput.book.title}</Text>
-            <Pressable accessibilityLabel="关闭阅读" accessibilityRole="button" hitSlop={12} onPress={closeReader} style={styles.closeButton}>
-              <Text style={styles.closeGlyph}>×</Text>
-            </Pressable>
+          <View pointerEvents="none" style={[styles.bookTitleContainer, { top: insets.top + 20 }]}>
+            <Text numberOfLines={1} style={styles.bookTitle}>{readerInput.book.title}</Text>
           </View>
+          {chromeVisible ? (
+            <View style={[styles.closeButtonContainer, { top: insets.top + 12 }]}>
+              <ReaderGlassButton accessibilityLabel="关闭阅读" icon="xmark" onPress={closeReader} />
+            </View>
+          ) : null}
           <View pointerEvents="none" style={[styles.positionContainer, { bottom: insets.bottom + 14 }]}>
             <Text style={styles.positionText}>{locationLabel}</Text>
           </View>
+          {chromeVisible ? (
+            <View style={[styles.readerMenuContainer, { bottom: insets.bottom + 14 }]}>
+              <ReaderGlassButton accessibilityLabel="收起阅读控制" icon="line.3.horizontal" onPress={() => setChromeVisible(false)} />
+            </View>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -100,10 +130,13 @@ const styles = StyleSheet.create({
   errorMessage: { color: '#767680', fontSize: 14, lineHeight: 20, textAlign: 'center' },
   returnButton: { alignItems: 'center', borderRadius: 20, justifyContent: 'center', minHeight: 40, paddingHorizontal: 18 },
   returnButtonText: { color: '#1c1c1e', fontSize: 16, fontWeight: '600' },
-  chromeHeader: { alignItems: 'center', flexDirection: 'row', left: 24, position: 'absolute', right: 20 },
-  chromeTitle: { color: '#6d6d72', flex: 1, fontSize: 14, fontWeight: '600', marginRight: 16 },
-  closeButton: { alignItems: 'center', height: 36, justifyContent: 'center', width: 36 },
-  closeGlyph: { color: '#36363a', fontSize: 34, fontWeight: '300', lineHeight: 36 },
+  bookTitleContainer: { alignItems: 'center', left: 78, position: 'absolute', right: 78 },
+  bookTitle: { color: '#8b8b90', fontSize: 15, fontWeight: '600', letterSpacing: -0.1, lineHeight: 20 },
+  closeButtonContainer: { position: 'absolute', right: 22 },
+  readerMenuContainer: { position: 'absolute', right: 22 },
+  glassButton: { borderRadius: 28, height: 56, width: 56 },
+  glassButtonFallback: { backgroundColor: 'rgba(250,250,252,0.86)', borderColor: 'rgba(60,60,67,0.15)', borderRadius: 28, borderWidth: StyleSheet.hairlineWidth, height: 56, shadowColor: '#000000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.1, shadowRadius: 12, width: 56 },
+  glassButtonContent: { alignItems: 'center', flex: 1, justifyContent: 'center' },
   positionContainer: { alignItems: 'center', left: 24, position: 'absolute', right: 24 },
   positionText: { color: '#8e8e93', fontSize: 13, fontVariant: ['tabular-nums'], fontWeight: '600' },
 });

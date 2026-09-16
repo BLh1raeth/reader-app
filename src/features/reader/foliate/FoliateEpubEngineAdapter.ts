@@ -83,7 +83,7 @@ export class FoliateEpubEngineAdapter {
     // `foliate-view` owns an internal `foliate-paginator`; its margin is not
     // inherited from the outer custom element. Give the reader a deliberate
     // top/bottom breathing area without adding a visible container or card.
-    view.renderer?.setAttribute('margin', '72px');
+    view.renderer?.setAttribute('margin', '88px');
     view.renderer?.setAttribute('gap', '7%');
     try {
       await view.init({ lastLocation: input.restoreCfi, showTextStart: true });
@@ -196,7 +196,7 @@ export class FoliateEpubEngineAdapter {
       img {
         display: block !important;
         max-width: 100% !important;
-        max-height: calc(100vh - 144px) !important;
+        max-height: calc(100vh - 176px) !important;
         width: auto !important;
         height: auto !important;
         margin: 14px auto 20px !important;
@@ -205,7 +205,7 @@ export class FoliateEpubEngineAdapter {
         -webkit-column-break-inside: avoid !important;
       }
       /* A paragraph/figure containing only one image is a visual page, not
-         normal text flow. Match its height to foliate's 72px top + bottom
+         normal text flow. Match its height to foliate's 88px top + bottom
          paginator margins so the artwork is vertically centered and never
          sliced between two columns. */
       .reader-standalone-image {
@@ -213,8 +213,8 @@ export class FoliateEpubEngineAdapter {
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        height: calc(100vh - 144px) !important;
-        min-height: calc(100vh - 144px) !important;
+        height: calc(100vh - 176px) !important;
+        min-height: calc(100vh - 176px) !important;
         margin: 0 !important;
         padding: 0 !important;
         break-inside: avoid !important;
