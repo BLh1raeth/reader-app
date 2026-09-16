@@ -189,17 +189,59 @@ export class FoliateEpubEngineAdapter {
   };
 
   private normalizeDocument(doc: Document) {
+    for (const image of Array.from(doc.images)) this.markStandaloneImageContainer(image);
     const style = doc.createElement('style');
     style.textContent = `
       html, body { max-width: 100% !important; overflow-x: hidden !important; }
-      img, svg, video {
+      img {
         display: block !important;
         max-width: 100% !important;
+        max-height: calc(100vh - 144px) !important;
+        width: auto !important;
         height: auto !important;
         margin: 14px auto 20px !important;
+        object-fit: contain !important;
+        break-inside: avoid !important;
+        -webkit-column-break-inside: avoid !important;
+      }
+      /* A paragraph/figure containing only one image is a visual page, not
+         normal text flow. Match its height to foliate's 72px top + bottom
+         paginator margins so the artwork is vertically centered and never
+         sliced between two columns. */
+      .reader-standalone-image {
+        box-sizing: border-box !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        height: calc(100vh - 144px) !important;
+        min-height: calc(100vh - 144px) !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        break-inside: avoid !important;
+        -webkit-column-break-inside: avoid !important;
+      }
+      .reader-standalone-image img {
+        max-height: 100% !important;
+        max-width: 100% !important;
+        margin: 0 auto !important;
       }
       table { max-width: 100% !important; }
     `;
     doc.head.append(style);
+  }
+
+  private markStandaloneImageContainer(image: HTMLImageElement) {
+    let container: HTMLElement | null = image.parentElement;
+    // An image may be wrapped in a link; use its visual paragraph/figure/div
+    // only when that wrapper contains no actual reading text or sibling media.
+    if (container?.tagName === 'A') container = container.parentElement;
+    if (!container || !['P', 'FIGURE', 'DIV'].includes(container.tagName)) return;
+    const meaningfulChildren = Array.from(container.childNodes).filter((node) => {
+      if (node.nodeType === Node.TEXT_NODE) return Boolean(node.textContent?.trim());
+      if (!(node instanceof HTMLElement)) return false;
+      if (node === image || node.contains(image)) return false;
+      return true;
+    });
+    if (meaningfulChildren.length === 0) container.classList.add('reader-standalone-image');
   }
 }
