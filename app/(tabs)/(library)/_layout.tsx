@@ -6,9 +6,9 @@ export default function LibraryStackLayout() {
       <Stack.Screen
         name="index"
         options={{
-          headerLargeTitleEnabled: true,
-          headerLargeTitleShadowVisible: false,
-          title: '书库',
+          headerShown: false,
+          headerLargeTitleEnabled: false,
+          title: '',
         }}
       />
     </Stack>

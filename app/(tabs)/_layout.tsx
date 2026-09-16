@@ -1,5 +1,6 @@
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import { usePathname } from 'expo-router';
+import { PlatformColor } from 'react-native';
 
 import { LibraryViewProvider, useLibraryView } from '../../src/features/library/library-view-context';
 
@@ -13,10 +14,17 @@ export default function TabLayout() {
 
 function AppTabs() {
   const pathname = usePathname();
-  const { toggleDisplayMode } = useLibraryView();
+  const { isTabBarHidden, toggleDisplayMode } = useLibraryView();
+  const booksTabColor = PlatformColor('label');
 
   return (
     <NativeTabs
+      hidden={isTabBarHidden}
+      iconColor={{ default: booksTabColor, selected: booksTabColor }}
+      labelStyle={{
+        default: { color: booksTabColor },
+        selected: { color: booksTabColor },
+      }}
       screenListeners={({ route }) => ({
         tabPress: () => {
           if (route.name === '(library)' && pathname === '/') {
@@ -30,11 +38,11 @@ function AppTabs() {
         <NativeTabs.Trigger.Label>书库</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="data">
-        <NativeTabs.Trigger.Icon sf="chart.bar.xaxis" />
+        <NativeTabs.Trigger.Icon sf="chart.xyaxis.line" />
         <NativeTabs.Trigger.Label>数据</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="excerpts">
-        <NativeTabs.Trigger.Icon sf="quote.bubble" />
+        <NativeTabs.Trigger.Icon sf="quote.opening" />
         <NativeTabs.Trigger.Label>摘录</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
     </NativeTabs>

@@ -30,7 +30,7 @@ export function PlaceholderScreen({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: PlatformColor('systemBackground'),
+    backgroundColor: tokens.colors.background,
   },
   content: {
     flex: 1,

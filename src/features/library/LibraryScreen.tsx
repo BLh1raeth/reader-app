@@ -1,8 +1,14 @@
-import { Link, Stack } from 'expo-router';
+import { Link, useFocusEffect, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { useCallback, useMemo, useState } from 'react';
+import { MenuView, type MenuAction } from '@expo/ui/community/menu';
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
+import { SymbolView } from 'expo-symbols';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { SFSymbol } from 'sf-symbols-typescript';
 import {
   Alert,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,23 +16,62 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated';
+import type { StyleProp, ViewStyle } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, {
+  Easing,
+  Extrapolation,
+  LinearTransition,
+  ReduceMotion,
+  interpolate,
+  runOnJS,
+  type SharedValue,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
 import { tokens } from '../../design-system/tokens';
+import { bookRepository } from './book-repository';
 import {
-  mockBooks,
-  type MockBook,
-  type ReadingState,
-  USE_EMPTY_LIBRARY_MOCK,
-} from './library-mock';
+  importPickedEpubs,
+  removeBooks as removeStoredBooks,
+  replaceBookCover,
+  restoreOriginalBookMetadata,
+  shareBook,
+  updateBookMetadata,
+  updateBookReadingStatus,
+} from './library-import-service';
+import type { Book, ReadingStatus } from './library-types';
 import { useLibraryView } from './library-view-context';
 
 type SortMode = 'manual' | 'recentlyRead' | 'recentlyAdded' | 'title' | 'author';
-type FilterMode = 'all' | ReadingState;
+type FilterMode = 'all' | ReadingStatus;
+type LibraryBook = Book & { lastReadAt?: string; progress: number; state: ReadingStatus };
+// Kept as an internal view-model alias while the existing visual components
+// transition from the former mock source to the SQLite-backed repository.
+type MockBook = LibraryBook;
+type BookMenuHandlers = {
+  onEditCover: (book: LibraryBook) => void;
+  onEditTitle: (book: LibraryBook) => void;
+  onEditAuthor: (book: LibraryBook) => void;
+  onRestoreOriginal: (book: LibraryBook) => void;
+  onRemove: () => void;
+  onShare: (book: LibraryBook) => void;
+  onToggleFinished: (book: LibraryBook) => void;
+};
 
 const layoutTransition = LinearTransition.duration(tokens.animation.layoutDuration).reduceMotion(
   ReduceMotion.System,
 );
+const reorderLayoutTransition = LinearTransition.duration(300)
+  .easing(Easing.out(Easing.cubic))
+  .reduceMotion(ReduceMotion.System);
+const displayModeTransition = LinearTransition.duration(340)
+  .easing(Easing.inOut(Easing.cubic))
+  .reduceMotion(ReduceMotion.System);
+const selectionTransitionDuration = 280;
 
 const sortLabels: Record<SortMode, string> = {
   manual: '手动',
@@ -43,20 +88,73 @@ const filterLabels: Record<FilterMode, string> = {
   finished: '已读完',
 };
 
+function toLibraryBook(book: Book): LibraryBook {
+  return { ...book, lastReadAt: book.lastOpenedAt ?? undefined, progress: book.readingProgress, state: book.readingStatus };
+}
+
 export default function LibraryScreen() {
+  const router = useRouter();
   const { width } = useWindowDimensions();
-  const { displayMode } = useLibraryView();
-  const [books, setBooks] = useState<MockBook[]>(USE_EMPTY_LIBRARY_MOCK ? [] : mockBooks);
+  const insets = useSafeAreaInsets();
+  const scrollOffset = useSharedValue(0);
+  const selectionUiProgress = useSharedValue(0);
+  const { displayMode, setTabBarHidden } = useLibraryView();
+  const [books, setBooks] = useState<LibraryBook[]>([]);
+  const [libraryReady, setLibraryReady] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('manual');
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
   const [selectionMode, setSelectionMode] = useState(false);
+  const [selectionExitPending, setSelectionExitPending] = useState(false);
   const [selectedBookIds, setSelectedBookIds] = useState<string[]>([]);
-  const [manualOrderSnapshot, setManualOrderSnapshot] = useState<MockBook[] | null>(null);
+  const [manualOrderSnapshot, setManualOrderSnapshot] = useState<LibraryBook[] | null>(null);
   const [manualOrderingMode, setManualOrderingMode] = useState(false);
+  const selectionExitTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nativeHeaderVisible = false;
+
+  const reloadBooks = useCallback(async () => {
+    const persistedBooks = await bookRepository.getAllBooks();
+    setBooks(persistedBooks.map(toLibraryBook));
+    setLibraryReady(true);
+  }, []);
+
+  useEffect(() => {
+    void reloadBooks().catch(() => setLibraryReady(true));
+  }, [reloadBooks]);
+
+  useFocusEffect(useCallback(() => {
+    void reloadBooks().catch(() => setLibraryReady(true));
+  }, [reloadBooks]));
 
   const gridItemWidth = Math.max(0, (width - tokens.spacing.screen * 2 - tokens.spacing.grid) / 2);
   const selectedBookSet = useMemo(() => new Set(selectedBookIds), [selectedBookIds]);
   const isAllSelected = books.length > 0 && selectedBookIds.length === books.length;
+  useEffect(() => () => {
+    if (selectionExitTimeout.current) clearTimeout(selectionExitTimeout.current);
+  }, []);
+  const onScroll = useAnimatedScrollHandler((event) => {
+    scrollOffset.set(event.contentOffset.y);
+  });
+  const floatingTitleStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(scrollOffset.get(), [0, 8, 22, 42], [1, 0.82, 0.12, 0], Extrapolation.CLAMP),
+  }));
+  const selectionAllTransitionStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: interpolate(selectionUiProgress.get(), [0, 1], [14, 0], Extrapolation.CLAMP) },
+      { scale: interpolate(selectionUiProgress.get(), [0, 1], [0.9, 1], Extrapolation.CLAMP) },
+    ],
+  }));
+  const selectionDoneTransitionStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: interpolate(selectionUiProgress.get(), [0, 1], [-8, 0], Extrapolation.CLAMP) },
+      { scale: interpolate(selectionUiProgress.get(), [0, 1], [0.88, 1], Extrapolation.CLAMP) },
+    ],
+  }));
+  const selectionBottomTransitionStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: interpolate(selectionUiProgress.get(), [0, 1], [22, 0], Extrapolation.CLAMP) },
+      { scale: interpolate(selectionUiProgress.get(), [0, 1], [0.9, 1], Extrapolation.CLAMP) },
+    ],
+  }));
 
   const visibleBooks = useMemo(() => {
     const filtered = filterMode === 'all' ? books : books.filter((book) => book.state === filterMode);
@@ -72,7 +170,7 @@ export default function LibraryScreen() {
       case 'title':
         return sorted.sort((left, right) => left.title.localeCompare(right.title, 'zh-Hans-CN'));
       case 'author':
-        return sorted.sort((left, right) => left.author.localeCompare(right.author, 'zh-Hans-CN'));
+        return sorted.sort((left, right) => (left.author ?? '').localeCompare(right.author ?? '', 'zh-Hans-CN'));
       case 'manual':
       default:
         return sorted;
@@ -89,52 +187,109 @@ export default function LibraryScreen() {
     [books],
   );
 
-  const announcePlaceholder = useCallback((title: string) => {
-    Alert.alert(title, '这是本阶段的 Mock 交互，不会读取或修改真实图书文件。');
-  }, []);
-
-  const updateBook = useCallback((bookId: string, updater: (book: MockBook) => MockBook) => {
-    setBooks((currentBooks) => currentBooks.map((book) => (book.id === bookId ? updater(book) : book)));
-  }, []);
-
   const toggleFinished = useCallback(
-    (book: MockBook) => {
-      updateBook(book.id, (currentBook) =>
-        currentBook.state === 'finished'
-          ? { ...currentBook, state: 'unread', progress: 0 }
-          : { ...currentBook, state: 'finished', progress: 100 },
-      );
+    (book: LibraryBook) => {
+      const nextStatus: ReadingStatus = book.state === 'finished' ? 'unread' : 'finished';
+      void updateBookReadingStatus(book, nextStatus).then(reloadBooks).catch(() => undefined);
     },
-    [updateBook],
+    [reloadBooks],
   );
 
   const renameBook = useCallback(
-    (book: MockBook) => {
+    (book: LibraryBook) => {
       Alert.prompt(
-        '重新命名…',
-        '新名称仅保存在本次 Mock 运行中。',
+        '编辑书名',
+        undefined,
         (title) => {
           const trimmedTitle = title.trim();
           if (trimmedTitle) {
-            updateBook(book.id, (currentBook) => ({ ...currentBook, title: trimmedTitle }));
+            void updateBookMetadata(book.id, { title: trimmedTitle, author: book.author, coverUri: book.coverUri }).then(reloadBooks).catch(() => undefined);
           }
         },
         'plain-text',
         book.title,
       );
     },
-    [updateBook],
+    [reloadBooks],
+  );
+
+  const renameBookAuthor = useCallback(
+    (book: LibraryBook) => {
+      Alert.prompt(
+        '编辑作者',
+        undefined,
+        (author) => {
+          const trimmedAuthor = author.trim();
+          void updateBookMetadata(book.id, { title: book.title, author: trimmedAuthor || null, coverUri: book.coverUri }).then(reloadBooks).catch(() => undefined);
+        },
+        'plain-text',
+        book.author ?? '',
+      );
+    },
+    [reloadBooks],
   );
 
   const removeBooks = useCallback((bookIds: string[]) => {
     if (bookIds.length === 0) {
       return;
     }
+    Alert.alert(
+      bookIds.length === 1 ? '移除图书？' : `移除这 ${bookIds.length} 本图书？`,
+      '移除后会删除本机保存的 EPUB 和封面。',
+      [
+        { style: 'cancel', text: '取消' },
+        {
+          style: 'destructive',
+          text: '移除',
+          onPress: () => {
+            void removeStoredBooks(bookIds).then(async () => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+              setSelectedBookIds((currentIds) => currentIds.filter((bookId) => !bookIds.includes(bookId)));
+              await reloadBooks();
+            }).catch(() => undefined);
+          },
+        },
+      ],
+    );
+  }, [reloadBooks]);
 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-    setBooks((currentBooks) => currentBooks.filter((book) => !bookIds.includes(book.id)));
-    setSelectedBookIds((currentIds) => currentIds.filter((bookId) => !bookIds.includes(bookId)));
-  }, []);
+  const confirmDuplicateImport = useCallback((duplicate: { existingBook: Book }) => (
+    new Promise<boolean>((resolve) => {
+      Alert.alert(
+        '这本书已经在书库中',
+        `《${duplicate.existingBook.title}》`,
+        [
+          { style: 'cancel', text: '取消', onPress: () => resolve(false) },
+          { text: '再次导入', onPress: () => resolve(true) },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) },
+      );
+    })
+  ), []);
+
+  const importBooks = useCallback(() => {
+    void importPickedEpubs(confirmDuplicateImport).then(async (summary) => {
+      if (!summary) return;
+      await reloadBooks();
+      if (summary.failures.length > 0) {
+        const lines = [
+          summary.imported.length > 0 ? `已导入 ${summary.imported.length} 本图书` : null,
+          summary.failures.length > 0 ? `${summary.failures.length} 本无法读取` : null,
+        ].filter(Boolean);
+        Alert.alert('导入结果', lines.join('\n'));
+      }
+    }).catch(() => undefined);
+  }, [confirmDuplicateImport, reloadBooks]);
+
+  const shareSelectedBooks = useCallback(() => {
+    if (selectedBookIds.length === 0) return;
+    if (selectedBookIds.length > 1) {
+      Alert.alert('批量分享', '当前 iOS 系统分享接口一次只能可靠地分享一本 EPUB。请选择一本图书后再分享。');
+      return;
+    }
+    const book = books.find((item) => item.id === selectedBookIds[0]);
+    if (book) void shareBook(book).catch(() => undefined);
+  }, [books, selectedBookIds]);
 
   const toggleBookSelection = useCallback((bookId: string) => {
     Haptics.selectionAsync().catch(() => undefined);
@@ -146,19 +301,59 @@ export default function LibraryScreen() {
   }, []);
 
   const exitSelectionMode = useCallback(() => {
-    setSelectedBookIds([]);
-    setSelectionMode(false);
-  }, []);
+    if (selectionExitPending) return;
+    setSelectionExitPending(true);
+    setTabBarHidden(false);
+    selectionUiProgress.set(withTiming(0, { duration: selectionTransitionDuration }));
+    if (selectionExitTimeout.current) clearTimeout(selectionExitTimeout.current);
+    selectionExitTimeout.current = setTimeout(() => {
+      setSelectedBookIds([]);
+      setSelectionExitPending(false);
+      setSelectionMode(false);
+      setTabBarHidden(false);
+      selectionExitTimeout.current = null;
+    }, selectionTransitionDuration + 10);
+  }, [selectionExitPending, selectionUiProgress, setTabBarHidden]);
+
+  const enterSelectionMode = useCallback(() => {
+    if (selectionExitTimeout.current) clearTimeout(selectionExitTimeout.current);
+    selectionExitTimeout.current = null;
+    setSelectionExitPending(false);
+    setSelectionMode(true);
+    setTabBarHidden(true);
+    selectionUiProgress.set(withTiming(1, { duration: selectionTransitionDuration }));
+  }, [selectionUiProgress, setTabBarHidden]);
 
   const toggleAllBooks = useCallback(() => {
     Haptics.selectionAsync().catch(() => undefined);
     setSelectedBookIds(isAllSelected ? [] : books.map((book) => book.id));
   }, [books, isAllSelected]);
 
+  const selectionDeleteActions: MenuAction[] = selectedBookIds.length > 0
+    ? [
+        { id: 'remove-selected', title: '移除所选图书', image: 'trash' as SFSymbol, attributes: { destructive: true } },
+        { id: 'remove-all', title: '全部删除', image: 'trash.fill' as SFSymbol, attributes: { destructive: true } },
+      ]
+    : [];
+
+  const handleSelectionDeleteAction = useCallback((actionId: string) => {
+    if (actionId === 'remove-selected') {
+      removeBooks(selectedBookIds);
+    } else if (actionId === 'remove-all') {
+      removeBooks(books.map((book) => book.id));
+    }
+  }, [books, removeBooks, selectedBookIds]);
+
   const enterManualOrderingMode = useCallback(() => {
-    setManualOrderSnapshot(books);
+    if (manualOrderingMode) return;
+    // The stored array is always the manual order; the active sort only changes
+    // the derived view. Switching both states in this event avoids an interim
+    // frame where the grid is rendered in two different orders.
+    setManualOrderSnapshot([...books]);
+    setSortMode('manual');
     setManualOrderingMode(true);
-  }, [books]);
+    setTabBarHidden(true);
+  }, [books, manualOrderingMode, setTabBarHidden]);
 
   const cancelManualOrdering = useCallback(() => {
     if (manualOrderSnapshot) {
@@ -166,12 +361,47 @@ export default function LibraryScreen() {
     }
     setManualOrderSnapshot(null);
     setManualOrderingMode(false);
-  }, [manualOrderSnapshot]);
+    setTabBarHidden(false);
+  }, [manualOrderSnapshot, setTabBarHidden]);
 
   const finishManualOrdering = useCallback(() => {
     setManualOrderSnapshot(null);
     setManualOrderingMode(false);
+    setTabBarHidden(false);
+    void bookRepository.updateManualOrder(books.map((book) => book.id)).catch(() => undefined);
+  }, [books, setTabBarHidden]);
+
+  const notifyManualReorder = useCallback(() => {
+    Haptics.selectionAsync().catch(() => undefined);
   }, []);
+
+  const moveManualBook = useCallback((bookId: string, targetIndex: number) => {
+    setBooks((currentBooks) => {
+      const currentVisibleBooks = filterMode === 'all'
+        ? currentBooks
+        : currentBooks.filter((book) => book.state === filterMode);
+      const sourceIndex = currentVisibleBooks.findIndex((book) => book.id === bookId);
+      const clampedTargetIndex = Math.max(0, Math.min(targetIndex, currentVisibleBooks.length - 1));
+
+      if (sourceIndex < 0 || sourceIndex === clampedTargetIndex) {
+        return currentBooks;
+      }
+
+      const reorderedVisibleBooks = [...currentVisibleBooks];
+      const [movedBook] = reorderedVisibleBooks.splice(sourceIndex, 1);
+      reorderedVisibleBooks.splice(clampedTargetIndex, 0, movedBook);
+
+      if (filterMode === 'all') {
+        return reorderedVisibleBooks;
+      }
+
+      const reorderedBookIds = new Set(reorderedVisibleBooks.map((book) => book.id));
+      let visibleBookIndex = 0;
+      return currentBooks.map((book) => (
+        reorderedBookIds.has(book.id) ? reorderedVisibleBooks[visibleBookIndex++] : book
+      ));
+    });
+  }, [filterMode]);
 
   const chooseSortMode = useCallback(
     (nextSortMode: SortMode) => {
@@ -183,117 +413,234 @@ export default function LibraryScreen() {
     [enterManualOrderingMode],
   );
 
-  const renderBook = (book: MockBook) => {
+  const renderBook = (book: LibraryBook) => {
     const isSelected = selectedBookSet.has(book.id);
+    const canOpenReader = !selectionMode && !selectionExitPending && !manualOrderingMode;
+    const onOpenReader = canOpenReader
+      ? () => router.push({ pathname: '/reader/[bookId]', params: { bookId: book.id } })
+      : undefined;
+    const titleMenu: BookMenuHandlers | undefined = !manualOrderingMode
+      ? {
+          onEditCover: (targetBook) => {
+            void replaceBookCover(targetBook).then((coverUri) => {
+              if (coverUri) return reloadBooks();
+              return undefined;
+            }).catch(() => undefined);
+          },
+          onEditTitle: renameBook,
+          onEditAuthor: renameBookAuthor,
+          onRestoreOriginal: (targetBook) => {
+            void restoreOriginalBookMetadata(targetBook.id).then(reloadBooks).catch(() => undefined);
+          },
+          onRemove: () => removeBooks([book.id]),
+          onShare: (targetBook) => { void shareBook(targetBook).catch(() => undefined); },
+          onToggleFinished: toggleFinished,
+        }
+      : undefined;
     const bookContent = displayMode === 'grid'
-      ? <GridBook book={book} width={gridItemWidth} selected={false} manualOrdering={manualOrderingMode} />
-      : <ListBook book={book} selected={false} manualOrdering={manualOrderingMode} />;
+      ? <GridBook book={book} manualOrdering={manualOrderingMode} onOpenReader={onOpenReader} titleMenu={titleMenu} width={gridItemWidth} selected={selectionMode && isSelected && !selectionExitPending} selectionMode={false} />
+      : <ListBook book={book} manualOrdering={manualOrderingMode} onOpenReader={onOpenReader} titleMenu={titleMenu} selected={false} selectionMode={false} />;
 
-    if (selectionMode) {
+    if (manualOrderingMode) {
       return (
-        <Animated.View key={book.id} layout={layoutTransition} style={displayMode === 'grid' ? { width: gridItemWidth } : undefined}>
-          <Pressable
-            accessibilityLabel={`${book.title}，${isSelected ? '已选择' : '未选择'}`}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: isSelected }}
-            onPress={() => toggleBookSelection(book.id)}
-            style={displayMode === 'grid' ? styles.selectionGridItem : styles.selectionRow}
-          >
-            <View style={displayMode === 'grid' ? styles.selectionGridIndicator : undefined}>
-              <SelectionIndicator selected={isSelected} />
-            </View>
-            <View style={styles.selectionContent}>{bookContent}</View>
-          </Pressable>
-        </Animated.View>
+        <ReorderableBook
+          bookId={book.id}
+          content={bookContent}
+          displayMode={displayMode}
+          index={visibleBooks.findIndex((visibleBook) => visibleBook.id === book.id)}
+          key={book.id}
+          totalBooks={visibleBooks.length}
+          width={gridItemWidth}
+          onMove={moveManualBook}
+          onReorder={notifyManualReorder}
+        />
       );
     }
 
     return (
-      <Animated.View key={book.id} layout={layoutTransition}>
-        <Link href={{ pathname: '/reader/[bookId]', params: { bookId: book.id } }} asChild>
-          <Link.Trigger>
-            <Pressable
-              accessibilityLabel={`${book.title}，${book.author}，${readingStateLabel(book)}`}
-              accessibilityRole="button"
-              style={styles.bookPressable}
-            >
-              {bookContent}
-            </Pressable>
-          </Link.Trigger>
-          <Link.Menu title={book.title}>
-            <Link.MenuAction icon="square.and.arrow.up" onPress={() => announcePlaceholder('分享')}>分享</Link.MenuAction>
-            <Link.MenuAction
-              icon={book.state === 'finished' ? 'arrow.uturn.backward' : 'checkmark.circle'}
-              onPress={() => toggleFinished(book)}
-            >
-              {book.state === 'finished' ? '标记为未读' : '标记为已读完'}
-            </Link.MenuAction>
-            <Link.MenuAction icon="pencil" onPress={() => renameBook(book)}>重新命名…</Link.MenuAction>
-            <Link.MenuAction icon="trash" destructive onPress={() => removeBooks([book.id])}>移除…</Link.MenuAction>
-          </Link.Menu>
-        </Link>
-      </Animated.View>
+      <SelectionBook
+        active={selectionMode || selectionExitPending}
+        book={book}
+        content={bookContent}
+        displayMode={displayMode}
+        exiting={selectionExitPending}
+        key={book.id}
+        selected={isSelected}
+        modeProgress={selectionUiProgress}
+        width={gridItemWidth}
+        onToggle={() => toggleBookSelection(book.id)}
+      />
     );
   };
 
   return (
     <>
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={styles.scrollContent}
-        style={styles.screen}
-      >
-        {books.length === 0 ? (
-          <EmptyLibrary onImport={() => announcePlaceholder('导入图书')} />
-        ) : (
+      <GestureHandlerRootView style={styles.safeArea}>
+        <Animated.ScrollView
+          contentInsetAdjustmentBehavior={nativeHeaderVisible ? 'automatic' : 'never'}
+          contentContainerStyle={[
+            styles.scrollContent,
+            nativeHeaderVisible ? null : { paddingTop: insets.top + tokens.spacing.compact },
+          ]}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          style={styles.screen}
+        >
+          <View style={styles.libraryHeaderSpacer} />
+          {!libraryReady ? null : books.length === 0 ? (
+            <EmptyLibrary onImport={importBooks} />
+          ) : (
+            <>
+              {continueReadingBook ? <ContinueReading book={continueReadingBook} selectionMode={selectionMode && !selectionExitPending} /> : null}
+              <Animated.View layout={displayModeTransition} style={displayMode === 'grid' ? styles.grid : styles.list}>
+                {visibleBooks.map(renderBook)}
+              </Animated.View>
+              {visibleBooks.length > 0 ? (
+                <Animated.View layout={displayModeTransition}>
+                  <Text selectable style={styles.bookCount}>{visibleBooks.length}本书</Text>
+                </Animated.View>
+              ) : null}
+              {visibleBooks.length === 0 ? <Text selectable style={styles.noResults}>没有符合此筛选条件的图书</Text> : null}
+            </>
+          )}
+        </Animated.ScrollView>
+        <>
+          <Animated.View pointerEvents="none" style={[styles.floatingTitle, { top: insets.top + tokens.spacing.compact }, floatingTitleStyle]}>
+            <Text accessibilityRole="header" style={styles.navigationTitle}>书库</Text>
+          </Animated.View>
+          {(!selectionMode || selectionExitPending) && !manualOrderingMode ? (
+              <View pointerEvents="box-none" style={[styles.floatingMenu, { top: insets.top + tokens.spacing.compact }]}>
+                <LibraryOverflowMenu
+                  booksExist={books.length > 0}
+                  filterMode={filterMode}
+                  sortMode={sortMode}
+                  onImport={importBooks}
+                  onSelect={enterSelectionMode}
+                  onSort={chooseSortMode}
+                  onFilter={setFilterMode}
+                  onAdjustOrder={enterManualOrderingMode}
+                  selectionProgress={selectionUiProgress}
+                />
+              </View>
+          ) : null}
+        </>
+        {selectionMode && !selectionExitPending ? (
           <>
-            {continueReadingBook ? <ContinueReading book={continueReadingBook} /> : null}
-            <View style={styles.sectionHeader}>
-              <Text selectable style={styles.sectionTitle}>全部图书</Text>
+            <View pointerEvents="box-none" style={[styles.selectionHeaderActions, { top: insets.top + tokens.spacing.compact }]}>
+              <Animated.View layout={layoutTransition}>
+                <SelectionGlass style={styles.selectionAllGlass}>
+                  <Animated.View style={[styles.selectionControlContent, selectionAllTransitionStyle]}>
+                  <Pressable accessibilityRole="button" onPress={toggleAllBooks} style={styles.selectionControlContent}>
+                    <Text style={styles.selectionAllButtonText}>{isAllSelected ? '取消全选' : '全选'}</Text>
+                  </Pressable>
+                  </Animated.View>
+                </SelectionGlass>
+              </Animated.View>
+              <SelectionGlass colorScheme="dark" style={styles.selectionDoneGlass} tintColor="#000000">
+                <Animated.View style={[styles.selectionControlContent, selectionDoneTransitionStyle]}>
+                  <Pressable accessibilityLabel="完成选择" accessibilityRole="button" onPress={exitSelectionMode} style={styles.selectionControlContent}>
+                    <SymbolView name="checkmark" size={24} tintColor="#FFFFFF" weight="heavy" />
+                  </Pressable>
+                </Animated.View>
+              </SelectionGlass>
             </View>
-            <View style={displayMode === 'grid' ? styles.grid : styles.list}>{visibleBooks.map(renderBook)}</View>
-            {visibleBooks.length === 0 ? <Text selectable style={styles.noResults}>没有符合此筛选条件的图书</Text> : null}
+            <Animated.View
+              pointerEvents={selectionExitPending ? 'none' : 'box-none'}
+              style={[styles.selectionBottomActions, { bottom: insets.bottom }, selectionBottomTransitionStyle]}
+            >
+              <MenuView actions={selectionDeleteActions} onPressAction={(event) => handleSelectionDeleteAction(event.nativeEvent.event)} style={styles.selectionBottomGlass}>
+                <SelectionGlass style={styles.selectionBottomGlass}>
+                  <Pressable
+                    accessibilityLabel="移除所选图书"
+                    accessibilityRole="button"
+                    disabled={selectedBookIds.length === 0}
+                    style={[styles.selectionControlContent, selectedBookIds.length === 0 ? styles.selectionBottomButtonDisabled : null]}
+                  >
+                    <SymbolView name="trash.fill" size={28} tintColor={selectedBookIds.length === 0 ? tokens.colors.tertiaryLabel : tokens.colors.label} weight="semibold" />
+                  </Pressable>
+                </SelectionGlass>
+              </MenuView>
+              <SelectionGlass style={styles.selectionBottomGlass}>
+                <Pressable
+                  accessibilityLabel="分享所选图书"
+                  accessibilityRole="button"
+                  disabled={selectedBookIds.length === 0}
+                  onPress={shareSelectedBooks}
+                  style={[styles.selectionControlContent, selectedBookIds.length === 0 ? styles.selectionBottomButtonDisabled : null]}
+                >
+                  <SymbolView name="square.and.arrow.up" size={28} tintColor={selectedBookIds.length === 0 ? tokens.colors.tertiaryLabel : tokens.colors.label} weight="semibold" />
+                </Pressable>
+              </SelectionGlass>
+            </Animated.View>
           </>
-        )}
-      </ScrollView>
-
-      <Stack.Screen.Title large>{selectionMode ? '选择图书' : manualOrderingMode ? '调整顺序' : '书库'}</Stack.Screen.Title>
-
-      {selectionMode ? (
-        <>
-          <Stack.Toolbar placement="left"><Stack.Toolbar.Button onPress={exitSelectionMode}>取消</Stack.Toolbar.Button></Stack.Toolbar>
-          <Stack.Toolbar placement="right">
-            <Stack.Toolbar.Button onPress={toggleAllBooks}>{isAllSelected ? '取消全选' : '全选'}</Stack.Toolbar.Button>
-            <Stack.Toolbar.Button variant="done" onPress={exitSelectionMode}>完成</Stack.Toolbar.Button>
-          </Stack.Toolbar>
-          <Stack.Toolbar placement="bottom">
-            <Stack.Toolbar.Button disabled={selectedBookIds.length === 0} icon="trash" tintColor={tokens.colors.destructive} onPress={() => removeBooks(selectedBookIds)} />
-            <Stack.Toolbar.Spacer />
-            <Stack.Toolbar.Button disabled={selectedBookIds.length === 0} icon="square.and.arrow.up" onPress={() => announcePlaceholder('批量分享')} />
-          </Stack.Toolbar>
-        </>
-      ) : manualOrderingMode ? (
-        <>
-          <Stack.Toolbar placement="left"><Stack.Toolbar.Button onPress={cancelManualOrdering}>取消</Stack.Toolbar.Button></Stack.Toolbar>
-          <Stack.Toolbar placement="right"><Stack.Toolbar.Button variant="done" onPress={finishManualOrdering}>完成</Stack.Toolbar.Button></Stack.Toolbar>
-        </>
-      ) : (
-        <LibraryToolbar
-          booksExist={books.length > 0}
-          filterMode={filterMode}
-          sortMode={sortMode}
-          onImport={() => announcePlaceholder('导入图书')}
-          onSelect={() => setSelectionMode(true)}
-          onSort={chooseSortMode}
-          onFilter={setFilterMode}
-          onAdjustOrder={enterManualOrderingMode}
-        />
-      )}
+        ) : null}
+        {manualOrderingMode ? (
+          <View pointerEvents="box-none" style={[styles.selectionHeaderActions, { top: insets.top + tokens.spacing.compact }]}>
+            <SelectionGlass style={styles.manualCancelGlass}>
+              <Pressable accessibilityLabel="取消调整顺序" accessibilityRole="button" onPress={cancelManualOrdering} style={styles.selectionControlContent}>
+                <Text style={styles.selectionAllButtonText}>取消</Text>
+              </Pressable>
+            </SelectionGlass>
+            <SelectionGlass colorScheme="dark" style={styles.selectionDoneGlass} tintColor="#000000">
+              <Pressable accessibilityLabel="完成调整顺序" accessibilityRole="button" onPress={finishManualOrdering} style={styles.selectionControlContent}>
+                <SymbolView name="checkmark" size={24} tintColor="#FFFFFF" weight="heavy" />
+              </Pressable>
+            </SelectionGlass>
+          </View>
+        ) : null}
+      </GestureHandlerRootView>
     </>
   );
 }
 
-function LibraryToolbar({ booksExist, filterMode, sortMode, onImport, onSelect, onSort, onFilter, onAdjustOrder }: {
+function BookTitleMenu({ book, children, handlers }: {
+  book: MockBook;
+  children: ReactNode;
+  handlers?: BookMenuHandlers;
+}) {
+  if (!handlers) {
+    return <View style={styles.bookTitleMenu}>{children}</View>;
+  }
+
+  const actions: MenuAction[] = [
+    { id: 'share', image: 'square.and.arrow.up' as SFSymbol, title: '分享' },
+    {
+      id: 'toggle-finished',
+      image: (book.state === 'finished' ? 'arrow.uturn.backward' : 'checkmark.circle') as SFSymbol,
+      title: book.state === 'finished' ? '标记为未读' : '标记为已读完',
+    },
+    {
+      id: 'edit-info',
+      image: 'info.circle' as SFSymbol,
+      title: '编辑图书信息',
+      subactions: [
+        { id: 'edit-cover', image: 'photo' as SFSymbol, title: '封面' },
+        { id: 'edit-title', image: 'textformat' as SFSymbol, title: '书名' },
+        { id: 'edit-author', image: 'person' as SFSymbol, title: '作者' },
+        { id: 'restore-original', image: 'arrow.counterclockwise' as SFSymbol, title: '恢复原始信息' },
+      ],
+    },
+    { id: 'remove', image: 'trash' as SFSymbol, title: '移除', attributes: { destructive: true } },
+  ];
+
+  const handleAction = (actionId: string) => {
+    if (actionId === 'share') handlers.onShare(book);
+    if (actionId === 'toggle-finished') handlers.onToggleFinished(book);
+    if (actionId === 'edit-cover') handlers.onEditCover(book);
+    if (actionId === 'edit-title') handlers.onEditTitle(book);
+    if (actionId === 'edit-author') handlers.onEditAuthor(book);
+    if (actionId === 'restore-original') handlers.onRestoreOriginal(book);
+    if (actionId === 'remove') handlers.onRemove();
+  };
+
+  return (
+    <MenuView actions={actions} onPressAction={(event) => handleAction(event.nativeEvent.event)} style={styles.bookTitleMenu} title={book.title}>
+      {children}
+    </MenuView>
+  );
+}
+
+function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport, onSelect, onSort, onFilter, onAdjustOrder, selectionProgress }: {
   booksExist: boolean;
   filterMode: FilterMode;
   sortMode: SortMode;
@@ -302,86 +649,382 @@ function LibraryToolbar({ booksExist, filterMode, sortMode, onImport, onSelect, 
   onSort: (sortMode: SortMode) => void;
   onFilter: (filterMode: FilterMode) => void;
   onAdjustOrder: () => void;
+  selectionProgress: SharedValue<number>;
 }) {
+  const bookActions: MenuAction[] = booksExist
+    ? [
+      { id: 'select', title: '选择', image: 'checkmark.circle' as SFSymbol },
+      { id: 'adjust-order', title: '调整顺序', image: 'line.3.horizontal' as SFSymbol },
+        {
+          id: 'sort',
+          title: '排序方式',
+          image: 'arrow.up.arrow.down' as SFSymbol,
+          subactions: (Object.keys(sortLabels) as SortMode[]).map((option) => ({
+            id: `sort:${option}`,
+            title: sortLabels[option],
+            state: sortMode === option ? 'on' : 'off',
+          })),
+        },
+        {
+          id: 'filter',
+          title: '筛选',
+          image: 'line.3.horizontal.decrease.circle' as SFSymbol,
+          subactions: (Object.keys(filterLabels) as FilterMode[]).map((option) => ({
+            id: `filter:${option}`,
+            title: filterLabels[option],
+            state: filterMode === option ? 'on' : 'off',
+          })),
+        },
+      ]
+    : [];
+  const actions: MenuAction[] = [
+    { id: 'import', title: '导入图书', image: 'square.and.arrow.down' as SFSymbol },
+    ...bookActions,
+  ];
+
+  const handleMenuAction = (actionId: string) => {
+    if (actionId === 'import') {
+      onImport();
+    } else if (actionId === 'select') {
+      onSelect();
+    } else if (actionId === 'adjust-order') {
+      onAdjustOrder();
+    } else if (actionId.startsWith('sort:')) {
+      onSort(actionId.slice(5) as SortMode);
+    } else if (actionId.startsWith('filter:')) {
+      onFilter(actionId.slice(7) as FilterMode);
+    }
+  };
+
   return (
-    <Stack.Toolbar placement="right">
-      <Stack.Toolbar.Menu icon="ellipsis">
-        <Stack.Toolbar.MenuAction icon="square.and.arrow.down" onPress={onImport}>导入图书…</Stack.Toolbar.MenuAction>
-        {booksExist ? (
-          <>
-            <Stack.Toolbar.MenuAction icon="checkmark.circle" onPress={onSelect}>选择</Stack.Toolbar.MenuAction>
-            {sortMode === 'manual' ? <Stack.Toolbar.MenuAction icon="line.3.horizontal" onPress={onAdjustOrder}>调整顺序</Stack.Toolbar.MenuAction> : null}
-            <Stack.Toolbar.Menu title="排序方式" icon="arrow.up.arrow.down">
-              <Stack.Toolbar.Menu inline>
-                {(Object.keys(sortLabels) as SortMode[]).map((sortOption) => (
-                  <Stack.Toolbar.MenuAction isOn={sortMode === sortOption} key={sortOption} onPress={() => onSort(sortOption)}>
-                    {sortLabels[sortOption]}
-                  </Stack.Toolbar.MenuAction>
-                ))}
-              </Stack.Toolbar.Menu>
-            </Stack.Toolbar.Menu>
-            <Stack.Toolbar.Menu title="筛选" icon="line.3.horizontal.decrease.circle">
-              <Stack.Toolbar.Menu inline>
-                {(Object.keys(filterLabels) as FilterMode[]).map((filterOption) => (
-                  <Stack.Toolbar.MenuAction isOn={filterMode === filterOption} key={filterOption} onPress={() => onFilter(filterOption)}>
-                    {filterLabels[filterOption]}
-                  </Stack.Toolbar.MenuAction>
-                ))}
-              </Stack.Toolbar.Menu>
-            </Stack.Toolbar.Menu>
-          </>
-        ) : null}
-      </Stack.Toolbar.Menu>
-    </Stack.Toolbar>
+    <MenuView actions={actions} onPressAction={(event) => handleMenuAction(event.nativeEvent.event)}>
+      <LibraryMenuTrigger selectionProgress={selectionProgress} />
+    </MenuView>
   );
 }
 
-function ContinueReading({ book }: { book: MockBook }) {
-  return (
-    <Link href={{ pathname: '/reader/[bookId]', params: { bookId: book.id } }} asChild>
-      <Pressable accessibilityLabel={`继续阅读，${book.title}`} accessibilityRole="button" style={styles.continueSection}>
-        <Text selectable style={styles.sectionTitle}>继续阅读</Text>
-        <View style={styles.continueBook}>
-          <BookCover book={book} width={tokens.cover.continueWidth} presentation="continue" />
-          <View style={styles.continueMetadata}>
-            <Text selectable numberOfLines={2} style={styles.continueTitle}>{book.title}</Text>
-            <Text selectable numberOfLines={1} style={styles.author}>{book.author}</Text>
-            <Text selectable style={styles.progressText}>已读 {book.progress}%</Text>
-            <ProgressBar progress={book.progress} />
-          </View>
-        </View>
-      </Pressable>
-    </Link>
+function LibraryMenuTrigger({ selectionProgress }: { selectionProgress: SharedValue<number> }) {
+  const glyphReturnStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(selectionProgress.get(), [0, 1], [1, 0], Extrapolation.CLAMP),
+    transform: [{ scale: interpolate(selectionProgress.get(), [0, 1], [1, 0.85], Extrapolation.CLAMP) }],
+  }));
+  const trigger = (
+    <Pressable accessibilityLabel="书库菜单" accessibilityRole="button" style={styles.menuTriggerContent}>
+      <Animated.Text style={[styles.menuTriggerGlyph, glyphReturnStyle]}>•••</Animated.Text>
+    </Pressable>
   );
+
+  if (isGlassEffectAPIAvailable()) {
+    return (
+      <GlassView glassEffectStyle="regular" isInteractive style={styles.menuGlass}>
+        {trigger}
+      </GlassView>
+    );
+  }
+
+  return <View style={styles.menuTriggerFallback}>{trigger}</View>;
 }
 
-function GridBook({ book, width, selected, manualOrdering }: { book: MockBook; width: number; selected: boolean; manualOrdering: boolean }) {
-  return (
-    <View style={[styles.gridBook, { width }]}>
-      <View style={styles.coverWrap}>
-        <BookCover book={book} width={width} presentation="grid" />
-        {selected ? <SelectionIndicator selected /> : null}
+function ContinueReading({ book, selectionMode }: { book: MockBook; selectionMode: boolean }) {
+  const selectionProgress = useSharedValue(1);
+
+  useEffect(() => {
+    selectionProgress.set(withTiming(selectionMode ? 0 : 1, { duration: 220 }));
+  }, [selectionMode, selectionProgress]);
+
+  const selectionStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(selectionProgress.get(), [0, 1], [0.48, 1], Extrapolation.CLAMP),
+  }));
+
+  const bookPreview = (
+    <View style={styles.continueBook}>
+      <BookCover book={book} width={tokens.cover.continueWidth} presentation="continue" />
+      <View style={styles.continueMetadata}>
+        <Text selectable numberOfLines={2} style={styles.continueTitle}>{book.title}</Text>
+        {book.author ? <Text selectable numberOfLines={1} style={styles.author}>{book.author}</Text> : null}
+        <Text selectable style={styles.progressText}>已读 {book.progress}%</Text>
+        <ProgressBar progress={book.progress} />
       </View>
-      <Text selectable numberOfLines={2} style={styles.gridTitle}>{book.title}</Text>
-      <Text selectable style={styles.gridState}>{readingStateLabel(book)}</Text>
-      {manualOrdering ? <Text accessibilityLabel="排序拖拽手柄" style={styles.gridHandle}>☰</Text> : null}
+    </View>
+  );
+
+  return (
+    <View style={styles.continueSection}>
+      <Text selectable style={styles.sectionTitle}>继续阅读</Text>
+      <Animated.View pointerEvents={selectionMode ? 'none' : 'auto'} style={selectionStyle}>
+        {selectionMode ? bookPreview : (
+          <Link href={{ pathname: '/reader/[bookId]', params: { bookId: book.id } }} asChild>
+            <Pressable accessibilityLabel={`继续阅读，${book.title}`} accessibilityRole="button">
+              {bookPreview}
+            </Pressable>
+          </Link>
+        )}
+      </Animated.View>
     </View>
   );
 }
 
-function ListBook({ book, selected, manualOrdering }: { book: MockBook; selected: boolean; manualOrdering: boolean }) {
+function SelectionBook({
+  active,
+  book,
+  content,
+  displayMode,
+  exiting,
+  modeProgress,
+  onToggle,
+  selected,
+  width,
+}: {
+  active: boolean;
+  book: MockBook;
+  content: ReactNode;
+  displayMode: 'grid' | 'list';
+  exiting: boolean;
+  modeProgress: SharedValue<number>;
+  onToggle: () => void;
+  selected: boolean;
+  width: number;
+}) {
+  const selectionProgress = useSharedValue(1);
+
+  useEffect(() => {
+    const target = active ? (exiting || selected ? 1 : 0) : 1;
+    selectionProgress.set(withTiming(target, { duration: selectionTransitionDuration }));
+  }, [active, exiting, selected, selectionProgress]);
+
+  const selectionStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(selectionProgress.get(), [0, 1], [0.48, 1], Extrapolation.CLAMP),
+    transform: [{ scale: interpolate(selectionProgress.get(), [0, 1], [0.94, 1], Extrapolation.CLAMP) }],
+  }));
+  const listContentStyle = useAnimatedStyle(() => ({
+    transform: [{
+      translateX: displayMode === 'list'
+        ? interpolate(modeProgress.get(), [0, 1], [0, 22], Extrapolation.CLAMP)
+        : 0,
+    }],
+  }));
+  const listIndicatorStyle = useAnimatedStyle(() => ({
+    opacity: displayMode === 'list' ? modeProgress.get() : 0,
+    transform: [{
+      scale: displayMode === 'list'
+        ? interpolate(modeProgress.get(), [0, 1], [0.72, 1], Extrapolation.CLAMP)
+        : 0,
+    }],
+  }));
+
+  return (
+    <Animated.View layout={layoutTransition} style={[displayMode === 'grid' ? { width } : undefined, selectionStyle]}>
+      <Animated.View style={[styles.selectionContent, listContentStyle]}>{content}</Animated.View>
+      {active ? (
+        <Pressable
+          accessibilityLabel={`${book.title}，${selected ? '已选择' : '未选择'}`}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: selected }}
+          disabled={exiting}
+          onPress={onToggle}
+          style={displayMode === 'grid' ? styles.selectionGridItem : styles.selectionRow}
+        >
+          {displayMode === 'list' ? (
+            <Animated.View pointerEvents="none" style={[styles.selectionListIndicator, listIndicatorStyle]}>
+              <SelectionIndicator compact selected={selected} />
+            </Animated.View>
+          ) : null}
+        </Pressable>
+      ) : null}
+    </Animated.View>
+  );
+}
+
+function ReorderableBook({
+  bookId,
+  content,
+  displayMode,
+  index,
+  onMove,
+  onReorder,
+  totalBooks,
+  width,
+}: {
+  bookId: string;
+  content: ReactNode;
+  displayMode: 'grid' | 'list';
+  index: number;
+  onMove: (bookId: string, targetIndex: number) => void;
+  onReorder: () => void;
+  totalBooks: number;
+  width: number;
+}) {
+  const translationX = useSharedValue(0);
+  const translationY = useSharedValue(0);
+  const isDragging = useSharedValue(0);
+  const currentIndex = useSharedValue(index);
+  const dragStartIndex = useSharedValue(index);
+  const lastTargetIndex = useSharedValue(index);
+  const lastReorderTimestamp = useSharedValue(0);
+  const layoutOffsetX = useSharedValue(0);
+  const layoutOffsetY = useSharedValue(0);
+  const [dragging, setDragging] = useState(false);
+  const [layoutAnimationsEnabled, setLayoutAnimationsEnabled] = useState(false);
+  const gridRowStride = width / tokens.cover.gridAspectRatio + 72 + tokens.spacing.gridRow;
+  const gridColumnStride = width + tokens.spacing.grid;
+  const listRowStride = tokens.cover.listWidth / tokens.cover.gridAspectRatio + tokens.spacing.listRowVertical * 2;
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setLayoutAnimationsEnabled(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useLayoutEffect(() => {
+    const previousIndex = currentIndex.get();
+
+    if (isDragging.get() > 0 && previousIndex !== index) {
+      const horizontalShift = displayMode === 'grid'
+        ? (index % 2 - previousIndex % 2) * gridColumnStride
+        : 0;
+      const verticalShift = displayMode === 'grid'
+        ? (Math.floor(index / 2) - Math.floor(previousIndex / 2)) * gridRowStride
+        : (index - previousIndex) * listRowStride;
+
+      layoutOffsetX.set(layoutOffsetX.get() - horizontalShift);
+      layoutOffsetY.set(layoutOffsetY.get() - verticalShift);
+      translationX.set(translationX.get() - horizontalShift);
+      translationY.set(translationY.get() - verticalShift);
+    }
+
+    currentIndex.set(index);
+  }, [currentIndex, displayMode, gridColumnStride, gridRowStride, index, isDragging, layoutOffsetX, layoutOffsetY, listRowStride, translationX, translationY]);
+
+  const dragStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translationX.get() },
+      { translateY: translationY.get() },
+      { scale: interpolate(isDragging.get(), [0, 1], [1, 1.025], Extrapolation.CLAMP) },
+    ],
+  }));
+  const dragContainerStyle = useAnimatedStyle(() => ({
+    zIndex: isDragging.get() > 0 ? 10 : 0,
+  }));
+
+  const gesture = useMemo(
+    () => Gesture.Pan()
+      .activateAfterLongPress(180)
+      .onBegin(() => {
+        isDragging.set(1);
+        dragStartIndex.set(currentIndex.get());
+        lastTargetIndex.set(currentIndex.get());
+        lastReorderTimestamp.set(0);
+        layoutOffsetX.set(0);
+        layoutOffsetY.set(0);
+        runOnJS(setDragging)(true);
+      })
+      .onUpdate((event) => {
+        translationX.set(displayMode === 'grid' ? event.translationX + layoutOffsetX.get() : 0);
+        translationY.set(event.translationY + layoutOffsetY.get());
+
+        const rawTargetIndex = displayMode === 'grid'
+          ? dragStartIndex.get()
+            + Math.round(event.translationY / gridRowStride) * 2
+            + Math.round(event.translationX / gridColumnStride)
+          : dragStartIndex.get() + Math.round(event.translationY / listRowStride);
+        const targetIndex = Math.max(0, Math.min(rawTargetIndex, totalBooks - 1));
+
+        const now = Date.now();
+        const canReorder = now - lastReorderTimestamp.get() >= 75;
+        if (lastTargetIndex.get() !== targetIndex && canReorder) {
+          lastTargetIndex.set(targetIndex);
+          lastReorderTimestamp.set(now);
+          runOnJS(onReorder)();
+          runOnJS(onMove)(bookId, targetIndex);
+        }
+      })
+      .onEnd((event) => {
+        const rawTargetIndex = displayMode === 'grid'
+          ? dragStartIndex.get()
+            + Math.round(event.translationY / gridRowStride) * 2
+            + Math.round(event.translationX / gridColumnStride)
+          : dragStartIndex.get() + Math.round(event.translationY / listRowStride);
+        const targetIndex = Math.max(0, Math.min(rawTargetIndex, totalBooks - 1));
+        if (lastTargetIndex.get() !== targetIndex) {
+          lastReorderTimestamp.set(Date.now());
+          runOnJS(onReorder)();
+          runOnJS(onMove)(bookId, targetIndex);
+        }
+      })
+      .onFinalize(() => {
+        isDragging.set(withTiming(0, { duration: tokens.animation.pressDuration }));
+        translationX.set(withTiming(0, { duration: tokens.animation.layoutDuration }));
+        translationY.set(withTiming(0, { duration: tokens.animation.layoutDuration }));
+        layoutOffsetX.set(0);
+        layoutOffsetY.set(0);
+        runOnJS(setDragging)(false);
+      }),
+    [bookId, currentIndex, displayMode, dragStartIndex, gridColumnStride, gridRowStride, isDragging, lastReorderTimestamp, lastTargetIndex, layoutOffsetX, layoutOffsetY, listRowStride, onMove, onReorder, totalBooks, translationX, translationY],
+  );
+
+  return (
+    <GestureDetector gesture={gesture}>
+      <Animated.View
+        accessibilityLabel="长按后拖动以调整书籍顺序"
+        accessible
+        collapsable={false}
+        layout={dragging || !layoutAnimationsEnabled ? undefined : reorderLayoutTransition}
+        style={[displayMode === 'grid' ? { width } : undefined, styles.manualReorderItem, dragContainerStyle]}
+      >
+        <Animated.View style={dragStyle}>{content}</Animated.View>
+      </Animated.View>
+    </GestureDetector>
+  );
+}
+
+function GridBook({ book, manualOrdering, onOpenReader, titleMenu, width, selected, selectionMode }: { book: MockBook; manualOrdering: boolean; onOpenReader?: () => void; titleMenu?: BookMenuHandlers; width: number; selected: boolean; selectionMode: boolean }) {
+  return (
+    <View style={[styles.gridBook, { width }]}>
+      <View style={styles.coverWrap}>
+        <Pressable
+          accessibilityLabel={`打开 ${book.title}`}
+          accessibilityRole="button"
+          disabled={!onOpenReader}
+          onPress={onOpenReader}
+        >
+          <BookCover book={book} width={width} presentation="grid" />
+        </Pressable>
+        {selected ? <View pointerEvents="none" style={styles.coverSelectionCenter}><SelectionIndicator selected /></View> : null}
+      </View>
+      {!selectionMode ? (
+        <BookTitleMenu book={book} handlers={titleMenu}>
+          <View style={styles.gridMenuTrigger}>
+            <Text selectable numberOfLines={manualOrdering ? 1 : 2} style={styles.gridTitle}>{book.title}</Text>
+            <Text selectable style={styles.gridState}>{readingStateLabel(book)}</Text>
+          </View>
+        </BookTitleMenu>
+      ) : null}
+    </View>
+  );
+}
+
+function ListBook({ book, manualOrdering, onOpenReader, titleMenu, selected, selectionMode }: { book: MockBook; manualOrdering: boolean; onOpenReader?: () => void; titleMenu?: BookMenuHandlers; selected: boolean; selectionMode: boolean }) {
   return (
     <View style={styles.listBook}>
       <View style={styles.listCoverWrap}>
-        <BookCover book={book} width={tokens.cover.listWidth} presentation="list" />
+        <Pressable
+          accessibilityLabel={`打开 ${book.title}`}
+          accessibilityRole="button"
+          disabled={!onOpenReader}
+          onPress={onOpenReader}
+        >
+          <BookCover book={book} width={tokens.cover.listWidth} presentation="list" />
+        </Pressable>
         {selected ? <SelectionIndicator selected /> : null}
       </View>
       <View style={styles.listMetadata}>
-        <Text selectable numberOfLines={2} style={styles.listTitle}>{book.title}</Text>
-        <Text selectable numberOfLines={1} style={styles.author}>{book.author}</Text>
-        <Text selectable style={styles.listState}>{readingStateLabel(book)}</Text>
+        <BookTitleMenu book={book} handlers={titleMenu}>
+          <View style={styles.listMenuTrigger}>
+            <Text selectable numberOfLines={manualOrdering ? 1 : 2} style={styles.listTitle}>{book.title}</Text>
+            {book.author ? <Text selectable numberOfLines={1} style={styles.author}>{book.author}</Text> : null}
+            {!selectionMode ? <Text selectable style={styles.listState}>{readingStateLabel(book)}</Text> : null}
+          </View>
+        </BookTitleMenu>
       </View>
-      {manualOrdering ? <Text accessibilityLabel="排序拖拽手柄" style={styles.listHandle}>☰</Text> : null}
     </View>
   );
 }
@@ -397,22 +1040,43 @@ function BookCover({
 }) {
   const height = width / tokens.cover.gridAspectRatio;
   const isLightTone = book.coverTone === 'paper' || book.coverTone === 'mist';
+  const [didFailToLoadCover, setDidFailToLoadCover] = useState(false);
   const shadowStyle = presentation === 'grid'
     ? styles.coverShadowGrid
     : presentation === 'continue'
       ? styles.coverShadowContinue
       : styles.coverShadowList;
+  const tightShadowStyle = presentation === 'grid'
+    ? styles.coverShadowGridTight
+    : presentation === 'continue'
+      ? styles.coverShadowContinueTight
+      : styles.coverShadowListTight;
+  const coverBackground = tokens.coverTones[book.coverTone];
 
   return (
     <View
       accessibilityLabel={`${book.title}的${book.hasGeneratedCover ? '默认' : '模拟'}封面`}
-      style={[styles.coverShadow, shadowStyle, { width, height, backgroundColor: tokens.coverTones[book.coverTone] }]}
+      style={[styles.coverContainer, { width, height }]}
     >
-      <View style={[styles.cover, { backgroundColor: tokens.coverTones[book.coverTone] }]}>
-        <View style={styles.coverAccent} />
-        <Text numberOfLines={3} style={[styles.coverTitle, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>{book.title}</Text>
-        <Text numberOfLines={1} style={[styles.coverAuthor, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>{book.author}</Text>
-        {book.hasGeneratedCover ? <Text style={[styles.coverGeneratedLabel, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>阅读</Text> : null}
+      <View style={[styles.coverShadow, shadowStyle, { backgroundColor: coverBackground }]}>
+        <View style={[styles.coverShadowTight, tightShadowStyle, { backgroundColor: coverBackground }]}>
+        {book.coverUri && !didFailToLoadCover ? (
+          <Image
+            accessibilityLabel={`${book.title}书封`}
+            onError={() => setDidFailToLoadCover(true)}
+            resizeMode="cover"
+            source={{ uri: book.coverUri }}
+            style={styles.coverImage}
+          />
+        ) : (
+            <View style={[styles.cover, { backgroundColor: coverBackground }]}>
+            <View style={styles.coverAccent} />
+            <Text numberOfLines={3} style={[styles.coverTitle, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>{book.title}</Text>
+            {book.author ? <Text numberOfLines={1} style={[styles.coverAuthor, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>{book.author}</Text> : <View />}
+            {book.hasGeneratedCover ? <Text style={[styles.coverGeneratedLabel, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>阅读</Text> : null}
+          </View>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -426,8 +1090,34 @@ function ProgressBar({ progress }: { progress: number }) {
   );
 }
 
-function SelectionIndicator({ selected }: { selected: boolean }) {
-  return <View style={[styles.selectionIndicator, selected ? styles.selectionIndicatorSelected : null]} />;
+function SelectionIndicator({ compact = false, selected }: { compact?: boolean; selected: boolean }) {
+  return (
+    <View style={[styles.selectionIndicator, compact ? styles.selectionIndicatorCompact : null, selected ? styles.selectionIndicatorSelected : null]}>
+      {selected ? <SymbolView name="checkmark" size={compact ? 13 : 15} tintColor="#FFFFFF" weight="bold" /> : null}
+    </View>
+  );
+}
+
+function SelectionGlass({
+  children,
+  colorScheme,
+  style,
+  tintColor,
+}: {
+  children: ReactNode;
+  colorScheme?: 'auto' | 'light' | 'dark';
+  style: StyleProp<ViewStyle>;
+  tintColor?: string;
+}) {
+  if (isGlassEffectAPIAvailable()) {
+    return (
+      <GlassView colorScheme={colorScheme} glassEffectStyle="regular" isInteractive style={style} tintColor={tintColor}>
+        {children}
+      </GlassView>
+    );
+  }
+
+  return <View style={[styles.selectionGlassFallback, style]}>{children}</View>;
 }
 
 function EmptyLibrary({ onImport }: { onImport: () => void }) {
@@ -448,8 +1138,17 @@ function readingStateLabel(book: MockBook) {
 }
 
 const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: tokens.colors.background },
   screen: { flex: 1, backgroundColor: tokens.colors.background },
-  scrollContent: { paddingHorizontal: tokens.spacing.screen, paddingBottom: tokens.spacing.section * 2, gap: tokens.spacing.section },
+  libraryHeaderSpacer: { height: 44 },
+  floatingTitle: { left: tokens.spacing.screen, position: 'absolute' },
+  navigationTitle: { color: tokens.colors.label, fontSize: tokens.typography.largeTitle, fontWeight: '700', letterSpacing: -0.6, lineHeight: 40 },
+  floatingMenu: { position: 'absolute', right: tokens.spacing.medium },
+  menuGlass: { borderRadius: 22, height: 44, width: 44 },
+  menuTriggerFallback: { borderColor: tokens.colors.separator, borderRadius: 22, borderWidth: StyleSheet.hairlineWidth, height: 44, width: 44 },
+  menuTriggerContent: { alignItems: 'center', height: 44, justifyContent: 'center', width: 44 },
+  menuTriggerGlyph: { color: tokens.colors.label, fontSize: 18, fontWeight: '700', letterSpacing: 1, marginLeft: 1, marginTop: -2 },
+  scrollContent: { paddingHorizontal: tokens.spacing.screen, paddingBottom: tokens.spacing.section * 6, gap: tokens.spacing.section },
   continueSection: { gap: tokens.spacing.item },
   continueBook: { flexDirection: 'row', gap: tokens.spacing.medium, minHeight: 138 },
   continueMetadata: { flex: 1, justifyContent: 'center', gap: tokens.spacing.compact },
@@ -463,39 +1162,60 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: tokens.spacing.grid, rowGap: tokens.spacing.gridRow },
   list: { gap: 0 },
   bookPressable: { minHeight: 44 },
+  bookTitleMenu: { alignSelf: 'flex-start' },
+  manualReorderItem: { minHeight: 44 },
   gridBook: { gap: 4 },
+  gridMenuTrigger: { gap: 2, minHeight: 42 },
   coverWrap: { position: 'relative' },
+  coverSelectionCenter: { alignItems: 'center', bottom: 0, justifyContent: 'center', left: 0, position: 'absolute', right: 0, top: 0, zIndex: 2 },
   gridTitle: { color: tokens.colors.label, fontSize: 14, fontWeight: '600', lineHeight: 18, minHeight: 18 },
   gridState: { color: tokens.colors.secondaryLabel, fontSize: 12, fontVariant: ['tabular-nums'] },
-  listBook: { minHeight: 82, flexDirection: 'row', alignItems: 'center', gap: tokens.spacing.grid, paddingVertical: tokens.spacing.listRowVertical },
+  listBook: { minHeight: 82, flexDirection: 'row', alignItems: 'center', gap: tokens.spacing.listGap, paddingVertical: tokens.spacing.listRowVertical },
   listCoverWrap: { position: 'relative' },
-  listMetadata: { alignSelf: 'stretch', borderBottomColor: tokens.colors.separator, borderBottomWidth: StyleSheet.hairlineWidth, flex: 1, gap: 1, justifyContent: 'center' },
+  listMetadata: { alignSelf: 'stretch', flex: 1, gap: 1, justifyContent: 'center' },
+  listMenuTrigger: { alignSelf: 'stretch', gap: 1, justifyContent: 'center', minHeight: 58 },
   listTitle: { color: tokens.colors.label, fontSize: tokens.typography.bookTitle, fontWeight: '600', lineHeight: 20 },
   listState: { color: tokens.colors.tertiaryLabel, fontSize: 13, fontVariant: ['tabular-nums'] },
-  coverShadow: { borderRadius: tokens.radius.cover },
+  coverContainer: { position: 'relative' },
+  coverShadow: { borderRadius: tokens.radius.cover, height: '100%', width: '100%', zIndex: 1 },
   coverShadowGrid: { shadowColor: tokens.shadows.coverGrid.color, shadowOpacity: tokens.shadows.coverGrid.opacity, shadowRadius: tokens.shadows.coverGrid.radius, shadowOffset: { width: 0, height: tokens.shadows.coverGrid.offsetY } },
+  coverShadowGridTight: { shadowColor: tokens.shadows.coverGridTight.color, shadowOpacity: tokens.shadows.coverGridTight.opacity, shadowRadius: tokens.shadows.coverGridTight.radius, shadowOffset: { width: 0, height: tokens.shadows.coverGridTight.offsetY } },
   coverShadowContinue: { shadowColor: tokens.shadows.coverContinue.color, shadowOpacity: tokens.shadows.coverContinue.opacity, shadowRadius: tokens.shadows.coverContinue.radius, shadowOffset: { width: 0, height: tokens.shadows.coverContinue.offsetY } },
+  coverShadowContinueTight: { shadowColor: tokens.shadows.coverContinueTight.color, shadowOpacity: tokens.shadows.coverContinueTight.opacity, shadowRadius: tokens.shadows.coverContinueTight.radius, shadowOffset: { width: 0, height: tokens.shadows.coverContinueTight.offsetY } },
   coverShadowList: { shadowColor: tokens.shadows.coverList.color, shadowOpacity: tokens.shadows.coverList.opacity, shadowRadius: tokens.shadows.coverList.radius, shadowOffset: { width: 0, height: tokens.shadows.coverList.offsetY } },
+  coverShadowListTight: { shadowColor: tokens.shadows.coverListTight.color, shadowOpacity: tokens.shadows.coverListTight.opacity, shadowRadius: tokens.shadows.coverListTight.radius, shadowOffset: { width: 0, height: tokens.shadows.coverListTight.offsetY } },
+  coverShadowTight: { borderRadius: tokens.radius.cover, flex: 1 },
   cover: { flex: 1, justifyContent: 'space-between', overflow: 'hidden', padding: tokens.spacing.coverInset, borderCurve: 'continuous', borderRadius: tokens.radius.cover },
+  coverImage: { borderCurve: 'continuous', borderRadius: tokens.radius.cover, height: '100%', width: '100%' },
   coverAccent: { width: 18, height: 1, backgroundColor: 'rgba(255,255,255,0.42)', borderRadius: 1 },
   coverTitle: { fontSize: 15, fontWeight: '600', lineHeight: 19, letterSpacing: -0.15 },
   coverAuthor: { fontSize: 10, fontWeight: '500', opacity: 0.72 },
   coverTitleLight: { color: '#FFFFFF' },
   coverTitleDark: { color: '#2C2C2E' },
   coverGeneratedLabel: { alignSelf: 'flex-start', fontSize: 11, fontWeight: '600', letterSpacing: 1.4, textTransform: 'uppercase' },
-  selectionRow: { flexDirection: 'row', alignItems: 'center', gap: tokens.spacing.compact, minHeight: 44 },
-  selectionGridItem: { minHeight: 44, position: 'relative' },
-  selectionGridIndicator: { position: 'absolute', zIndex: 1, left: tokens.spacing.compact, top: tokens.spacing.compact },
+  selectionRow: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0, zIndex: 3 },
+  selectionGridItem: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0, zIndex: 3 },
   selectionContent: { flex: 1 },
-  selectionIndicator: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: tokens.colors.tertiaryLabel, backgroundColor: tokens.colors.background },
-  selectionIndicatorSelected: { borderColor: tokens.colors.blue, backgroundColor: tokens.colors.blue },
-  gridHandle: { alignSelf: 'flex-end', color: tokens.colors.secondaryLabel, fontSize: 19, marginTop: -26 },
-  listHandle: { color: tokens.colors.secondaryLabel, fontSize: 24, paddingHorizontal: tokens.spacing.compact },
+  selectionIndicator: { alignItems: 'center', backgroundColor: tokens.colors.background, borderColor: tokens.colors.tertiaryLabel, borderRadius: 14, borderWidth: 2, height: 28, justifyContent: 'center', width: 28 },
+  selectionIndicatorCompact: { borderRadius: 12, height: 24, width: 24 },
+  selectionIndicatorSelected: { backgroundColor: '#000000', borderColor: '#000000' },
+  selectionListIndicator: { left: -10, position: 'absolute', top: 35, zIndex: 2 },
+  selectionHeaderActions: { alignItems: 'center', flexDirection: 'row', gap: tokens.spacing.compact, position: 'absolute', right: tokens.spacing.medium },
+  selectionGlassFallback: { backgroundColor: tokens.colors.background, borderColor: tokens.colors.separator, borderWidth: StyleSheet.hairlineWidth },
+  selectionAllGlass: { borderRadius: 22, height: 44, minWidth: 76, paddingHorizontal: tokens.spacing.item },
+  manualCancelGlass: { borderRadius: 22, height: 44, minWidth: 68, paddingHorizontal: tokens.spacing.item },
+  selectionDoneGlass: { borderRadius: 22, height: 44, width: 44 },
+  selectionBottomGlass: { borderRadius: 28, height: 56, width: 56 },
+  selectionControlContent: { alignItems: 'center', flex: 1, justifyContent: 'center' },
+  selectionAllButtonText: { color: tokens.colors.label, fontSize: 17, fontWeight: '600' },
+  selectionBottomActions: { flexDirection: 'row', justifyContent: 'space-between', left: tokens.spacing.screen, position: 'absolute', right: tokens.spacing.screen },
+  selectionBottomButtonDisabled: { opacity: 0.45 },
   emptyState: { flex: 1, minHeight: 440, justifyContent: 'center', alignItems: 'center', gap: tokens.spacing.compact, paddingBottom: 72 },
   emptySymbol: { color: tokens.colors.secondaryLabel, fontSize: 50, marginBottom: tokens.spacing.compact },
   emptyTitle: { color: tokens.colors.label, fontSize: tokens.typography.sectionTitle, fontWeight: '700' },
   emptyDescription: { color: tokens.colors.secondaryLabel, fontSize: tokens.typography.metadata },
   importButton: { minHeight: 44, borderRadius: 22, backgroundColor: tokens.colors.blue, justifyContent: 'center', paddingHorizontal: tokens.spacing.section, marginTop: tokens.spacing.item },
   importButtonText: { color: '#FFFFFF', fontSize: tokens.typography.body, fontWeight: '600' },
+  bookCount: { color: tokens.colors.secondaryLabel, fontSize: tokens.typography.metadata, paddingTop: tokens.spacing.section * 2, textAlign: 'center' },
   noResults: { color: tokens.colors.secondaryLabel, fontSize: tokens.typography.metadata, paddingVertical: tokens.spacing.section, textAlign: 'center' },
 });

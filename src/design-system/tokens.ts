@@ -2,11 +2,12 @@ import { PlatformColor } from 'react-native';
 
 export const tokens = {
   spacing: {
-    screen: 20,
+    screen: 28,
     section: 20,
     medium: 16,
-    grid: 14,
-    gridRow: 22,
+    grid: 24,
+    gridRow: 34,
+    listGap: 14,
     item: 12,
     compact: 6,
     listRowVertical: 8,
@@ -33,12 +34,17 @@ export const tokens = {
     continueWidth: 92,
   },
   shadows: {
-    coverGrid: { color: '#000000', opacity: 0.15, radius: 8, offsetY: 4 },
-    coverContinue: { color: '#000000', opacity: 0.12, radius: 6, offsetY: 3 },
-    coverList: { color: '#000000', opacity: 0.1, radius: 4, offsetY: 2 },
+    // The broad layer stays narrower than the grid gutter, so it reads as a
+    // shadow beneath a book rather than bleeding into its neighbour.
+    coverGrid: { color: '#000000', opacity: 0.29, radius: 11, offsetY: 11 },
+    coverGridTight: { color: '#000000', opacity: 0.3, radius: 4, offsetY: 1 },
+    coverContinue: { color: '#000000', opacity: 0.24, radius: 9, offsetY: 8 },
+    coverContinueTight: { color: '#000000', opacity: 0.24, radius: 3, offsetY: 1 },
+    coverList: { color: '#000000', opacity: 0.18, radius: 7, offsetY: 5 },
+    coverListTight: { color: '#000000', opacity: 0.2, radius: 2, offsetY: 1 },
   },
   colors: {
-    background: PlatformColor('systemBackground'),
+    background: '#F3F2F8',
     label: PlatformColor('label'),
     secondaryLabel: PlatformColor('secondaryLabel'),
     tertiaryLabel: PlatformColor('tertiaryLabel'),
