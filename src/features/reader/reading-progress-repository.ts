@@ -22,11 +22,17 @@ type ReadingProgressRow = {
 };
 
 function mapRow(row: ReadingProgressRow): ReadingProgress {
+  const candidateCfi = [row.cfi, row.location].find((location): location is string => Boolean(location?.startsWith('epubcfi(')));
+  if (!candidateCfi) {
+    // Older builds stored a hand-made `spine:#block:` marker here. It is not
+    // an EPUB CFI and must never be passed to foliate-js.
+    throw new Error('LEGACY_NON_CFI_LOCATION');
+  }
   return {
     bookId: row.book_id,
     // `location` is retained for the legacy prototype migration only. New
     // Reader Core writes the same CFI to both columns during the transition.
-    cfi: row.cfi ?? row.location,
+    cfi: candidateCfi,
     spineIndex: row.spine_index,
     percentage: row.percentage,
     currentPage: row.current_page,
@@ -42,7 +48,13 @@ export const readingProgressRepository = {
       'SELECT * FROM reading_progress WHERE book_id = ?;',
       bookId,
     );
-    return row ? mapRow(row) : null;
+    if (!row) return null;
+    try {
+      return mapRow(row);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'LEGACY_NON_CFI_LOCATION') return null;
+      throw error;
+    }
   },
 
   async upsert(progress: ReadingProgress) {

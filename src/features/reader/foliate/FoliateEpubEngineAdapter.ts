@@ -52,6 +52,7 @@ function mapToc(items: unknown): ReaderTocItem[] {
 export class FoliateEpubEngineAdapter {
   private view: FoliateView | null = null;
   private loadedDocuments: Document[] = [];
+  private acceptRelocations = false;
 
   constructor(
     private readonly host: HTMLElement,
@@ -61,6 +62,7 @@ export class FoliateEpubEngineAdapter {
 
   async open(input: FoliateOpenInput): Promise<ReaderLocation> {
     this.destroy();
+    this.acceptRelocations = false;
     await import('foliate-js/view.js');
 
     const view = document.createElement('foliate-view') as FoliateView;
@@ -89,7 +91,7 @@ export class FoliateEpubEngineAdapter {
     // direct restore after that avoids a delayed initial relocate event
     // replacing a valid saved CFI with the beginning of the book.
     await view.init({ lastLocation: null, showTextStart: true });
-    if (input.restoreCfi) {
+    if (input.restoreCfi?.startsWith('epubcfi(')) {
       try {
         await view.goTo(input.restoreCfi);
         await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -99,6 +101,10 @@ export class FoliateEpubEngineAdapter {
       }
     }
 
+    // Ignore every initial relocation (including the text-start event) until
+    // the requested CFI has settled. Otherwise that delayed first event can
+    // overwrite the resumed location in SQLite after ReaderScreen is ready.
+    this.acceptRelocations = true;
     const location = this.getLocation();
     view.style.visibility = 'visible';
     this.onLocation(location);
@@ -152,6 +158,7 @@ export class FoliateEpubEngineAdapter {
   removeAnnotation() { throw new Error('Reader Core A 尚未启用标注。'); }
 
   destroy() {
+    this.acceptRelocations = false;
     for (const doc of this.loadedDocuments) doc.removeEventListener('click', this.handleDocumentClick);
     this.loadedDocuments = [];
     if (this.view) {
@@ -165,6 +172,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   private readonly handleRelocate = () => {
+    if (!this.acceptRelocations) return;
     try {
       this.onLocation(this.getLocation());
     } catch {
