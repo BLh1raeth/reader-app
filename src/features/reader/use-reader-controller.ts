@@ -5,6 +5,7 @@ import { bookRepository } from '../library/book-repository';
 import type { Book } from '../library/library-types';
 import { readingProgressRepository, type ReadingProgress } from './reading-progress-repository';
 import { createReaderEpubSource } from './reader-resource-bridge';
+import { markReaderOpen } from './reader-open-performance';
 import type { ReaderEngineDiagnostic, ReaderEpubSource, ReaderLocation, ReaderRestoreState } from './reader-types';
 
 export type ReaderControllerState =
@@ -91,6 +92,7 @@ export function useReaderController(bookId: string | undefined) {
       ? { kind: 'ready', book: current.book, restoreCfi: current.restoreCfi }
       : current);
     console.log('[ENGINE_ACTIVE]', JSON.stringify({ bookId: currentBookRef.current?.id ?? null, cfi: location.cfi, source }));
+    if (currentBookRef.current) markReaderOpen(currentBookRef.current.id, 'READER_VISIBLE', currentBookRef.current.fileSize, { source });
   }, []);
 
   const onLocation = useCallback(async (location: ReaderLocation, domRestoreState: ReaderRestoreState) => {
@@ -126,15 +128,32 @@ export function useReaderController(bookId: string | undefined) {
     const book = currentBookRef.current;
     switch (diagnostic.event) {
       case 'DOM_READY':
+        if (book) markReaderOpen(book.id, 'DOM_READY', book.fileSize);
+        console.log('[DOM_READY]', JSON.stringify({ bookId: book?.id ?? null }));
+        return;
+      case 'EPUB_TRANSFER_END':
+        if (book) markReaderOpen(book.id, 'EPUB_TRANSFER_END', book.fileSize);
+        return;
+      case 'FOLIATE_OPEN_START':
+        if (book) markReaderOpen(book.id, 'FOLIATE_OPEN_START', book.fileSize);
+        return;
       case 'ENGINE_OPENED':
+        if (book) markReaderOpen(book.id, 'FOLIATE_OPEN_END', book.fileSize);
+        console.log('[ENGINE_OPENED]', JSON.stringify({ bookId: book?.id ?? null }));
+        return;
+      case 'FIRST_PAGE_RENDERED':
+        if (book) markReaderOpen(book.id, 'FIRST_PAGE_RENDERED', book.fileSize);
+        return;
       case 'ENGINE_DESTROY':
-        console.log(`[${diagnostic.event}]`, JSON.stringify({ bookId: book?.id ?? null }));
+        console.log('[ENGINE_DESTROY]', JSON.stringify({ bookId: book?.id ?? null }));
         return;
       case 'RESTORE_REQUEST':
         restoreStateRef.current = 'restoring';
+        if (book) markReaderOpen(book.id, 'RESTORE_START', book.fileSize, { hasSavedCfi: Boolean(diagnostic.targetCfi) });
         console.log('[RESTORE_REQUEST]', JSON.stringify({ bookId: book?.id ?? null, targetCfi: diagnostic.targetCfi }));
         return;
       case 'RESTORE_RESULT':
+        if (book) markReaderOpen(book.id, 'RESTORE_END', book.fileSize, { restored: diagnostic.targetCfi === diagnostic.actualCurrentCfi });
         console.log('[RESTORE_RESULT]', JSON.stringify({
           bookId: book?.id ?? null,
           targetCfi: diagnostic.targetCfi,
@@ -171,19 +190,31 @@ export function useReaderController(bookId: string | undefined) {
         const book = await bookRepository.getBookById(bookId);
         if (!book) throw new Error('这本书已不在书库中。');
         currentBookRef.current = book;
+        markReaderOpen(book.id, 'BOOK_DATA_READY', book.fileSize);
         if (!active) return;
         setState({ kind: 'loading', message: '正在读取 EPUB' });
+        markReaderOpen(book.id, 'EPUB_FILE_READ_START', book.fileSize);
         const [source, savedProgress] = await Promise.all([
           createReaderEpubSource(book),
           readingProgressRepository.getByBookId(book.id),
         ]);
         if (!active) return;
+        markReaderOpen(book.id, 'EPUB_FILE_READ_END', book.fileSize, {
+          sourceKind: source.sourceKind,
+          sourceReadMs: source.sourceReadMs,
+        });
         console.log('[READER_RESOURCE]', JSON.stringify({
           bookId: book.id,
           byteLength: source.byteLength,
           sourceKind: source.sourceKind,
           sourceReadMs: source.sourceReadMs,
         }));
+        markReaderOpen(book.id, 'DOM_MOUNT_START', book.fileSize);
+        markReaderOpen(book.id, 'EPUB_TRANSFER_START', book.fileSize, {
+          base64Length: source.base64.length,
+          sourceKind: source.sourceKind,
+          sourceReadMs: source.sourceReadMs,
+        });
         console.log('[PROGRESS_READ]', JSON.stringify({
           bookId: book.id,
           savedCfi: savedProgress?.cfi ?? null,

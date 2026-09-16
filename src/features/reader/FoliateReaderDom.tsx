@@ -29,13 +29,14 @@ export default function FoliateReaderDom({ source, restoreCfi, onReady, onLocati
     document.body.style.margin = '0';
     const root = document.getElementById('root');
     if (root) root.style.height = '100%';
+    void callbacksRef.current.onDiagnostic({ event: 'DOM_READY' });
   }, []);
 
   useEffect(() => {
     const nextSource = source;
     if (!nextSource || loadedSessionRef.current === nextSource.sessionId || !hostRef.current) return;
     let active = true;
-    void callbacksRef.current.onDiagnostic({ event: 'DOM_READY' });
+    void callbacksRef.current.onDiagnostic({ event: 'EPUB_TRANSFER_END' });
     const adapter = adapterRef.current ?? new FoliateEpubEngineAdapter(
       hostRef.current,
       (location, restoreState) => { void callbacksRef.current.onLocation(location, restoreState); },
@@ -44,6 +45,7 @@ export default function FoliateReaderDom({ source, restoreCfi, onReady, onLocati
     );
     adapterRef.current = adapter;
     loadedSessionRef.current = nextSource.sessionId;
+    void callbacksRef.current.onDiagnostic({ event: 'FOLIATE_OPEN_START' });
     void adapter.open({
       base64: nextSource.base64,
       fileName: nextSource.fileName,

@@ -19,9 +19,12 @@ export type ReaderRestoreState = 'opening' | 'restoring' | 'active';
 
 export type ReaderEngineDiagnostic =
   | { event: 'DOM_READY' }
+  | { event: 'EPUB_TRANSFER_END' }
+  | { event: 'FOLIATE_OPEN_START' }
   | { event: 'ENGINE_OPENED' }
   | { event: 'RESTORE_REQUEST'; targetCfi: string | null }
   | { event: 'RESTORE_RESULT'; targetCfi: string | null; actualCurrentCfi: string | null }
+  | { event: 'FIRST_PAGE_RENDERED' }
   | { event: 'LOCATION_CHANGED'; cfi: string | null; restoreState: ReaderRestoreState }
   | { event: 'ENGINE_DESTROY' };
 

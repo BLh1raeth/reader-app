@@ -2,12 +2,13 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { StatusBar } from 'expo-status-bar';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import FoliateReaderDom from './FoliateReaderDom';
 import type { ReaderLocation } from './reader-types';
+import { markReaderOpen } from './reader-open-performance';
 import { useReaderController } from './use-reader-controller';
 
 function progressLabel(location: ReaderLocation | null) {
@@ -44,6 +45,10 @@ export default function ReaderScreen() {
   const insets = useSafeAreaInsets();
   const controller = useReaderController(bookId);
   const [chromeVisible, setChromeVisible] = useState(false);
+
+  useEffect(() => {
+    if (bookId) markReaderOpen(bookId, 'READER_ROUTE_MOUNTED');
+  }, [bookId]);
 
   const readerInput = useMemo(() => controller.state.kind === 'opening'
     ? controller.state

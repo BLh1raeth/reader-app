@@ -110,6 +110,8 @@ export class FoliateEpubEngineAdapter {
     }));
     this.restoreState = 'active';
     view.style.visibility = 'visible';
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    this.onDiagnostic({ event: 'FIRST_PAGE_RENDERED' });
     this.onLocation(location, this.restoreState);
     return location;
   }

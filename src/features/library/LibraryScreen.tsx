@@ -34,6 +34,7 @@ import Animated, {
 
 import { tokens } from '../../design-system/tokens';
 import { bookRepository } from './book-repository';
+import { beginReaderOpen } from '../reader/reader-open-performance';
 import {
   importPickedEpubs,
   removeBooks as removeStoredBooks,
@@ -418,7 +419,10 @@ export default function LibraryScreen() {
     const isSelected = selectedBookSet.has(book.id);
     const canOpenReader = !selectionMode && !selectionExitPending && !manualOrderingMode;
     const onOpenReader = canOpenReader
-      ? () => router.push({ pathname: '/reader/[bookId]', params: { bookId: book.id } })
+      ? () => {
+        beginReaderOpen(book.id, book.fileSize);
+        router.push({ pathname: '/reader/[bookId]', params: { bookId: book.id } });
+      }
       : undefined;
     const titleMenu: BookMenuHandlers | undefined = !manualOrderingMode
       ? {
