@@ -206,6 +206,7 @@ export default function LibraryScreen() {
   const selectionExitTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const readerOpeningPendingRef = useRef(false);
   const readerOpeningSequenceRef = useRef(0);
+  const transitionTeardownTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nativeHeaderVisible = false;
 
   const reloadBooks = useCallback(async () => {
@@ -241,10 +242,30 @@ export default function LibraryScreen() {
         openingTitle: transition.book.title,
       },
     });
-    // The Library route remains mounted behind Reader. Remove its completed
-    // center cover immediately so it cannot be reused or revealed later.
-    setReaderOpeningTransition(null);
+    // The Library route remains mounted behind Reader. Keep the completed
+    // overlay up until this screen blurs (the reader is painted on top by
+    // then); tearing it down here would flash the library grid in the gap
+    // before the reader's first paint. The overlay's final frame is
+    // pixel-identical to the reader's launch cover, so holding it is invisible.
+    // Fallback: if navigation never happens, don't leave the user stuck.
+    if (transitionTeardownTimeout.current) clearTimeout(transitionTeardownTimeout.current);
+    transitionTeardownTimeout.current = setTimeout(() => {
+      setReaderOpeningTransition(null);
+      readerOpeningPendingRef.current = false;
+    }, 2000);
   }, [router]);
+
+  // Tear down a completed opening transition once the reader has taken over.
+  useFocusEffect(useCallback(() => {
+    return () => {
+      if (transitionTeardownTimeout.current) {
+        clearTimeout(transitionTeardownTimeout.current);
+        transitionTeardownTimeout.current = null;
+      }
+      setReaderOpeningTransition(null);
+      readerOpeningPendingRef.current = false;
+    };
+  }, []));
 
   const openReaderWithTransition = useCallback((book: LibraryBook, frame: ReaderOpeningFrame) => {
     if (readerOpeningPendingRef.current || readerOpeningTransition) return;
@@ -273,6 +294,7 @@ export default function LibraryScreen() {
   const isAllSelected = books.length > 0 && selectedBookIds.length === books.length;
   useEffect(() => () => {
     if (selectionExitTimeout.current) clearTimeout(selectionExitTimeout.current);
+    if (transitionTeardownTimeout.current) clearTimeout(transitionTeardownTimeout.current);
   }, []);
   const onScroll = useAnimatedScrollHandler((event) => {
     scrollOffset.set(event.contentOffset.y);
