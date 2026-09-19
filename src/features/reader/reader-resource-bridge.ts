@@ -10,11 +10,15 @@ const LOCAL_FILE_SIGNATURE = 0x04034b50;
 const ZIP_TAIL_MAX_BYTES = 22 + 0xffff + 20;
 const RESOURCE_CACHE_MAX_BYTES = 6 * 1024 * 1024;
 const RESOURCE_CACHE_ENTRY_MAX_BYTES = 1.5 * 1024 * 1024;
+const BOOK_BYTES_CACHE_MAX_BYTES = 18 * 1024 * 1024;
 
 type CachedResource = { base64: string; byteLength: number };
+type CachedBookBytes = { bytes: Uint8Array; byteLength: number };
 
 const resourceCache = new Map<string, CachedResource>();
+const bookBytesCache = new Map<string, CachedBookBytes>();
 let cachedBytes = 0;
+let cachedBookBytes = 0;
 
 function readUint16(bytes: Uint8Array, offset: number) {
   return bytes[offset] | (bytes[offset + 1] << 8);
@@ -36,9 +40,9 @@ function bytesToBase64(bytes: Uint8Array) {
   return globalThis.btoa(binary);
 }
 
-async function readRange(file: File, start: number, length: number) {
-  if (start < 0 || length < 0 || start + length > file.size) throw new Error('EPUB ZIP 资源范围无效。');
-  return new Uint8Array(await file.slice(start, start + length).arrayBuffer());
+function readRange(bytes: Uint8Array, start: number, length: number) {
+  if (start < 0 || length < 0 || start + length > bytes.length) throw new Error('EPUB ZIP 资源范围无效。');
+  return bytes.subarray(start, start + length);
 }
 
 function findEndOfCentralDirectory(bytes: Uint8Array) {
@@ -48,7 +52,7 @@ function findEndOfCentralDirectory(bytes: Uint8Array) {
   throw new Error('EPUB ZIP 缺少目录记录。');
 }
 
-function parseCentralDirectory(bytes: Uint8Array, expectedEntryCount: number): ReaderZipEntry[] {
+function parseCentralDirectory(bytes: Uint8Array): ReaderZipEntry[] {
   const decoder = new TextDecoder('utf-8');
   const entries: ReaderZipEntry[] = [];
   let offset = 0;
@@ -77,26 +81,27 @@ function parseCentralDirectory(bytes: Uint8Array, expectedEntryCount: number): R
     }
     offset += recordLength;
   }
-  if (expectedEntryCount !== 0 && entries.length !== expectedEntryCount) throw new Error('EPUB ZIP 目录条目数不一致。');
+  // EOCD's count includes directory records while ReaderZipEntry intentionally
+  // omits them. Reaching the exact end of the central directory is the useful
+  // integrity check here; comparing those two counts rejects valid EPUBs.
   return entries;
 }
 
-async function readZipDirectory(file: File) {
-  const tailLength = Math.min(file.size, ZIP_TAIL_MAX_BYTES);
-  const tailStart = file.size - tailLength;
-  const tail = await readRange(file, tailStart, tailLength);
+function readZipDirectory(bytes: Uint8Array) {
+  const tailLength = Math.min(bytes.length, ZIP_TAIL_MAX_BYTES);
+  const tailStart = bytes.length - tailLength;
+  const tail = readRange(bytes, tailStart, tailLength);
   const eocdOffset = findEndOfCentralDirectory(tail);
   const diskNumber = readUint16(tail, eocdOffset + 4);
   const centralDiskNumber = readUint16(tail, eocdOffset + 6);
-  const entryCount = readUint16(tail, eocdOffset + 10);
   const centralDirectorySize = readUint32(tail, eocdOffset + 12);
   const centralDirectoryOffset = readUint32(tail, eocdOffset + 16);
   if (diskNumber !== 0 || centralDiskNumber !== 0) throw new Error('暂不支持多磁盘 EPUB。');
   const centralDirectory = centralDirectoryOffset >= tailStart
-    && centralDirectoryOffset + centralDirectorySize <= file.size
+    && centralDirectoryOffset + centralDirectorySize <= bytes.length
     ? tail.subarray(centralDirectoryOffset - tailStart, centralDirectoryOffset - tailStart + centralDirectorySize)
-    : await readRange(file, centralDirectoryOffset, centralDirectorySize);
-  return parseCentralDirectory(centralDirectory, entryCount);
+    : readRange(bytes, centralDirectoryOffset, centralDirectorySize);
+  return parseCentralDirectory(centralDirectory);
 }
 
 function cacheKey(bookId: string, entryName: string) {
@@ -117,10 +122,37 @@ function rememberResource(key: string, value: CachedResource) {
   }
 }
 
+function rememberBookBytes(bookId: string, bytes: Uint8Array) {
+  const existing = bookBytesCache.get(bookId);
+  if (existing) cachedBookBytes -= existing.byteLength;
+  bookBytesCache.set(bookId, { bytes, byteLength: bytes.length });
+  cachedBookBytes += bytes.length;
+  while (cachedBookBytes > BOOK_BYTES_CACHE_MAX_BYTES && bookBytesCache.size > 1) {
+    const oldest = bookBytesCache.entries().next().value as [string, CachedBookBytes] | undefined;
+    if (!oldest) break;
+    bookBytesCache.delete(oldest[0]);
+    cachedBookBytes -= oldest[1].byteLength;
+  }
+}
+
+async function getBookBytes(book: Book) {
+  const cached = bookBytesCache.get(book.id);
+  if (cached) {
+    bookBytesCache.delete(book.id);
+    bookBytesCache.set(book.id, cached);
+    return cached.bytes;
+  }
+  const file = new File(book.fileUri);
+  const bytes = await file.bytes();
+  rememberBookBytes(book.id, bytes);
+  return bytes;
+}
+
 async function fullBase64Source(book: Book, startedAt: number): Promise<ReaderEpubSource> {
   const file = new File(book.fileUri);
   const base64 = await file.base64();
   return {
+    bookId: book.id,
     sessionId: `${book.id}:${Date.now()}`,
     fileName: `${book.id}.epub`,
     byteLength: file.size,
@@ -136,9 +168,14 @@ export async function createReaderEpubSource(book: Book): Promise<ReaderEpubSour
   if (!file.exists) throw new Error('这本书的 EPUB 文件已不存在。');
   const startedAt = Date.now();
   try {
-    const entries = await readZipDirectory(file);
+    // File.slice() constructs a Blob in this SDK, and that Blob cannot be created
+    // from an ArrayBuffer on the current iOS runtime. Read once through File.bytes()
+    // and retain a bounded native-side byte cache for fast repeat opens instead.
+    const bytes = await getBookBytes(book);
+    const entries = readZipDirectory(bytes);
     if (!entries.some((entry) => entry.name === 'META-INF/container.xml')) throw new Error('EPUB 缺少 container.xml。');
     return {
+      bookId: book.id,
       sessionId: `${book.id}:${Date.now()}`,
       fileName: `${book.id}.epub`,
       byteLength: file.size,
@@ -168,24 +205,23 @@ export async function readReaderEpubResource(
   if (source.sourceKind !== 'zip-resource-loader') return null;
   const entry = source.entries?.find((candidate) => candidate.name === name);
   if (!entry) return null;
-  const startedAt = Date.now();
   const key = cacheKey(book.id, name);
   const cached = resourceCache.get(key);
   if (cached) {
     resourceCache.delete(key);
     resourceCache.set(key, cached);
-    return { ...cached, cacheHit: true, readMs: Date.now() - startedAt };
+    return { base64: cached.base64 };
   }
-  const file = new File(book.fileUri);
-  const localHeader = await readRange(file, entry.localHeaderOffset, 30);
+  const bytes = await getBookBytes(book);
+  const localHeader = readRange(bytes, entry.localHeaderOffset, 30);
   if (readUint32(localHeader, 0) !== LOCAL_FILE_SIGNATURE) throw new Error(`EPUB 资源头无效：${name}`);
   const nameLength = readUint16(localHeader, 26);
   const extraLength = readUint16(localHeader, 28);
   const dataOffset = entry.localHeaderOffset + 30 + nameLength + extraLength;
-  const compressed = await readRange(file, dataOffset, entry.compressedSize);
-  const bytes = entry.compressionMethod === 0 ? compressed : inflateSync(compressed);
-  if (entry.uncompressedSize !== 0 && bytes.length !== entry.uncompressedSize) throw new Error(`EPUB 资源大小不匹配：${name}`);
-  const value = { base64: bytesToBase64(bytes), byteLength: bytes.length };
+  const compressed = readRange(bytes, dataOffset, entry.compressedSize);
+  const decoded = entry.compressionMethod === 0 ? compressed : inflateSync(compressed);
+  if (entry.uncompressedSize !== 0 && decoded.length !== entry.uncompressedSize) throw new Error(`EPUB 资源大小不匹配：${name}`);
+  const value = { base64: bytesToBase64(decoded), byteLength: decoded.length };
   rememberResource(key, value);
-  return { ...value, cacheHit: false, readMs: Date.now() - startedAt };
+  return { base64: value.base64 };
 }

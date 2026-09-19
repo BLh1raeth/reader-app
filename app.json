@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Reader App",
+    "name": "阅读",
     "slug": "reader-app-oyyh2",
     "scheme": "reader-app",
     "experiments": {
@@ -14,7 +14,12 @@
       "bundleIdentifier": "com.3wxss.4hd2",
       "supportsTablet": false,
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleAllowMixedLocalizations": true,
+        "CFBundleDevelopmentRegion": "zh-Hans",
+        "CFBundleLocalizations": [
+          "zh-Hans"
+        ]
       }
     },
     "android": {
@@ -29,6 +34,9 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "locales": {
+      "zh-Hans": "./locales/zh-Hans.json"
+    },
     "extra": {
       "eas": {
         "projectId": "f0a85ad3-9977-4484-bd0f-e178f18a0da5"
@@ -38,7 +46,8 @@
       "expo-router",
       "expo-status-bar",
       "expo-sqlite",
-      "expo-sharing"
+      "expo-sharing",
+      "./plugins/with-reader-edit-menu"
     ]
   }
 }

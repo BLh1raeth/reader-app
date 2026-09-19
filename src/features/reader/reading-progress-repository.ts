@@ -81,13 +81,4 @@ export const readingProgressRepository = {
       progress.updatedAt,
     );
   },
-
-  /** Diagnostic read used by the Reader controller after a debounced write. */
-  async readRawForDebug(bookId: string) {
-    const database = await getLibraryDatabase();
-    return database.getFirstAsync<ReadingProgressRow>(
-      'SELECT book_id, cfi, spine_index, percentage, updated_at FROM reading_progress WHERE book_id = ?;',
-      bookId,
-    );
-  },
 };

@@ -3,6 +3,7 @@ import { usePathname } from 'expo-router';
 import { PlatformColor } from 'react-native';
 
 import { LibraryViewProvider, useLibraryView } from '../../src/features/library/library-view-context';
+import { uiText } from '../../src/localization';
 
 export default function TabLayout() {
   return (
@@ -35,15 +36,15 @@ function AppTabs() {
     >
       <NativeTabs.Trigger name="(library)" disablePopToTop disableScrollToTop>
         <NativeTabs.Trigger.Icon sf="books.vertical" />
-        <NativeTabs.Trigger.Label>书库</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Label>{uiText.tabs.library}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="data">
-        <NativeTabs.Trigger.Icon sf="chart.xyaxis.line" />
-        <NativeTabs.Trigger.Label>数据</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="chart.bar.xaxis.descending" />
+        <NativeTabs.Trigger.Label>{uiText.tabs.data}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="excerpts">
-        <NativeTabs.Trigger.Icon sf="quote.opening" />
-        <NativeTabs.Trigger.Label>摘录</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="text.bubble" />
+        <NativeTabs.Trigger.Label>{uiText.tabs.excerpts}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
     </NativeTabs>
   );

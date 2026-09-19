@@ -6,9 +6,22 @@ import type { Book } from '../library/library-types';
 import { readingProgressRepository, type ReadingProgress } from './reading-progress-repository';
 import { createFullEpubSource, createReaderEpubSource, readReaderEpubResource } from './reader-resource-bridge';
 import { markReaderOpen } from './reader-open-performance';
+import { readerPageCacheRepository, type ReaderPageCountCache } from './reader-page-cache-repository';
+import { getGlobalReaderPage } from './reader-pagination';
+import {
+  DEFAULT_READER_SETTINGS,
+  normalizeReaderSettings,
+  readerLayoutSettingsEqual,
+  readerSettingsEqual,
+  type ReaderSettings,
+} from './reader-settings';
+import { readerSettingsRepository } from './reader-settings-repository';
 import type { ReaderEngineDiagnostic, ReaderEpubSource, ReaderLocation, ReaderResourcePayload, ReaderRestoreState } from './reader-types';
 
-export type ReaderControllerState =
+const READER_SETTINGS_APPLY_DEBOUNCE_MS = 120;
+const READER_SETTINGS_SAVE_DEBOUNCE_MS = 500;
+
+type ReaderControllerState =
   | { kind: 'loading'; message: string }
   | { kind: 'opening'; book: Book; source: ReaderEpubSource; restoreCfi: string | null }
   | { kind: 'ready'; book: Book; restoreCfi: string | null }
@@ -32,6 +45,10 @@ function toProgress(bookId: string, location: ReaderLocation): ReadingProgress {
 export function useReaderController(bookId: string | undefined) {
   const [state, setState] = useState<ReaderControllerState>({ kind: 'loading', message: '正在打开图书' });
   const [currentLocation, setCurrentLocation] = useState<ReaderLocation | null>(null);
+  const [firstPageRendered, setFirstPageRendered] = useState(false);
+  const [pageCountCache, setPageCountCache] = useState<ReaderPageCountCache | null>(null);
+  const [readerSettings, setReaderSettings] = useState<ReaderSettings>(DEFAULT_READER_SETTINGS);
+  const [appliedReaderSettings, setAppliedReaderSettings] = useState<ReaderSettings>(DEFAULT_READER_SETTINGS);
   const latestLocationRef = useRef<ReaderLocation | null>(null);
   const currentBookRef = useRef<Book | null>(null);
   const sourceRef = useRef<ReaderEpubSource | null>(null);
@@ -43,6 +60,57 @@ export function useReaderController(bookId: string | undefined) {
   const lastPersistedCfiRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const writeQueueRef = useRef(Promise.resolve());
+  const readerSettingsRef = useRef<ReaderSettings>(DEFAULT_READER_SETTINGS);
+  const settingsApplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsWriteQueueRef = useRef(Promise.resolve());
+
+  const persistReaderSettings = useCallback(async () => {
+    const settings = readerSettingsRef.current;
+    settingsWriteQueueRef.current = settingsWriteQueueRef.current
+      .catch(() => undefined)
+      .then(() => readerSettingsRepository.upsert(settings));
+    await settingsWriteQueueRef.current;
+  }, []);
+
+  const commitReaderSettings = useCallback(async () => {
+    if (settingsApplyTimerRef.current) {
+      clearTimeout(settingsApplyTimerRef.current);
+      settingsApplyTimerRef.current = null;
+    }
+    if (settingsSaveTimerRef.current) {
+      clearTimeout(settingsSaveTimerRef.current);
+      settingsSaveTimerRef.current = null;
+    }
+    setAppliedReaderSettings(readerSettingsRef.current);
+    await persistReaderSettings();
+  }, [persistReaderSettings]);
+
+  const updateReaderSettings = useCallback((next: ReaderSettings) => {
+    const normalized = normalizeReaderSettings(next);
+    const previous = readerSettingsRef.current;
+    if (readerSettingsEqual(previous, normalized)) return;
+    const layoutChanged = !readerLayoutSettingsEqual(previous, normalized);
+    readerSettingsRef.current = normalized;
+    setReaderSettings(normalized);
+
+    if (settingsApplyTimerRef.current) clearTimeout(settingsApplyTimerRef.current);
+    if (layoutChanged) {
+      settingsApplyTimerRef.current = setTimeout(() => {
+        settingsApplyTimerRef.current = null;
+        setAppliedReaderSettings(readerSettingsRef.current);
+      }, READER_SETTINGS_APPLY_DEBOUNCE_MS);
+    } else {
+      settingsApplyTimerRef.current = null;
+      setAppliedReaderSettings(normalized);
+    }
+
+    if (settingsSaveTimerRef.current) clearTimeout(settingsSaveTimerRef.current);
+    settingsSaveTimerRef.current = setTimeout(() => {
+      settingsSaveTimerRef.current = null;
+      void persistReaderSettings().catch(() => undefined);
+    }, READER_SETTINGS_SAVE_DEBOUNCE_MS);
+  }, [persistReaderSettings]);
 
   const flushLocation = useCallback(async () => {
     const book = currentBookRef.current;
@@ -53,25 +121,9 @@ export function useReaderController(bookId: string | undefined) {
     writeQueueRef.current = writeQueueRef.current
       .catch(() => undefined)
       .then(async () => {
-        console.log('[PROGRESS_WRITE]', JSON.stringify({
-          bookId: book.id,
-          cfi: progress.cfi,
-          restoreState: restoreStateRef.current,
-          percentage: progress.percentage,
-        }));
         await readingProgressRepository.upsert(progress);
         await bookRepository.recordReading(book.id);
         lastPersistedCfiRef.current = progress.cfi;
-        const persisted = await readingProgressRepository.readRawForDebug(book.id);
-        console.log('[PROGRESS_WRITE]', JSON.stringify({
-          bookId: book.id,
-          cfi: persisted?.cfi ?? null,
-          restoreState: restoreStateRef.current,
-          percentage: persisted?.percentage ?? null,
-          spineIndex: persisted?.spine_index ?? null,
-          updatedAt: persisted?.updated_at ?? null,
-          verified: true,
-        }));
       });
     await writeQueueRef.current;
   }, []);
@@ -104,12 +156,6 @@ export function useReaderController(bookId: string | undefined) {
   const onLocation = useCallback(async (location: ReaderLocation, domRestoreState: ReaderRestoreState) => {
     const nativeRestoreState = restoreStateRef.current;
     const isFirstActiveLocation = domRestoreState === 'active' && nativeRestoreState !== 'active';
-    console.log('[LOCATION_CHANGED]', JSON.stringify({
-      cfi: location.cfi,
-      restoreState: domRestoreState,
-      nativeRestoreState,
-      accepted: !isFirstActiveLocation && nativeRestoreState === 'active' && engineReadyRef.current,
-    }));
     // This is the persistence boundary: foliate's text-start relocation is
     // observable for diagnostics but cannot alter Native state or SQLite.
     if (domRestoreState !== 'active') return;
@@ -134,17 +180,33 @@ export function useReaderController(bookId: string | undefined) {
     const book = currentBookRef.current;
     const source = sourceRef.current;
     if (!book || !source) return null;
-    const resource = await readReaderEpubResource(book, source, name);
-    if (resource) {
-      console.log('[READER_RESOURCE_LOAD]', JSON.stringify({
-        bookId: book.id,
-        name,
-        byteLength: resource.byteLength,
-        cacheHit: resource.cacheHit,
-        readMs: resource.readMs,
-      }));
+    return readReaderEpubResource(book, source, name);
+  }, []);
+
+  const onPageCount = useCallback(async (result: Omit<ReaderPageCountCache, 'bookId' | 'updatedAt'>) => {
+    const book = currentBookRef.current;
+    const previous = latestLocationRef.current;
+    if (!book) return;
+    const cache: ReaderPageCountCache = {
+      ...result,
+      bookId: book.id,
+      updatedAt: new Date().toISOString(),
+    };
+    setPageCountCache(cache);
+    await readerPageCacheRepository.upsert(cache);
+    // Page counting is a display-only cache update. Keep it outside the CFI
+    // persistence path so it can never race Reader hydration.
+    // A page turn may happen while SQLite commits the cache. Never let this
+    // low-priority display update overwrite the live relocation that arrived
+    // in the meantime.
+    if (previous && latestLocationRef.current?.cfi === previous.cfi) {
+      const currentPage = previous.currentPage === null
+        ? null
+        : getGlobalReaderPage(cache.sectionPages, previous.spineIndex, previous.currentPage);
+      const nextLocation = { ...previous, currentPage, totalPages: cache.totalPages };
+      latestLocationRef.current = nextLocation;
+      setCurrentLocation(nextLocation);
     }
-    return resource;
   }, []);
 
   const onDiagnostic = useCallback(async (diagnostic: ReaderEngineDiagnostic) => {
@@ -160,11 +222,48 @@ export function useReaderController(bookId: string | undefined) {
       case 'FOLIATE_OPEN_START':
         if (book) markReaderOpen(book.id, 'FOLIATE_OPEN_START', book.fileSize);
         return;
+      case 'FOLIATE_IMPORT_START':
+        if (book) markReaderOpen(book.id, 'FOLIATE_IMPORT_START', book.fileSize);
+        return;
+      case 'FOLIATE_IMPORT_END':
+        if (book) markReaderOpen(book.id, 'FOLIATE_IMPORT_END', book.fileSize);
+        return;
+      case 'BOOK_BUILD_START':
+        if (book) markReaderOpen(book.id, 'BOOK_BUILD_START', book.fileSize);
+        return;
+      case 'BOOK_BUILD_END':
+        if (book) markReaderOpen(book.id, 'BOOK_BUILD_END', book.fileSize);
+        return;
+      case 'BOOK_OPEN_START':
+        if (book) markReaderOpen(book.id, 'BOOK_OPEN_START', book.fileSize);
+        return;
+      case 'BOOK_OPEN_END':
+        if (book) markReaderOpen(book.id, 'BOOK_OPEN_END', book.fileSize);
+        return;
       case 'ENGINE_OPENED':
         if (book) markReaderOpen(book.id, 'FOLIATE_OPEN_END', book.fileSize);
         console.log('[ENGINE_OPENED]', JSON.stringify({ bookId: book?.id ?? null }));
         return;
+      case 'STYLE_APPLY_START':
+        if (book) markReaderOpen(book.id, 'STYLE_APPLY_START', book.fileSize);
+        return;
+      case 'STYLE_APPLY_END':
+        if (book) markReaderOpen(book.id, 'STYLE_APPLY_END', book.fileSize);
+        return;
+      case 'VIEW_INIT_START':
+        if (book) markReaderOpen(book.id, 'VIEW_INIT_START', book.fileSize);
+        return;
+      case 'VIEW_INIT_END':
+        if (book) markReaderOpen(book.id, 'VIEW_INIT_END', book.fileSize);
+        return;
+      case 'PAGINATION_START':
+        if (book) markReaderOpen(book.id, 'PAGINATION_START', book.fileSize);
+        return;
+      case 'PAGINATION_END':
+        if (book) markReaderOpen(book.id, 'PAGINATION_END', book.fileSize);
+        return;
       case 'FIRST_PAGE_RENDERED':
+        setFirstPageRendered(true);
         if (book) markReaderOpen(book.id, 'FIRST_PAGE_RENDERED', book.fileSize);
         return;
       case 'ENGINE_DESTROY':
@@ -182,8 +281,6 @@ export function useReaderController(bookId: string | undefined) {
           targetCfi: diagnostic.targetCfi,
           actualCurrentCfi: diagnostic.actualCurrentCfi,
         }));
-        return;
-      case 'LOCATION_CHANGED':
         return;
     }
   }, []);
@@ -219,6 +316,8 @@ export function useReaderController(bookId: string | undefined) {
     latestLocationRef.current = null;
     lastPersistedCfiRef.current = null;
     sourceRef.current = null;
+    setFirstPageRendered(false);
+    setPageCountCache(null);
     restoreCfiRef.current = null;
     hasFallbackAttemptRef.current = false;
     setCurrentLocation(null);
@@ -237,14 +336,26 @@ export function useReaderController(bookId: string | undefined) {
         if (!active) return;
         setState({ kind: 'loading', message: '正在读取 EPUB' });
         markReaderOpen(book.id, 'EPUB_FILE_READ_START', book.fileSize);
-        const [source, savedProgress] = await Promise.all([
+        markReaderOpen(book.id, 'EPUB_PREPARE_START', book.fileSize);
+        const [source, savedProgress, pageCountCache, savedReaderSettings] = await Promise.all([
           createReaderEpubSource(book),
           readingProgressRepository.getByBookId(book.id),
+          readerPageCacheRepository.getMostRecent(book.id),
+          readerSettingsRepository.get(),
         ]);
         if (!active) return;
         lastPersistedCfiRef.current = savedProgress?.cfi ?? null;
         restoreCfiRef.current = savedProgress?.cfi ?? null;
         sourceRef.current = source;
+        setPageCountCache(pageCountCache);
+        readerSettingsRef.current = savedReaderSettings;
+        setReaderSettings(savedReaderSettings);
+        setAppliedReaderSettings(savedReaderSettings);
+        markReaderOpen(book.id, 'EPUB_PREPARE_END', book.fileSize, {
+          sourceKind: source.sourceKind,
+          sourceReadMs: source.sourceReadMs,
+          zipEntryCount: source.entries?.length ?? null,
+        });
         markReaderOpen(book.id, 'EPUB_FILE_READ_END', book.fileSize, {
           sourceKind: source.sourceKind,
           sourceReadMs: source.sourceReadMs,
@@ -278,19 +389,41 @@ export function useReaderController(bookId: string | undefined) {
     return () => {
       active = false;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (settingsApplyTimerRef.current) clearTimeout(settingsApplyTimerRef.current);
+      if (settingsSaveTimerRef.current) clearTimeout(settingsSaveTimerRef.current);
       void flushLocation().catch(() => undefined);
+      void persistReaderSettings().catch(() => undefined);
     };
-  }, [bookId, flushLocation]);
+  }, [bookId, flushLocation, persistReaderSettings]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState !== 'active') {
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        if (settingsApplyTimerRef.current) clearTimeout(settingsApplyTimerRef.current);
+        if (settingsSaveTimerRef.current) clearTimeout(settingsSaveTimerRef.current);
         void flushLocation().catch(() => undefined);
+        void commitReaderSettings().catch(() => undefined);
       }
     });
     return () => subscription.remove();
-  }, [flushLocation]);
+  }, [commitReaderSettings, flushLocation]);
 
-  return { state, currentLocation, flushLocation, onLocation, onEngineReady, onDiagnostic, onEngineError, onResourceRequest };
+  return {
+    state,
+    currentLocation,
+    firstPageRendered,
+    pageCountCache,
+    readerSettings,
+    appliedReaderSettings,
+    updateReaderSettings,
+    commitReaderSettings,
+    flushLocation,
+    onLocation,
+    onEngineReady,
+    onDiagnostic,
+    onEngineError,
+    onResourceRequest,
+    onPageCount,
+  };
 }

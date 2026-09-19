@@ -1,0 +1,8 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "阅读"
+  },
+  "android": {
+    "app_name": "阅读"
+  }
+}

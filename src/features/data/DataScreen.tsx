@@ -1,5 +1,6 @@
 import { PlaceholderScreen } from '../../components/PlaceholderScreen';
+import { uiText } from '../../localization';
 
 export default function DataScreen() {
-  return <PlaceholderScreen title="数据" />;
+  return <PlaceholderScreen title={uiText.tabs.data} />;
 }

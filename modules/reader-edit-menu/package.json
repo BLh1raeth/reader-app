@@ -1,0 +1,7 @@
+{
+  "name": "reader-edit-menu",
+  "version": "1.0.0",
+  "description": "Reader-only iOS edit menu integration for the local app",
+  "main": "index.ts",
+  "private": true
+}

@@ -1,5 +1,6 @@
 import { File } from 'expo-file-system';
 import { Stack } from 'expo-router';
+import { uiText } from '../../../localization';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -84,9 +85,9 @@ export default function ReaderEngineSpikeScreen() {
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <Stack.Screen options={{ title: 'Reader Engine Spike' }} />
+      <Stack.Screen options={{ title: uiText.debug.readerEngine }} />
       <ScrollView contentContainerStyle={styles.controls} style={styles.controlPanel}>
-        <Text style={styles.title}>Reader Engine Spike</Text>
+        <Text style={styles.title}>{uiText.debug.readerEngine}</Text>
         <Text style={styles.subtitle}>隔离调试页：不会改写正式 Reader 或书库数据。</Text>
 
         <Text style={styles.label}>真实 EPUB</Text>

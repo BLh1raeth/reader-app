@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 
 const DATABASE_NAME = 'reader-library.db';
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 13;
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -98,6 +98,128 @@ async function bootstrapDatabase() {
         -- comes only from the joined reading_progress row, so stale/mock
         -- values cannot re-enter the Library path.
         UPDATE books SET reading_progress = 0;
+        PRAGMA user_version = 5;
+      `);
+    });
+  }
+  if (currentVersion < 6) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      // Page totals are layout-dependent. Keep them separate from the stable
+      // CFI progress row so a viewport or typography change never corrupts a
+      // reading location just because its pagination cache expires.
+      await transaction.execAsync(`
+        CREATE TABLE IF NOT EXISTS reader_page_cache (
+          book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+          layout_signature TEXT NOT NULL,
+          total_pages INTEGER NOT NULL CHECK (total_pages > 0),
+          section_pages_json TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (book_id, layout_signature)
+        );
+        CREATE INDEX IF NOT EXISTS reader_page_cache_updated_at_idx ON reader_page_cache(updated_at);
+        PRAGMA user_version = 6;
+      `);
+    });
+  }
+  if (currentVersion < 7) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      // Reader typography is global in the first settings release. A single
+      // row avoids creating a second per-book preference/progress source.
+      await transaction.execAsync(`
+        CREATE TABLE IF NOT EXISTS reader_settings (
+          id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+          font_size REAL NOT NULL,
+          page_transition TEXT NOT NULL CHECK (page_transition = 'dissolve'),
+          line_height REAL NOT NULL,
+          page_margin REAL NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        PRAGMA user_version = 7;
+      `);
+    });
+  }
+  if (currentVersion < 8) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.execAsync(`
+        ALTER TABLE reader_settings ADD COLUMN letter_spacing REAL NOT NULL DEFAULT 0.01;
+        PRAGMA user_version = 8;
+      `);
+    });
+  }
+  if (currentVersion < 9) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.execAsync(`
+        ALTER TABLE reader_settings ADD COLUMN reader_appearance TEXT NOT NULL DEFAULT 'light'
+          CHECK (reader_appearance IN ('light', 'dark'));
+        PRAGMA user_version = 9;
+      `);
+    });
+  }
+  if (currentVersion < 10) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.execAsync(`
+        CREATE TABLE IF NOT EXISTS book_search_history (
+          book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+          query_key TEXT NOT NULL,
+          query TEXT NOT NULL,
+          searched_at TEXT NOT NULL,
+          PRIMARY KEY (book_id, query_key)
+        );
+        CREATE INDEX IF NOT EXISTS book_search_history_recency_idx
+          ON book_search_history(book_id, searched_at DESC);
+        PRAGMA user_version = 10;
+      `);
+    });
+  }
+  if (currentVersion < 11) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.execAsync(`
+        CREATE TABLE IF NOT EXISTS reader_bookmarks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+          cfi TEXT NOT NULL,
+          spine_index INTEGER NOT NULL,
+          section_fraction REAL NOT NULL DEFAULT 0,
+          chapter_title TEXT,
+          excerpt TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          UNIQUE(book_id, cfi)
+        );
+        CREATE INDEX IF NOT EXISTS reader_bookmarks_book_order_idx
+          ON reader_bookmarks(book_id, spine_index, section_fraction);
+        PRAGMA user_version = 11;
+      `);
+    });
+  }
+  if (currentVersion < 12) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.execAsync(`
+        ALTER TABLE reader_bookmarks ADD COLUMN page_number INTEGER;
+        ALTER TABLE reader_bookmarks ADD COLUMN layout_signature TEXT;
+        PRAGMA user_version = 12;
+      `);
+    });
+  }
+  if (currentVersion < 13) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.execAsync(`
+        CREATE TABLE IF NOT EXISTS reader_excerpts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+          text TEXT NOT NULL,
+          start_cfi TEXT NOT NULL,
+          end_cfi TEXT NOT NULL,
+          range_cfi TEXT NOT NULL,
+          chapter_title TEXT,
+          section_index INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(book_id, range_cfi)
+        );
+        CREATE INDEX IF NOT EXISTS reader_excerpts_book_created_idx
+          ON reader_excerpts(book_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS reader_excerpts_created_idx
+          ON reader_excerpts(created_at DESC);
         PRAGMA user_version = ${SCHEMA_VERSION};
       `);
     });

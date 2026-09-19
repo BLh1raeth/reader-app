@@ -1,4 +1,4 @@
-import { Link, useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { MenuView, type MenuAction } from '@expo/ui/community/menu';
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
@@ -8,9 +8,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { SFSymbol } from 'sf-symbols-typescript';
 import {
   Alert,
-  Image,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -23,6 +21,7 @@ import Animated, {
   Extrapolation,
   LinearTransition,
   ReduceMotion,
+  cancelAnimation,
   interpolate,
   runOnJS,
   type SharedValue,
@@ -33,6 +32,10 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { tokens } from '../../design-system/tokens';
+import { readerSettingsRepository } from '../reader/reader-settings-repository';
+import { BookCoverArt } from './BookCoverArt';
+
+const LIBRARY_HEADER_SAFE_TOP_GAP = 2;
 import { bookRepository } from './book-repository';
 import { beginReaderOpen } from '../reader/reader-open-performance';
 import {
@@ -59,6 +62,94 @@ type BookMenuHandlers = {
   onShare: (book: LibraryBook) => void;
   onToggleFinished: (book: LibraryBook) => void;
 };
+
+type ReaderOpeningFrame = {
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+};
+
+type ReaderOpeningTransition = {
+  backgroundColor: string;
+  book: LibraryBook;
+  frame: ReaderOpeningFrame;
+  id: number;
+  target: ReaderOpeningFrame;
+};
+
+function ReaderOpeningTransitionOverlay({
+  onFinished,
+  transition,
+}: {
+  onFinished: (transition: ReaderOpeningTransition) => void;
+  transition: ReaderOpeningTransition;
+}) {
+  // This value belongs to one overlay mount only. A new opening never sees
+  // the previous cover's completed value or native animated node.
+  const progress = useSharedValue(0);
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.get(), [0, 0.72, 1], [0, 0.96, 1], Extrapolation.CLAMP),
+  }));
+  const coverStyle = useAnimatedStyle(() => ({
+    height: interpolate(progress.get(), [0, 1], [transition.frame.height, transition.target.height]),
+    left: interpolate(progress.get(), [0, 1], [transition.frame.x, transition.target.x]),
+    top: interpolate(progress.get(), [0, 1], [transition.frame.y, transition.target.y]),
+    width: interpolate(progress.get(), [0, 1], [transition.frame.width, transition.target.width]),
+  }));
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      progress.set(withTiming(1, {
+        duration: 460,
+        easing: Easing.inOut(Easing.cubic),
+        reduceMotion: ReduceMotion.System,
+      }, (finished) => {
+        if (finished) runOnJS(onFinished)(transition);
+      }));
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      cancelAnimation(progress);
+    };
+  }, [onFinished, progress, transition]);
+
+  return (
+    <View pointerEvents="auto" style={[StyleSheet.absoluteFill, styles.readerOpeningTransition]}>
+      <Animated.View
+        style={[
+          StyleSheet.absoluteFill,
+          { backgroundColor: transition.backgroundColor, opacity: 0 },
+          backdropStyle,
+        ]}
+      />
+      <Animated.View
+        style={[
+          styles.readerOpeningCover,
+          {
+            backgroundColor: tokens.coverTones[transition.book.coverTone],
+            // The non-animated fallback is deliberately the source rectangle.
+            // If the native animated style attaches one frame late, there is
+            // still no possible frame where this cover appears at the target.
+            height: transition.frame.height,
+            left: transition.frame.x,
+            top: transition.frame.y,
+            width: transition.frame.width,
+          },
+          coverStyle,
+        ]}
+      >
+        <BookCoverArt
+          author={transition.book.author}
+          coverTone={transition.book.coverTone}
+          coverUri={transition.book.coverUri}
+          hasGeneratedCover={transition.book.hasGeneratedCover}
+          title={transition.book.title}
+        />
+      </Animated.View>
+    </View>
+  );
+}
 
 const layoutTransition = LinearTransition.duration(tokens.animation.layoutDuration).reduceMotion(
   ReduceMotion.System,
@@ -96,7 +187,7 @@ function displayProgress(book: LibraryBook) {
 
 export default function LibraryScreen() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
+  const { height, width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const scrollOffset = useSharedValue(0);
   const selectionUiProgress = useSharedValue(0);
@@ -110,7 +201,11 @@ export default function LibraryScreen() {
   const [selectedBookIds, setSelectedBookIds] = useState<string[]>([]);
   const [manualOrderSnapshot, setManualOrderSnapshot] = useState<LibraryBook[] | null>(null);
   const [manualOrderingMode, setManualOrderingMode] = useState(false);
+  const [readerBackgroundColor, setReaderBackgroundColor] = useState<string>(tokens.colors.background);
+  const [readerOpeningTransition, setReaderOpeningTransition] = useState<ReaderOpeningTransition | null>(null);
   const selectionExitTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const readerOpeningPendingRef = useRef(false);
+  const readerOpeningSequenceRef = useRef(0);
   const nativeHeaderVisible = false;
 
   const reloadBooks = useCallback(async () => {
@@ -124,8 +219,54 @@ export default function LibraryScreen() {
   }, [reloadBooks]);
 
   useFocusEffect(useCallback(() => {
+    setReaderOpeningTransition(null);
+    readerOpeningPendingRef.current = false;
+    setTabBarHidden(false);
     void reloadBooks().catch(() => setLibraryReady(true));
-  }, [reloadBooks]));
+    void readerSettingsRepository.get().then((settings) => {
+      setReaderBackgroundColor(settings.appearance === 'dark' ? '#151517' : tokens.colors.background);
+    }).catch(() => setReaderBackgroundColor(tokens.colors.background));
+  }, [reloadBooks, setTabBarHidden]));
+
+  const finishReaderOpeningTransition = useCallback((transition: ReaderOpeningTransition) => {
+    router.push({
+      pathname: '/reader/[bookId]',
+      params: {
+        bookId: transition.book.id,
+        openingAuthor: transition.book.author ?? '',
+        openingBackground: transition.backgroundColor,
+        openingCoverTone: transition.book.coverTone,
+        openingCoverUri: transition.book.coverUri ?? '',
+        openingGenerated: transition.book.hasGeneratedCover ? '1' : '0',
+        openingTitle: transition.book.title,
+      },
+    });
+    // The Library route remains mounted behind Reader. Remove its completed
+    // center cover immediately so it cannot be reused or revealed later.
+    setReaderOpeningTransition(null);
+  }, [router]);
+
+  const openReaderWithTransition = useCallback((book: LibraryBook, frame: ReaderOpeningFrame) => {
+    if (readerOpeningPendingRef.current || readerOpeningTransition) return;
+    readerOpeningPendingRef.current = true;
+    beginReaderOpen(book.id, book.fileSize);
+    setTabBarHidden(true);
+    const targetWidth = Math.min(214, width * 0.5);
+    const targetHeight = targetWidth / tokens.cover.gridAspectRatio;
+    const transition: ReaderOpeningTransition = {
+      backgroundColor: readerBackgroundColor,
+      book,
+      frame,
+      id: ++readerOpeningSequenceRef.current,
+      target: {
+        height: targetHeight,
+        width: targetWidth,
+        x: (width - targetWidth) / 2,
+        y: (height - targetHeight) / 2,
+      },
+    };
+    setReaderOpeningTransition(transition);
+  }, [height, readerBackgroundColor, readerOpeningTransition, setTabBarHidden, width]);
 
   const gridItemWidth = Math.max(0, (width - tokens.spacing.screen * 2 - tokens.spacing.grid) / 2);
   const selectedBookSet = useMemo(() => new Set(selectedBookIds), [selectedBookIds]);
@@ -419,10 +560,7 @@ export default function LibraryScreen() {
     const isSelected = selectedBookSet.has(book.id);
     const canOpenReader = !selectionMode && !selectionExitPending && !manualOrderingMode;
     const onOpenReader = canOpenReader
-      ? () => {
-        beginReaderOpen(book.id, book.fileSize);
-        router.push({ pathname: '/reader/[bookId]', params: { bookId: book.id } });
-      }
+      ? (frame: ReaderOpeningFrame) => openReaderWithTransition(book, frame)
       : undefined;
     const titleMenu: BookMenuHandlers | undefined = !manualOrderingMode
       ? {
@@ -443,8 +581,8 @@ export default function LibraryScreen() {
         }
       : undefined;
     const bookContent = displayMode === 'grid'
-      ? <GridBook book={book} manualOrdering={manualOrderingMode} onOpenReader={onOpenReader} titleMenu={titleMenu} width={gridItemWidth} selected={selectionMode && isSelected && !selectionExitPending} selectionMode={false} />
-      : <ListBook book={book} manualOrdering={manualOrderingMode} onOpenReader={onOpenReader} titleMenu={titleMenu} selected={false} selectionMode={false} />;
+      ? <GridBook book={book} manualOrdering={manualOrderingMode} onOpenReader={onOpenReader} opening={readerOpeningTransition?.book.id === book.id} titleMenu={titleMenu} width={gridItemWidth} selected={selectionMode && isSelected && !selectionExitPending} selectionMode={false} />
+      : <ListBook book={book} manualOrdering={manualOrderingMode} onOpenReader={onOpenReader} opening={readerOpeningTransition?.book.id === book.id} titleMenu={titleMenu} selected={false} selectionMode={false} />;
 
     if (manualOrderingMode) {
       return (
@@ -496,7 +634,7 @@ export default function LibraryScreen() {
             <EmptyLibrary onImport={importBooks} />
           ) : (
             <>
-              {continueReadingBook ? <ContinueReading book={continueReadingBook} selectionMode={selectionMode && !selectionExitPending} /> : null}
+              {continueReadingBook ? <ContinueReading book={continueReadingBook} onOpenReader={(frame) => openReaderWithTransition(continueReadingBook, frame)} opening={readerOpeningTransition?.book.id === continueReadingBook.id} selectionMode={selectionMode && !selectionExitPending} /> : null}
               <Animated.View layout={displayModeTransition} style={displayMode === 'grid' ? styles.grid : styles.list}>
                 {visibleBooks.map(renderBook)}
               </Animated.View>
@@ -510,11 +648,11 @@ export default function LibraryScreen() {
           )}
         </Animated.ScrollView>
         <>
-          <Animated.View pointerEvents="none" style={[styles.floatingTitle, { top: insets.top + tokens.spacing.compact }, floatingTitleStyle]}>
+          <Animated.View pointerEvents="none" style={[styles.floatingTitle, { top: insets.top + LIBRARY_HEADER_SAFE_TOP_GAP }, floatingTitleStyle]}>
             <Text accessibilityRole="header" style={styles.navigationTitle}>书库</Text>
           </Animated.View>
           {(!selectionMode || selectionExitPending) && !manualOrderingMode ? (
-              <View pointerEvents="box-none" style={[styles.floatingMenu, { top: insets.top + tokens.spacing.compact }]}>
+              <View pointerEvents="box-none" style={[styles.floatingMenu, { top: insets.top + LIBRARY_HEADER_SAFE_TOP_GAP }]}>
                 <LibraryOverflowMenu
                   booksExist={books.length > 0}
                   filterMode={filterMode}
@@ -531,7 +669,7 @@ export default function LibraryScreen() {
         </>
         {selectionMode && !selectionExitPending ? (
           <>
-            <View pointerEvents="box-none" style={[styles.selectionHeaderActions, { top: insets.top + tokens.spacing.compact }]}>
+            <View pointerEvents="box-none" style={[styles.selectionHeaderActions, { top: insets.top + LIBRARY_HEADER_SAFE_TOP_GAP }]}>
               <Animated.View layout={layoutTransition}>
                 <SelectionGlass style={styles.selectionAllGlass}>
                   <Animated.View style={[styles.selectionControlContent, selectionAllTransitionStyle]}>
@@ -580,7 +718,7 @@ export default function LibraryScreen() {
           </>
         ) : null}
         {manualOrderingMode ? (
-          <View pointerEvents="box-none" style={[styles.selectionHeaderActions, { top: insets.top + tokens.spacing.compact }]}>
+          <View pointerEvents="box-none" style={[styles.selectionHeaderActions, { top: insets.top + LIBRARY_HEADER_SAFE_TOP_GAP }]}>
             <SelectionGlass style={styles.manualCancelGlass}>
               <Pressable accessibilityLabel="取消调整顺序" accessibilityRole="button" onPress={cancelManualOrdering} style={styles.selectionControlContent}>
                 <Text style={styles.selectionAllButtonText}>取消</Text>
@@ -592,6 +730,13 @@ export default function LibraryScreen() {
               </Pressable>
             </SelectionGlass>
           </View>
+        ) : null}
+        {readerOpeningTransition ? (
+          <ReaderOpeningTransitionOverlay
+            key={readerOpeningTransition.id}
+            onFinished={finishReaderOpeningTransition}
+            transition={readerOpeningTransition}
+          />
         ) : null}
       </GestureHandlerRootView>
     </>
@@ -730,8 +875,9 @@ function LibraryMenuTrigger({ selectionProgress }: { selectionProgress: SharedVa
   return <View style={styles.menuTriggerFallback}>{trigger}</View>;
 }
 
-function ContinueReading({ book, selectionMode }: { book: LibraryBook; selectionMode: boolean }) {
+function ContinueReading({ book, onOpenReader, opening, selectionMode }: { book: LibraryBook; onOpenReader: (frame: ReaderOpeningFrame) => void; opening: boolean; selectionMode: boolean }) {
   const selectionProgress = useSharedValue(1);
+  const coverRef = useRef<View>(null);
 
   useEffect(() => {
     selectionProgress.set(withTiming(selectionMode ? 0 : 1, { duration: 220 }));
@@ -743,7 +889,9 @@ function ContinueReading({ book, selectionMode }: { book: LibraryBook; selection
 
   const bookPreview = (
     <View style={styles.continueBook}>
-      <BookCover book={book} width={tokens.cover.continueWidth} presentation="continue" />
+      <View collapsable={false} ref={coverRef} style={opening ? styles.openingSourceHidden : null}>
+        <BookCover book={book} width={tokens.cover.continueWidth} presentation="continue" />
+      </View>
       <View style={styles.continueMetadata}>
         <Text selectable numberOfLines={2} style={styles.continueTitle}>{book.title}</Text>
         {book.author ? <Text selectable numberOfLines={1} style={styles.author}>{book.author}</Text> : null}
@@ -758,11 +906,15 @@ function ContinueReading({ book, selectionMode }: { book: LibraryBook; selection
       <Text selectable style={styles.sectionTitle}>继续阅读</Text>
       <Animated.View pointerEvents={selectionMode ? 'none' : 'auto'} style={selectionStyle}>
         {selectionMode ? bookPreview : (
-          <Link href={{ pathname: '/reader/[bookId]', params: { bookId: book.id } }} asChild>
-            <Pressable accessibilityLabel={`继续阅读，${book.title}`} accessibilityRole="button">
-              {bookPreview}
-            </Pressable>
-          </Link>
+          <Pressable
+            accessibilityLabel={`继续阅读，${book.title}`}
+            accessibilityRole="button"
+            onPress={() => coverRef.current?.measureInWindow((x, y, measuredWidth, measuredHeight) => {
+              onOpenReader({ height: measuredHeight, width: measuredWidth, x, y });
+            })}
+          >
+            {bookPreview}
+          </Pressable>
         )}
       </Animated.View>
     </View>
@@ -981,17 +1133,22 @@ function ReorderableBook({
   );
 }
 
-function GridBook({ book, manualOrdering, onOpenReader, titleMenu, width, selected, selectionMode }: { book: LibraryBook; manualOrdering: boolean; onOpenReader?: () => void; titleMenu?: BookMenuHandlers; width: number; selected: boolean; selectionMode: boolean }) {
+function GridBook({ book, manualOrdering, onOpenReader, opening, titleMenu, width, selected, selectionMode }: { book: LibraryBook; manualOrdering: boolean; onOpenReader?: (frame: ReaderOpeningFrame) => void; opening: boolean; titleMenu?: BookMenuHandlers; width: number; selected: boolean; selectionMode: boolean }) {
+  const coverRef = useRef<View>(null);
   return (
     <View style={[styles.gridBook, { width }]}>
-      <View style={styles.coverWrap}>
+      <View style={[styles.coverWrap, opening ? styles.openingSourceHidden : null]}>
         <Pressable
           accessibilityLabel={`打开 ${book.title}`}
           accessibilityRole="button"
           disabled={!onOpenReader}
-          onPress={onOpenReader}
+          onPress={() => coverRef.current?.measureInWindow((x, y, measuredWidth, measuredHeight) => {
+            onOpenReader?.({ height: measuredHeight, width: measuredWidth, x, y });
+          })}
         >
-          <BookCover book={book} width={width} presentation="grid" />
+          <View collapsable={false} ref={coverRef}>
+            <BookCover book={book} width={width} presentation="grid" />
+          </View>
         </Pressable>
         {selected ? <View pointerEvents="none" style={styles.coverSelectionCenter}><SelectionIndicator selected /></View> : null}
       </View>
@@ -1007,17 +1164,22 @@ function GridBook({ book, manualOrdering, onOpenReader, titleMenu, width, select
   );
 }
 
-function ListBook({ book, manualOrdering, onOpenReader, titleMenu, selected, selectionMode }: { book: LibraryBook; manualOrdering: boolean; onOpenReader?: () => void; titleMenu?: BookMenuHandlers; selected: boolean; selectionMode: boolean }) {
+function ListBook({ book, manualOrdering, onOpenReader, opening, titleMenu, selected, selectionMode }: { book: LibraryBook; manualOrdering: boolean; onOpenReader?: (frame: ReaderOpeningFrame) => void; opening: boolean; titleMenu?: BookMenuHandlers; selected: boolean; selectionMode: boolean }) {
+  const coverRef = useRef<View>(null);
   return (
     <View style={styles.listBook}>
-      <View style={styles.listCoverWrap}>
+      <View style={[styles.listCoverWrap, opening ? styles.openingSourceHidden : null]}>
         <Pressable
           accessibilityLabel={`打开 ${book.title}`}
           accessibilityRole="button"
           disabled={!onOpenReader}
-          onPress={onOpenReader}
+          onPress={() => coverRef.current?.measureInWindow((x, y, measuredWidth, measuredHeight) => {
+            onOpenReader?.({ height: measuredHeight, width: measuredWidth, x, y });
+          })}
         >
-          <BookCover book={book} width={tokens.cover.listWidth} presentation="list" />
+          <View collapsable={false} ref={coverRef}>
+            <BookCover book={book} width={tokens.cover.listWidth} presentation="list" />
+          </View>
         </Pressable>
         {selected ? <SelectionIndicator selected /> : null}
       </View>
@@ -1044,8 +1206,6 @@ function BookCover({
   presentation: 'grid' | 'continue' | 'list';
 }) {
   const height = width / tokens.cover.gridAspectRatio;
-  const isLightTone = book.coverTone === 'paper' || book.coverTone === 'mist';
-  const [didFailToLoadCover, setDidFailToLoadCover] = useState(false);
   const shadowStyle = presentation === 'grid'
     ? styles.coverShadowGrid
     : presentation === 'continue'
@@ -1065,22 +1225,13 @@ function BookCover({
     >
       <View style={[styles.coverShadow, shadowStyle, { backgroundColor: coverBackground }]}>
         <View style={[styles.coverShadowTight, tightShadowStyle, { backgroundColor: coverBackground }]}>
-        {book.coverUri && !didFailToLoadCover ? (
-          <Image
-            accessibilityLabel={`${book.title}书封`}
-            onError={() => setDidFailToLoadCover(true)}
-            resizeMode="cover"
-            source={{ uri: book.coverUri }}
-            style={styles.coverImage}
+          <BookCoverArt
+            author={book.author}
+            coverTone={book.coverTone}
+            coverUri={book.coverUri}
+            hasGeneratedCover={book.hasGeneratedCover}
+            title={book.title}
           />
-        ) : (
-            <View style={[styles.cover, { backgroundColor: coverBackground }]}>
-            <View style={styles.coverAccent} />
-            <Text numberOfLines={3} style={[styles.coverTitle, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>{book.title}</Text>
-            {book.author ? <Text numberOfLines={1} style={[styles.coverAuthor, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>{book.author}</Text> : <View />}
-            {book.hasGeneratedCover ? <Text style={[styles.coverGeneratedLabel, isLightTone ? styles.coverTitleDark : styles.coverTitleLight]}>阅读</Text> : null}
-          </View>
-          )}
         </View>
       </View>
     </View>
@@ -1172,6 +1323,7 @@ const styles = StyleSheet.create({
   gridBook: { gap: 4 },
   gridMenuTrigger: { gap: 2, minHeight: 42 },
   coverWrap: { position: 'relative' },
+  openingSourceHidden: { opacity: 0 },
   coverSelectionCenter: { alignItems: 'center', bottom: 0, justifyContent: 'center', left: 0, position: 'absolute', right: 0, top: 0, zIndex: 2 },
   gridTitle: { color: tokens.colors.label, fontSize: 14, fontWeight: '600', lineHeight: 18, minHeight: 18 },
   gridState: { color: tokens.colors.secondaryLabel, fontSize: 12, fontVariant: ['tabular-nums'] },
@@ -1190,14 +1342,16 @@ const styles = StyleSheet.create({
   coverShadowList: { shadowColor: tokens.shadows.coverList.color, shadowOpacity: tokens.shadows.coverList.opacity, shadowRadius: tokens.shadows.coverList.radius, shadowOffset: { width: 0, height: tokens.shadows.coverList.offsetY } },
   coverShadowListTight: { shadowColor: tokens.shadows.coverListTight.color, shadowOpacity: tokens.shadows.coverListTight.opacity, shadowRadius: tokens.shadows.coverListTight.radius, shadowOffset: { width: 0, height: tokens.shadows.coverListTight.offsetY } },
   coverShadowTight: { borderRadius: tokens.radius.cover, flex: 1 },
-  cover: { flex: 1, justifyContent: 'space-between', overflow: 'hidden', padding: tokens.spacing.coverInset, borderCurve: 'continuous', borderRadius: tokens.radius.cover },
-  coverImage: { borderCurve: 'continuous', borderRadius: tokens.radius.cover, height: '100%', width: '100%' },
-  coverAccent: { width: 18, height: 1, backgroundColor: 'rgba(255,255,255,0.42)', borderRadius: 1 },
-  coverTitle: { fontSize: 15, fontWeight: '600', lineHeight: 19, letterSpacing: -0.15 },
-  coverAuthor: { fontSize: 10, fontWeight: '500', opacity: 0.72 },
-  coverTitleLight: { color: '#FFFFFF' },
-  coverTitleDark: { color: '#2C2C2E' },
-  coverGeneratedLabel: { alignSelf: 'flex-start', fontSize: 11, fontWeight: '600', letterSpacing: 1.4, textTransform: 'uppercase' },
+  readerOpeningCover: {
+    borderCurve: 'continuous',
+    borderRadius: tokens.radius.cover,
+    position: 'absolute',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.2,
+    shadowRadius: 24,
+  },
+  readerOpeningTransition: { zIndex: 100 },
   selectionRow: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0, zIndex: 3 },
   selectionGridItem: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0, zIndex: 3 },
   selectionContent: { flex: 1 },

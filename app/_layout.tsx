@@ -18,7 +18,7 @@ export default function RootLayout() {
       <StatusBar style="auto" />
       <Stack screenOptions={{ contentStyle: { backgroundColor: tokens.colors.background } }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="reader/[bookId]" options={{ title: 'Reader' }} />
+        <Stack.Screen name="reader/[bookId]" options={{ animation: 'none', gestureEnabled: false, headerShown: false }} />
       </Stack>
     </ThemeProvider>
   );

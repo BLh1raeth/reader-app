@@ -9,18 +9,18 @@ function ensureDirectory(directory: Directory) {
   directory.create({ idempotent: true, intermediates: true });
 }
 
-export function ensureLibraryStorage() {
+function ensureLibraryStorage() {
   ensureDirectory(libraryDirectory);
   ensureDirectory(booksDirectory);
   ensureDirectory(coversDirectory);
   ensureDirectory(temporaryDirectory);
 }
 
-export function bookFileFor(bookId: string) {
+function bookFileFor(bookId: string) {
   return new File(booksDirectory, `${bookId}.epub`);
 }
 
-export function coverFileFor(bookId: string, extension: string) {
+function coverFileFor(bookId: string, extension: string) {
   const safeExtension = extension.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'jpg';
   return new File(coversDirectory, `${bookId}.${safeExtension}`);
 }
