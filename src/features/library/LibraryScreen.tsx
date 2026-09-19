@@ -787,7 +787,7 @@ function BookTitleMenu({ book, children, handlers }: {
       title: '编辑图书信息',
       subactions: [
         { id: 'edit-cover', image: 'photo' as SFSymbol, title: '封面' },
-        { id: 'edit-title', image: 'textformat' as SFSymbol, title: '书名' },
+        { id: 'edit-title', image: 'pencil' as SFSymbol, title: '书名' },
         { id: 'edit-author', image: 'person' as SFSymbol, title: '作者' },
         { id: 'restore-original', image: 'arrow.counterclockwise' as SFSymbol, title: '恢复原始信息' },
       ],
