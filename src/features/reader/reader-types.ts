@@ -61,6 +61,13 @@ export type ReaderEpubSource = {
   /** The complete EPUB is present only in compatibility fallback mode. */
   base64?: string;
   entries?: ReaderZipEntry[];
+  /**
+   * Small metadata files foliate needs at open time (container.xml, the OPF
+   * package document, encryption.xml, NCX/EPUB3 nav), read natively from the
+   * already-loaded bytes. Keyed by the exact ZIP entry names foliate
+   * requests, so the DOM side can answer without bridge round trips.
+   */
+  prefetchedText?: Record<string, string>;
   sourceKind: 'zip-resource-loader' | 'full-base64-fallback';
   sourceReadMs: number;
 };

@@ -132,6 +132,8 @@ export type FoliateOpenInput = {
   entries?: ReaderZipEntry[];
   fileName: string;
   onResourceRequest: (name: string) => Promise<ReaderResourcePayload | null>;
+  /** Metadata texts prefetched natively; checked before any bridge request. */
+  prefetchedText?: Record<string, string>;
   restoreCfi: string | null;
   sourceKind: 'zip-resource-loader' | 'full-base64-fallback';
   pageCountCache: ReaderPageCountCache | null;
@@ -175,6 +177,7 @@ async function createOnDemandBook(
 ): Promise<FoliateBook> {
   const entries = new Map((input.entries ?? []).map((entry) => [entry.name, entry]));
   const decoder = new TextDecoder();
+  const prefetchedText = input.prefetchedText ?? {};
   const loadBytes = async (name: string) => {
     const resource = await input.onResourceRequest(name);
     if (!resource) return null;
@@ -183,6 +186,11 @@ async function createOnDemandBook(
   const { EPUB } = await epubModulePromise;
   return new EPUB({
     loadText: async (name: string) => {
+      // Opening metadata (container.xml, OPF, encryption.xml, NCX/nav) was
+      // read natively alongside the source: answer straight from memory
+      // instead of paying a DOM<->native round trip per file.
+      const hit = prefetchedText[name];
+      if (hit !== undefined) return hit;
       const bytes = await loadBytes(name);
       return bytes ? decoder.decode(bytes) : '';
     },

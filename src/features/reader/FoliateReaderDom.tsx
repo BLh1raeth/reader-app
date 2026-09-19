@@ -172,6 +172,7 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
       entries: nextSource.entries,
       fileName: nextSource.fileName,
       onResourceRequest: (name) => callbacksRef.current.onResourceRequest(name),
+      prefetchedText: nextSource.prefetchedText,
       restoreCfi,
       sourceKind: nextSource.sourceKind,
       pageCountCache,

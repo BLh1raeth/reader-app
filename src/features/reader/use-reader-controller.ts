@@ -346,6 +346,7 @@ export function useReaderController(bookId: string | undefined) {
           sourceKind: source.sourceKind,
           base64Length: source.base64?.length ?? null,
           zipEntryCount: source.entries?.length ?? null,
+          prefetchedFiles: Object.keys(source.prefetchedText ?? {}).length,
         });
         setState({ kind: 'opening', book, source, restoreCfi: savedProgress?.cfi ?? null });
       } catch (error) {
