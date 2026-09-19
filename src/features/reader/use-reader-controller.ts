@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { bookRepository } from '../library/book-repository';
 import type { Book } from '../library/library-types';
 import { readingProgressRepository, type ReadingProgress } from './reading-progress-repository';
-import { createFullEpubSource, createReaderEpubSource, readReaderEpubResource } from './reader-resource-bridge';
+import { createFullEpubSource, readReaderEpubResource } from './reader-resource-bridge';
+import { loadReaderData } from './reader-preload';
 import { markReaderOpen } from './reader-open-performance';
 import { readerPageCacheRepository, type ReaderPageCountCache } from './reader-page-cache-repository';
 import { getGlobalReaderPage } from './reader-pagination';
@@ -326,24 +327,13 @@ export function useReaderController(bookId: string | undefined) {
       setState({ kind: 'error', message: '找不到这本书。' });
       return undefined;
     }
-    setState({ kind: 'loading', message: '正在查询图书' });
     void (async () => {
       try {
-        const book = await bookRepository.getBookById(bookId);
-        if (!book) throw new Error('这本书已不在书库中。');
+        // Picks up the preload started on tap when one exists, so the EPUB
+        // file read runs in parallel with the cover opening animation.
+        const { book, source, savedProgress, pageCountCache, savedReaderSettings } = await loadReaderData(bookId);
+        if (!active) return;
         currentBookRef.current = book;
-        markReaderOpen(book.id, 'BOOK_DATA_READY', book.fileSize);
-        if (!active) return;
-        setState({ kind: 'loading', message: '正在读取 EPUB' });
-        markReaderOpen(book.id, 'EPUB_FILE_READ_START', book.fileSize);
-        markReaderOpen(book.id, 'EPUB_PREPARE_START', book.fileSize);
-        const [source, savedProgress, pageCountCache, savedReaderSettings] = await Promise.all([
-          createReaderEpubSource(book),
-          readingProgressRepository.getByBookId(book.id),
-          readerPageCacheRepository.getMostRecent(book.id),
-          readerSettingsRepository.get(),
-        ]);
-        if (!active) return;
         lastPersistedCfiRef.current = savedProgress?.cfi ?? null;
         restoreCfiRef.current = savedProgress?.cfi ?? null;
         sourceRef.current = source;
@@ -351,35 +341,12 @@ export function useReaderController(bookId: string | undefined) {
         readerSettingsRef.current = savedReaderSettings;
         setReaderSettings(savedReaderSettings);
         setAppliedReaderSettings(savedReaderSettings);
-        markReaderOpen(book.id, 'EPUB_PREPARE_END', book.fileSize, {
-          sourceKind: source.sourceKind,
-          sourceReadMs: source.sourceReadMs,
-          zipEntryCount: source.entries?.length ?? null,
-        });
-        markReaderOpen(book.id, 'EPUB_FILE_READ_END', book.fileSize, {
-          sourceKind: source.sourceKind,
-          sourceReadMs: source.sourceReadMs,
-          zipEntryCount: source.entries?.length ?? null,
-        });
-        console.log('[READER_RESOURCE]', JSON.stringify({
-          bookId: book.id,
-          byteLength: source.byteLength,
-          sourceKind: source.sourceKind,
-          sourceReadMs: source.sourceReadMs,
-        }));
         markReaderOpen(book.id, 'DOM_MOUNT_START', book.fileSize);
         markReaderOpen(book.id, 'EPUB_TRANSFER_START', book.fileSize, {
           sourceKind: source.sourceKind,
           base64Length: source.base64?.length ?? null,
           zipEntryCount: source.entries?.length ?? null,
         });
-        console.log('[PROGRESS_READ]', JSON.stringify({
-          bookId: book.id,
-          savedCfi: savedProgress?.cfi ?? null,
-          spineIndex: savedProgress?.spineIndex ?? null,
-          percentage: savedProgress?.percentage ?? null,
-          updatedAt: savedProgress?.updatedAt ?? null,
-        }));
         setState({ kind: 'opening', book, source, restoreCfi: savedProgress?.cfi ?? null });
       } catch (error) {
         if (!active) return;

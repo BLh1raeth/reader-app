@@ -38,6 +38,7 @@ import { BookCoverArt } from './BookCoverArt';
 const LIBRARY_HEADER_SAFE_TOP_GAP = 2;
 import { bookRepository } from './book-repository';
 import { beginReaderOpen } from '../reader/reader-open-performance';
+import { preloadReaderData } from '../reader/reader-preload';
 import {
   importPickedEpubs,
   removeBooks as removeStoredBooks,
@@ -271,6 +272,9 @@ export default function LibraryScreen() {
     if (readerOpeningPendingRef.current || readerOpeningTransition) return;
     readerOpeningPendingRef.current = true;
     beginReaderOpen(book.id, book.fileSize);
+    // Start the expensive reader data load now so it runs in parallel with
+    // the cover opening animation; the reader picks it up on mount.
+    preloadReaderData(book.id);
     setTabBarHidden(true);
     const targetWidth = Math.min(240, width * 0.65);
     const targetHeight = targetWidth / tokens.cover.gridAspectRatio;
