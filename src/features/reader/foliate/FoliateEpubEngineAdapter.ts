@@ -226,10 +226,6 @@ function mapToc(items: unknown, resolveHref?: (href: string) => FoliateResolvedH
   });
 }
 
-function countTocItems(items: ReaderTocItem[]): number {
-  return items.reduce((count, item) => count + 1 + countTocItems(item.subitems ?? []), 0);
-}
-
 function drawSearchResultHighlight(rects: Array<{ left: number; top: number; width: number; height: number }>) {
   const namespace = 'http://www.w3.org/2000/svg';
   const group = document.createElementNS(namespace, 'g');
@@ -294,7 +290,6 @@ export class FoliateEpubEngineAdapter {
   ) {}
 
   async open(input: FoliateOpenInput): Promise<ReaderLocation> {
-    const openedAt = performance.now();
     this.destroy();
     this.bookId = input.bookId;
     this.readerSettings = normalizeReaderSettings(input.readerSettings);
@@ -344,10 +339,8 @@ export class FoliateEpubEngineAdapter {
     // relocation promotes Native state from opening to ready and intentionally
     // tears down the opening effect that owns the source prop.
     const toc = this.getToc();
-    console.log('[TOC_READY]', JSON.stringify({ rootCount: toc.length, itemCount: countTocItems(toc) }));
     this.onToc(toc);
     this.onDiagnostic({ event: 'BOOK_OPEN_END' });
-    const engineOpenedAt = performance.now();
     this.onDiagnostic({ event: 'ENGINE_OPENED' });
     // `foliate-view` owns an internal `foliate-paginator`; its margin is not
     // inherited from the outer custom element. Give the reader a deliberate
@@ -365,13 +358,6 @@ export class FoliateEpubEngineAdapter {
     this.pageCountCache = this.isCacheUsable(input.pageCountCache, this.layoutSignature)
       ? input.pageCountCache
       : null;
-    if (this.pageCountCache) {
-      console.log('[PAGE_COUNT_CACHE_HIT]', JSON.stringify({
-        layoutSignature: this.layoutSignature,
-        totalPages: this.pageCountCache.totalPages,
-        sectionCount: this.pageCountCache.sectionPages.length,
-      }));
-    }
     // This is the same one-pass restore path proven by the Spike: foliate
     // resolves the CFI while it builds the paginator, rather than first
     // laying out the book start and then performing a second `goTo()` layout.
@@ -387,12 +373,6 @@ export class FoliateEpubEngineAdapter {
 
     const location = this.getLocation();
     this.onDiagnostic({ event: 'RESTORE_RESULT', targetCfi, actualCurrentCfi: location.cfi });
-    console.log('[READER_TIMING]', JSON.stringify({
-      decodeAndOpenMs: Math.round(engineOpenedAt - openedAt),
-      paginateAndRestoreMs: Math.round(performance.now() - engineOpenedAt),
-      totalDomOpenMs: Math.round(performance.now() - openedAt),
-      restored: Boolean(targetCfi),
-    }));
     this.restoreState = 'active';
     view.style.visibility = 'visible';
     view.style.opacity = '1';
@@ -1515,7 +1495,6 @@ export class FoliateEpubEngineAdapter {
       counterView.addEventListener('load', normalizeCounterDocument);
       measureHost.append(counterView);
       document.body.append(measureHost);
-      console.log('[PAGE_COUNT_START]', JSON.stringify({ bookId: input.bookId, layoutSignature: signature }));
 
       const counterBook = await this.createCounterBook(input);
       if (run !== this.pageCountRun || this.restoreState !== 'active') return;
@@ -1563,7 +1542,6 @@ export class FoliateEpubEngineAdapter {
       const result: ReaderPageCountResult = { layoutSignature: signature, totalPages, sectionPages };
       this.pageCountCache = { ...result, bookId: input.bookId, updatedAt: new Date().toISOString() };
       this.onPageCount(result);
-      console.log('[PAGE_COUNT_READY]', JSON.stringify({ bookId: input.bookId, layoutSignature: signature, totalPages, sectionCount: sectionPages.length }));
     } catch (error) {
       console.warn('[PAGE_COUNT_FAILED]', error);
     } finally {

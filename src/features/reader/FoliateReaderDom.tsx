@@ -208,9 +208,7 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
     const adapter = adapterRef.current;
     if (!request || !adapter) return;
     let active = true;
-    console.log('[TOC_NAVIGATION_REQUEST]', JSON.stringify({ requestId: request.id, href: request.href }));
     void adapter.goTo(request.href).then(() => {
-      console.log('[TOC_NAVIGATION_RESULT]', JSON.stringify({ requestId: request.id, succeeded: true }));
       if (active) return callbacksRef.current.onTocNavigationResult(request.id, true, null);
       return undefined;
     }).catch((error) => {
