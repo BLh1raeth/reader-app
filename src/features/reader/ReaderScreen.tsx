@@ -124,14 +124,14 @@ function ReaderControlEntry({
 }: {
   disabled?: boolean;
   label: string;
-  icon: 'list.bullet' | 'magnifyingglass' | 'textformat.size' | 'bookmark' | 'bookmark.fill';
+  icon: 'list.bullet' | 'magnifyingglass' | 'textformat' | 'bookmark' | 'bookmark.fill';
   onPress?: () => void;
   selected?: boolean;
   tintColor: string;
 }) {
   const content = (
     <>
-      <SymbolView name={icon} size={icon === 'textformat.size' ? 24 : 22} tintColor={tintColor} weight="semibold" />
+      <SymbolView name={icon} size={icon === 'textformat' ? 24 : 22} tintColor={tintColor} weight="semibold" />
     </>
   );
   if (onPress) {
@@ -175,10 +175,10 @@ function ReaderControlBar({
   bookmarkBusy: boolean;
   currentBookmarked: boolean;
 }) {
-  const controls: Array<{ label: string; icon: 'list.bullet' | 'magnifyingglass' | 'textformat.size' | 'bookmark' | 'bookmark.fill'; onPress?: () => void; disabled?: boolean; selected?: boolean }> = [
+  const controls: Array<{ label: string; icon: 'list.bullet' | 'magnifyingglass' | 'textformat' | 'bookmark' | 'bookmark.fill'; onPress?: () => void; disabled?: boolean; selected?: boolean }> = [
     { label: uiText.reader.toc, icon: 'list.bullet', onPress: onTocPress },
     { label: uiText.reader.search, icon: 'magnifyingglass', onPress: onSearchPress },
-    { label: uiText.reader.settings, icon: 'textformat.size', onPress: onSettingsPress },
+    { label: uiText.reader.settings, icon: 'textformat', onPress: onSettingsPress },
     { label: currentBookmarked ? uiText.reader.removeBookmark : uiText.reader.addBookmark, icon: currentBookmarked ? 'bookmark.fill' : 'bookmark', onPress: onBookmarkPress, disabled: bookmarkBusy, selected: currentBookmarked },
   ];
   const content = controls.map((control) => <ReaderControlEntry disabled={control.disabled} icon={control.icon} key={control.label} label={control.label} onPress={control.onPress} selected={control.selected} tintColor={tintColor} />);
