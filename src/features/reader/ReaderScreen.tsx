@@ -124,22 +124,14 @@ function ReaderControlEntry({
 }: {
   disabled?: boolean;
   label: string;
-  icon: 'list.bullet' | 'magnifyingglass' | 'textformat' | 'bookmark' | 'bookmark.fill';
+  icon: 'list.bullet' | 'magnifyingglass' | 'gearshape' | 'bookmark' | 'bookmark.fill';
   onPress?: () => void;
   selected?: boolean;
   tintColor: string;
 }) {
-  // NOTE: the settings glyph is the literal text "Aa" on purpose. SF Symbols
-  // localizes the textformat family by UI locale (textformat -> "格式",
-  // textformat.size -> "大小" in Chinese), so no symbol name can reliably
-  // render "Aa" here.
   const content = (
     <>
-      {icon === 'textformat' ? (
-        <Text style={[styles.aaGlyph, { color: tintColor }]}>Aa</Text>
-      ) : (
-        <SymbolView name={icon} size={22} tintColor={tintColor} weight="semibold" />
-      )}
+      <SymbolView name={icon} size={22} tintColor={tintColor} weight="semibold" />
     </>
   );
   if (onPress) {
@@ -183,10 +175,10 @@ function ReaderControlBar({
   bookmarkBusy: boolean;
   currentBookmarked: boolean;
 }) {
-  const controls: Array<{ label: string; icon: 'list.bullet' | 'magnifyingglass' | 'textformat' | 'bookmark' | 'bookmark.fill'; onPress?: () => void; disabled?: boolean; selected?: boolean }> = [
+  const controls: Array<{ label: string; icon: 'list.bullet' | 'magnifyingglass' | 'gearshape' | 'bookmark' | 'bookmark.fill'; onPress?: () => void; disabled?: boolean; selected?: boolean }> = [
     { label: uiText.reader.toc, icon: 'list.bullet', onPress: onTocPress },
     { label: uiText.reader.search, icon: 'magnifyingglass', onPress: onSearchPress },
-    { label: uiText.reader.settings, icon: 'textformat', onPress: onSettingsPress },
+    { label: uiText.reader.settings, icon: 'gearshape', onPress: onSettingsPress },
     { label: currentBookmarked ? uiText.reader.removeBookmark : uiText.reader.addBookmark, icon: currentBookmarked ? 'bookmark.fill' : 'bookmark', onPress: onBookmarkPress, disabled: bookmarkBusy, selected: currentBookmarked },
   ];
   const content = controls.map((control) => <ReaderControlEntry disabled={control.disabled} icon={control.icon} key={control.label} label={control.label} onPress={control.onPress} selected={control.selected} tintColor={tintColor} />);
@@ -1357,7 +1349,6 @@ const styles = StyleSheet.create({
   readerControlBarFallback: { backgroundColor: 'rgba(250,250,252,0.88)', borderColor: 'rgba(60,60,67,0.15)', borderRadius: 26, borderWidth: StyleSheet.hairlineWidth, height: CONTROL_BAR_HEIGHT, shadowColor: '#000000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.1, shadowRadius: 12, width: CONTROL_BAR_WIDTH },
   readerControlBarContent: { alignItems: 'center', flex: 1, flexDirection: 'row', justifyContent: 'space-evenly', paddingHorizontal: 6 },
   readerControlButton: { alignItems: 'center', height: 44, justifyContent: 'center', width: 50 },
-  aaGlyph: { fontSize: 22, fontWeight: '600' },
   excerptActionPosition: { height: EXCERPT_ACTION_HEIGHT, position: 'absolute', width: EXCERPT_ACTION_WIDTH, zIndex: 80 },
   excerptActionGlass: { borderRadius: EXCERPT_ACTION_HEIGHT / 2, height: EXCERPT_ACTION_HEIGHT, width: EXCERPT_ACTION_WIDTH },
   excerptActionFallback: {
