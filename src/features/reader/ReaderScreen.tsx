@@ -129,9 +129,17 @@ function ReaderControlEntry({
   selected?: boolean;
   tintColor: string;
 }) {
+  // NOTE: the settings glyph is the literal text "Aa" on purpose. SF Symbols
+  // localizes the textformat family by UI locale (textformat -> "格式",
+  // textformat.size -> "大小" in Chinese), so no symbol name can reliably
+  // render "Aa" here.
   const content = (
     <>
-      <SymbolView name={icon} size={icon === 'textformat' ? 24 : 22} tintColor={tintColor} weight="semibold" />
+      {icon === 'textformat' ? (
+        <Text style={[styles.aaGlyph, { color: tintColor }]}>Aa</Text>
+      ) : (
+        <SymbolView name={icon} size={22} tintColor={tintColor} weight="semibold" />
+      )}
     </>
   );
   if (onPress) {
@@ -1349,6 +1357,7 @@ const styles = StyleSheet.create({
   readerControlBarFallback: { backgroundColor: 'rgba(250,250,252,0.88)', borderColor: 'rgba(60,60,67,0.15)', borderRadius: 26, borderWidth: StyleSheet.hairlineWidth, height: CONTROL_BAR_HEIGHT, shadowColor: '#000000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.1, shadowRadius: 12, width: CONTROL_BAR_WIDTH },
   readerControlBarContent: { alignItems: 'center', flex: 1, flexDirection: 'row', justifyContent: 'space-evenly', paddingHorizontal: 6 },
   readerControlButton: { alignItems: 'center', height: 44, justifyContent: 'center', width: 50 },
+  aaGlyph: { fontSize: 22, fontWeight: '600' },
   excerptActionPosition: { height: EXCERPT_ACTION_HEIGHT, position: 'absolute', width: EXCERPT_ACTION_WIDTH, zIndex: 80 },
   excerptActionGlass: { borderRadius: EXCERPT_ACTION_HEIGHT / 2, height: EXCERPT_ACTION_HEIGHT, width: EXCERPT_ACTION_WIDTH },
   excerptActionFallback: {
