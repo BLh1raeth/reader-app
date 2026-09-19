@@ -251,7 +251,7 @@ export default function LibraryScreen() {
     readerOpeningPendingRef.current = true;
     beginReaderOpen(book.id, book.fileSize);
     setTabBarHidden(true);
-    const targetWidth = Math.min(240, width * 0.56);
+    const targetWidth = Math.min(240, width * 0.65);
     const targetHeight = targetWidth / tokens.cover.gridAspectRatio;
     const transition: ReaderOpeningTransition = {
       backgroundColor: readerBackgroundColor,

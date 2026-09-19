@@ -308,7 +308,7 @@ export default function ReaderScreen() {
   const rawOpeningCoverTone = firstRouteParam(routeParams.openingCoverTone) as CoverTone | undefined;
   const openingCoverTone = rawOpeningCoverTone && readerOpeningCoverTones.has(rawOpeningCoverTone) ? rawOpeningCoverTone : 'ink';
   const openingGenerated = firstRouteParam(routeParams.openingGenerated) === '1';
-  const readerLaunchCoverWidth = Math.min(240, readerViewportWidth * 0.56);
+  const readerLaunchCoverWidth = Math.min(240, readerViewportWidth * 0.65);
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const controller = useReaderController(bookId);
