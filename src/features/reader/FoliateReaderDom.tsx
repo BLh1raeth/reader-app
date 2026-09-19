@@ -31,6 +31,7 @@ import type {
   ReaderExcerptVerificationRequest,
   ReaderTocItem,
   ReaderTocNavigationRequest,
+  FootnotePayload,
 } from './reader-types';
 
 type ReaderDomProps = import('expo/dom').DOMProps & {
@@ -69,16 +70,17 @@ type Props = {
   // Optional at the bridge boundary so a DOM bundle refreshed one frame ahead
   // of the Native/React bundle cannot call an undefined newly-added callback.
   onSelectionChange?: (selection: ReaderSelectionPayload | null) => Promise<void>;
+  onFootnoteOpen?: (payload: FootnotePayload) => Promise<void>;
   dom?: ReaderDomProps;
 };
 
-export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, readerSettings, settingsSessionActive, tocNavigationRequest, bookmarkSnapshotRequest, bookmarkNavigationRequest, pageLocationRequest, searchRequest, searchNavigationRequest, selectionCommand, excerptVerificationRequest, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange }: Props) {
+export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, readerSettings, settingsSessionActive, tocNavigationRequest, bookmarkSnapshotRequest, bookmarkNavigationRequest, pageLocationRequest, searchRequest, searchNavigationRequest, selectionCommand, excerptVerificationRequest, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<FoliateEpubEngineAdapter | null>(null);
   const loadedSessionRef = useRef<string | null>(null);
   const settingsApplicationRef = useRef<Promise<void>>(Promise.resolve());
-  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange });
-  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange };
+  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen });
+  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen };
 
   useEffect(() => {
     document.documentElement.lang = 'zh-CN';
@@ -160,6 +162,10 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
       (selection) => {
         const callback = callbacksRef.current.onSelectionChange;
         if (typeof callback === 'function') void callback(selection);
+      },
+      (payload) => {
+        const callback = callbacksRef.current.onFootnoteOpen;
+        if (typeof callback === 'function') void callback(payload);
       },
     );
     adapterRef.current = adapter;

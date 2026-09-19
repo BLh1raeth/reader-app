@@ -207,3 +207,37 @@ export type ReaderExcerptVerificationRequest = {
   id: number;
   items: ReaderExcerptVerificationItem[];
 };
+
+export type FootnoteAnchorRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type FootnoteSemanticType = 'noteref' | 'doc-noteref' | 'footnote-target' | 'endnote-target';
+
+/**
+ * Whitelist-based rich text tree for footnote content. Built only from an
+ * explicit tag allowlist (em/i, strong/b, br, paragraphs, links), so no
+ * script, event handler, or arbitrary active content can survive extraction.
+ */
+export type FootnoteRichTextNode =
+  | { kind: 'text'; text: string }
+  | { kind: 'em'; children: FootnoteRichTextNode[] }
+  | { kind: 'strong'; children: FootnoteRichTextNode[] }
+  | { kind: 'break' }
+  | { kind: 'paragraph'; children: FootnoteRichTextNode[] }
+  | { kind: 'link'; href: string; children: FootnoteRichTextNode[] };
+
+export type FootnotePayload = {
+  id?: string;
+  text: string;
+  richText: FootnoteRichTextNode[];
+  /** Sanitized limited HTML regenerated from the rich-text whitelist. */
+  html?: string;
+  sourceHref?: string;
+  anchorRect: FootnoteAnchorRect;
+  crossDocument: boolean;
+  semanticType: FootnoteSemanticType;
+};

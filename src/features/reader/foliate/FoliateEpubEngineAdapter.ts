@@ -1,4 +1,8 @@
 import type {
+  FootnoteAnchorRect,
+  FootnotePayload,
+  FootnoteRichTextNode,
+  FootnoteSemanticType,
   ReaderBookmarkAnchor,
   ReaderBookmarkSnapshot,
   ReaderEngineDiagnostic,
@@ -33,9 +37,11 @@ type FoliateRawLocation = {
 };
 
 type FoliateSection = {
+  id?: string;
   cfi?: string;
   linear?: string;
   createDocument?: () => Promise<Document>;
+  resolveHref?: (href: string) => string;
 };
 
 type FoliateResolvedHref = {
@@ -47,6 +53,8 @@ type FoliateViewBook = {
   sections?: FoliateSection[];
   toc?: unknown[];
   resolveHref?: (href: string) => FoliateResolvedHref;
+  loadText?: (name: string) => Promise<string | null>;
+  parser?: DOMParser;
 };
 
 type FoliateRenderer = HTMLElement & {
@@ -125,6 +133,239 @@ const READER_STANDALONE_MEDIA_HEIGHT = `calc(100vh - ${READER_CONTENT_TOP_PX + R
 type PendingPageTurn = {
   direction: 'next' | 'prev';
 };
+
+// ── Footnote popover (Footnote Core A) ─────────────────────────────
+// Semantic-first footnote support: only anchors/targets carrying explicit
+// EPUB footnote semantics are intercepted. Non-semantic links keep their
+// default behavior; DEV logs record candidates for future heuristics.
+
+type FootnoteReference = {
+  rawHref: string;
+  fragment: string;
+  targetPath: string;
+  crossDocument: boolean;
+  sectionIndex: number;
+  isExplicitNoteref: boolean;
+  semanticType: FootnoteSemanticType;
+  /** Same-document target, resolved synchronously during classification. */
+  targetElement: Element | null;
+};
+
+const FOOTNOTE_BACKLINK_ARROWS = new Set(['↩', '↪', '↑', '↓', '⏎', '←', '→', '^', '«', '»']);
+const FOOTNOTE_LEADING_NUMBER_RE = /^[0-9\s.\[\]()\-–—]+$/;
+const FOOTNOTE_LEADING_NUMBER_PREFIX_RE = /^[0-9\s.\[\]()\-–—]+?(?=\s)/;
+const FOOTNOTE_EXTERNAL_SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+const FOOTNOTE_SUPERSCRIPT_DIGITS: Record<string, string> = {
+  '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5',
+  '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9', '⁰': '0',
+};
+
+/** Normalize a noteref/footnote label to its digit key ("[1]" → "1", "¹" → "1"). */
+function footnoteDigitKey(label: string): string {
+  const normalized = label.replace(/[¹²³⁴⁵⁶⁷⁸⁹⁰]/g, (c) => FOOTNOTE_SUPERSCRIPT_DIGITS[c] ?? c);
+  return (normalized.match(/[0-9]+/g) ?? []).join('');
+}
+
+function hasSubstantiveContentAfter(node: Node): boolean {
+  let sibling: Node | null = node.nextSibling;
+  while (sibling) {
+    if ((sibling.textContent ?? '').trim() !== '') return true;
+    sibling = sibling.nextSibling;
+  }
+  const parent = node.parentNode;
+  if (parent && parent.nodeType === Node.ELEMENT_NODE) {
+    let ps: Node | null = parent.nextSibling;
+    while (ps) {
+      if ((ps.textContent ?? '').trim() !== '') return true;
+      ps = ps.nextSibling;
+    }
+  }
+  return false;
+}
+
+function decodeFootnoteFragment(fragment: string): string {
+  try {
+    return decodeURIComponent(fragment);
+  } catch {
+    return fragment;
+  }
+}
+
+function findFragmentElement(doc: Document, fragment: string): Element | null {
+  return doc.getElementById(fragment)
+    ?? doc.querySelector(`[id="${CSS.escape(fragment)}"]`);
+}
+
+function getFootnoteSemanticType(element: Element): FootnoteSemanticType | null {
+  const epubType = element.getAttribute('epub:type');
+  const role = element.getAttribute('role');
+  if (epubType === 'footnote' || role === 'doc-footnote') return 'footnote-target';
+  if (epubType === 'endnote' || role === 'doc-endnote') return 'endnote-target';
+  return null;
+}
+
+function isFootnoteTargetElement(element: Element): boolean {
+  return getFootnoteSemanticType(element) !== null;
+}
+
+/**
+ * Strip backlinks ("↩", epub:type="backlink", role="doc-backlink"): closing
+ * the popover already returns the reader to the original position, so a
+ * back-to-text link inside the popover is meaningless.
+ */
+function cleanFootnoteClone(clone: Element): void {
+  for (const backlink of Array.from(clone.querySelectorAll('[epub\\:type="backlink"], [role="doc-backlink"]'))) {
+    backlink.remove();
+  }
+  for (const anchor of Array.from(clone.querySelectorAll('a'))) {
+    const href = anchor.getAttribute('href') ?? '';
+    const label = (anchor.textContent ?? '').trim();
+    if (anchor.getAttribute('epub:type') === 'backlink' || anchor.getAttribute('role') === 'doc-backlink') {
+      anchor.remove();
+    } else if (href.startsWith('#') && FOOTNOTE_BACKLINK_ARROWS.has(label)) {
+      anchor.remove();
+    }
+  }
+  for (const inert of Array.from(clone.querySelectorAll('script, style, template, iframe, object, embed, audio, video, form, input, button, select, textarea'))) {
+    inert.remove();
+  }
+}
+
+/**
+ * Remove a leading footnote-number marker ("1", "1.", "[2]") that duplicates
+ * the tapped noteref's label. Only strips when the leading digits match the
+ * anchor's own label digits, so body numbers ("1984年", "12,345") are never
+ * touched. Handles both `<span>1.</span> text` and `1. text` shapes.
+ */
+function stripLeadingFootnoteNumber(clone: Element, anchorLabel: string): void {
+  const anchorDigits = footnoteDigitKey(anchorLabel);
+  if (!anchorDigits) return;
+  const parents: Element[] = [clone];
+  const firstBlock = clone.firstElementChild;
+  if (firstBlock) parents.push(firstBlock);
+  for (const parent of parents) {
+    const first = parent.firstChild;
+    if (!first) continue;
+    if (first.nodeType === Node.ELEMENT_NODE) {
+      const label = (first.textContent ?? '').trim();
+      if (label === '' || !FOOTNOTE_LEADING_NUMBER_RE.test(label)) continue;
+      if (footnoteDigitKey(label) !== anchorDigits) continue;
+      if (!hasSubstantiveContentAfter(first)) continue;
+      first.remove();
+      return;
+    }
+    if (first.nodeType === Node.TEXT_NODE) {
+      const text = first.textContent ?? '';
+      const match = FOOTNOTE_LEADING_NUMBER_PREFIX_RE.exec(text);
+      if (!match) continue;
+      if (footnoteDigitKey(match[0]) !== anchorDigits) continue;
+      const rest = text.slice(match[0].length);
+      if (rest.trim() === '' && !hasSubstantiveContentAfter(first)) continue;
+      first.textContent = rest.replace(/^\s+/, '');
+      return;
+    }
+  }
+}
+
+function footnoteNodeToRichText(node: Node): FootnoteRichTextNode[] {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = (node.textContent ?? '').replace(/\s+/g, ' ');
+    return text === '' ? [] : [{ kind: 'text', text }];
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return [];
+  const element = node as Element;
+  const tag = element.tagName.toLowerCase();
+  if (tag === 'script' || tag === 'style' || tag === 'template' || tag === 'iframe'
+    || tag === 'object' || tag === 'embed' || tag === 'audio' || tag === 'video'
+    || tag === 'form' || tag === 'input' || tag === 'button' || tag === 'select' || tag === 'textarea') {
+    return [];
+  }
+  const children = Array.from(element.childNodes).flatMap(footnoteNodeToRichText);
+  switch (tag) {
+    case 'br':
+      return [{ kind: 'break' }];
+    case 'em':
+    case 'i':
+      return [{ kind: 'em', children }];
+    case 'strong':
+    case 'b':
+      return [{ kind: 'strong', children }];
+    case 'p':
+    case 'div':
+    case 'section':
+    case 'aside':
+    case 'li':
+    case 'blockquote':
+    case 'h1':
+    case 'h2':
+    case 'h3':
+    case 'h4':
+    case 'h5':
+    case 'h6':
+      return [{ kind: 'paragraph', children }];
+    case 'a': {
+      const href = element.getAttribute('href') ?? '';
+      // External links stay tappable. Every internal link (nested noteref,
+      // backlink remnant, section link) unwraps to plain text: the popover
+      // is transient and must never navigate the reader away.
+      if (FOOTNOTE_EXTERNAL_SCHEME_RE.test(href)) return [{ kind: 'link', href, children }];
+      return children;
+    }
+    default:
+      // span, sub, sup, small, etc.: keep the text, drop the tag.
+      return children;
+  }
+}
+
+function footnoteRichTextToPlainText(nodes: FootnoteRichTextNode[]): string {
+  const raw = nodes.map((node) => {
+    switch (node.kind) {
+      case 'text':
+        return node.text;
+      case 'break':
+        return '\n';
+      case 'paragraph':
+        return `${footnoteRichTextToPlainText(node.children)}\n`;
+      default:
+        return footnoteRichTextToPlainText(node.children);
+    }
+  }).join('');
+  return raw.replace(/ +\n/g, '\n').replace(/\n +/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function escapeFootnoteHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** Regenerated from the rich-text whitelist, so it is sanitized by construction. */
+function footnoteRichTextToHtml(nodes: FootnoteRichTextNode[]): string {
+  return nodes.map((node) => {
+    switch (node.kind) {
+      case 'text':
+        return escapeFootnoteHtml(node.text);
+      case 'em':
+        return `<em>${footnoteRichTextToHtml(node.children)}</em>`;
+      case 'strong':
+        return `<strong>${footnoteRichTextToHtml(node.children)}</strong>`;
+      case 'break':
+        return '<br/>';
+      case 'paragraph':
+        return `<p>${footnoteRichTextToHtml(node.children)}</p>`;
+      case 'link':
+        return `<a href="${escapeFootnoteHtml(node.href)}">${footnoteRichTextToHtml(node.children)}</a>`;
+    }
+  }).join('');
+}
+
+function extractFootnoteContent(target: Element, anchorLabel: string): { text: string; richText: FootnoteRichTextNode[]; html: string } {
+  const clone = target.cloneNode(true) as Element;
+  cleanFootnoteClone(clone);
+  stripLeadingFootnoteNumber(clone, anchorLabel);
+  const richText = Array.from(clone.childNodes).flatMap(footnoteNodeToRichText);
+  const text = footnoteRichTextToPlainText(richText);
+  const html = footnoteRichTextToHtml(richText);
+  return { text, richText, html };
+}
 
 export type FoliateOpenInput = {
   bookId: string;
@@ -252,6 +493,11 @@ export class FoliateEpubEngineAdapter {
   private loadedDocuments = new Map<Document, number>();
   private gestureCleanups = new Map<Document, () => void>();
   private selectionCleanups = new Map<Document, () => void>();
+  private footnoteCleanups = new Map<Document, () => void>();
+  // A tap that begins with an active text selection is owned by selection
+  // dismissal. The click handler consumes this flag so a footnote popover
+  // never fires on the same tap (selection > footnote > page tap).
+  private footnoteTapSelectionGuard = false;
   private activeSelection: { doc: Document; payload: ReaderSelectionPayload } | null = null;
   private bookId: string | null = null;
   private restoreState: ReaderRestoreState = 'opening';
@@ -287,6 +533,7 @@ export class FoliateEpubEngineAdapter {
     private readonly onPageCount: (result: ReaderPageCountResult) => void,
     private readonly onToc: (toc: ReaderTocItem[]) => void,
     private readonly onSelectionChange: (selection: ReaderSelectionPayload | null) => void,
+    private readonly onFootnoteOpen: (payload: FootnotePayload) => void,
   ) {}
 
   async open(input: FoliateOpenInput): Promise<ReaderLocation> {
@@ -878,6 +1125,8 @@ export class FoliateEpubEngineAdapter {
       this.gestureCleanups.delete(loadedDoc);
       this.selectionCleanups.get(loadedDoc)?.();
       this.selectionCleanups.delete(loadedDoc);
+      this.footnoteCleanups.get(loadedDoc)?.();
+      this.footnoteCleanups.delete(loadedDoc);
       this.loadedDocuments.delete(loadedDoc);
     }
     if (this.activeSelection && this.activeSelection.doc !== doc) {
@@ -890,6 +1139,7 @@ export class FoliateEpubEngineAdapter {
       this.attachReaderGestures(doc, index);
     }
     if (!this.selectionCleanups.has(doc)) this.attachSelectionHandlers(doc, index);
+    if (!this.footnoteCleanups.has(doc)) this.attachFootnoteHandlers(doc, index);
   };
 
   private attachReaderGestures(doc: Document, index: number) {
@@ -951,6 +1201,246 @@ export class FoliateEpubEngineAdapter {
   private hasActiveSelection(doc: Document) {
     const selection = doc.getSelection() ?? doc.defaultView?.getSelection();
     return Boolean(selection && selection.rangeCount > 0 && !selection.isCollapsed);
+  }
+
+  // ── Footnote popover ────────────────────────────────────────────
+
+  private attachFootnoteHandlers(doc: Document, index: number) {
+    // One capture-phase click listener per section document: explicit event
+    // ownership (preventDefault + stopPropagation) instead of timers.
+    doc.addEventListener('click', this.handleFootnoteClick, true);
+    this.footnoteCleanups.set(doc, () => {
+      doc.removeEventListener('click', this.handleFootnoteClick, true);
+    });
+  }
+
+  private readonly handleFootnoteClick = (event: MouseEvent) => {
+    const doc = event.currentTarget as Document | null;
+    // Consume the guard even when this click is not a footnote tap.
+    const startedWithSelection = this.footnoteTapSelectionGuard;
+    this.footnoteTapSelectionGuard = false;
+    if (!doc || event.defaultPrevented) return;
+    const target = event.target as Element | null;
+    const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null;
+    if (!anchor) return;
+    // Priority: text selection > footnote. A tap that began with an active
+    // selection (or still has one) keeps its historical behavior: the tap
+    // dismisses the selection and the link is left untouched.
+    if (startedWithSelection || this.hasActiveSelection(doc)) return;
+    // A tap landing mid page-turn has a stale target rect; let it pass through.
+    if (this.interactionState === 'turning') return;
+    const ref = this.classifyFootnoteAnchor(doc, anchor);
+    if (!ref) {
+      this.logFootnoteCandidate(doc, anchor);
+      return;
+    }
+    const anchorLabel = anchor.textContent ?? '';
+    if (!ref.crossDocument && ref.targetElement) {
+      // Never swallow a tap: if the footnote has no extractable content,
+      // let the EPUB's default anchor navigation proceed untouched.
+      if (!extractFootnoteContent(ref.targetElement, anchorLabel).text) {
+        if (__DEV__) console.log('[FOOTNOTE_EMPTY]', JSON.stringify({ rawHref: ref.rawHref }));
+        return;
+      }
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    void this.openFootnotePopover(doc, anchor, ref);
+  };
+
+  /**
+   * Synchronous classification of a tapped anchor. Returns a footnote
+   * reference only for semantically explicit footnotes; everything else
+   * keeps its default link behavior.
+   */
+  private classifyFootnoteAnchor(doc: Document, anchor: HTMLAnchorElement): FootnoteReference | null {
+    const rawHref = anchor.getAttribute('href')?.trim() ?? '';
+    if (!rawHref || FOOTNOTE_EXTERNAL_SCHEME_RE.test(rawHref)) return null;
+    const hashIndex = rawHref.indexOf('#');
+    if (hashIndex < 0) return null;
+    const fragment = decodeFootnoteFragment(rawHref.slice(hashIndex + 1));
+    if (!fragment) return null;
+    const rawPath = rawHref.slice(0, hashIndex);
+    const book = this.view?.book;
+    const sectionIndex = this.loadedDocuments.get(doc) ?? -1;
+    const section = sectionIndex >= 0 ? book?.sections?.[sectionIndex] : undefined;
+    const currentId = section?.id ?? null;
+    let targetPath: string | null = null;
+    if (!rawPath) {
+      targetPath = currentId;
+    } else {
+      try {
+        targetPath = section?.resolveHref ? section.resolveHref(rawPath) : null;
+      } catch {
+        targetPath = null;
+      }
+    }
+    if (!targetPath) return null;
+    const crossDocument = targetPath !== currentId;
+    const anchorEpubType = anchor.getAttribute('epub:type');
+    const anchorRole = anchor.getAttribute('role');
+    const isExplicitNoteref = anchorEpubType === 'noteref' || anchorRole === 'doc-noteref';
+    const anchorSemanticType: FootnoteSemanticType = anchorEpubType === 'noteref'
+      ? 'noteref'
+      : anchorRole === 'doc-noteref'
+        ? 'doc-noteref'
+        : 'footnote-target';
+
+    if (!crossDocument) {
+      const targetElement = findFragmentElement(doc, fragment);
+      if (isExplicitNoteref) {
+        if (!targetElement) {
+          // Explicit noteref with an unresolvable target: fall back to the
+          // EPUB's default navigation instead of swallowing the tap.
+          if (__DEV__) console.log('[FOOTNOTE_TARGET_MISSING]', JSON.stringify({ rawHref, sectionIndex }));
+          return null;
+        }
+        return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: anchorSemanticType, targetElement };
+      }
+      if (targetElement && isFootnoteTargetElement(targetElement)) {
+        return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: getFootnoteSemanticType(targetElement)!, targetElement };
+      }
+      return null;
+    }
+
+    // Cross-document v1: intercept only explicit noteref anchors (the stable
+    // standard path). Other cross-document links keep default behavior.
+    if (!isExplicitNoteref) return null;
+    return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: anchorSemanticType, targetElement: null };
+  }
+
+  private async openFootnotePopover(doc: Document, anchor: HTMLAnchorElement, ref: FootnoteReference): Promise<void> {
+    const book = this.view?.book;
+    let targetElement: Element | null = ref.targetElement;
+    if (ref.crossDocument) {
+      let targetDoc: Document | null = null;
+      try {
+        // Preferred: foliate's public path — resolve the target through the
+        // book and let its section parse an offscreen document. No manual
+        // unzip/re-parse, no interference with the live view.
+        const resolvedIndex = book?.resolveHref?.(ref.targetPath)?.index;
+        const targetSection = typeof resolvedIndex === 'number' && resolvedIndex >= 0
+          ? book?.sections?.[resolvedIndex]
+          : undefined;
+        if (targetSection?.createDocument) {
+          targetDoc = await targetSection.createDocument();
+        } else {
+          // The target is in the manifest but not in the spine (the typical
+          // endnotes document). Fall back to raw text + the book's parser.
+          const text = await book?.loadText?.(ref.targetPath);
+          if (!text) throw new Error('empty footnote document');
+          const parser = book?.parser ?? new DOMParser();
+          targetDoc = parser.parseFromString(text, 'application/xhtml+xml');
+          if (targetDoc.querySelector('parsererror')) {
+            // Non-spine notes documents are occasionally plain HTML.
+            targetDoc = parser.parseFromString(text, 'text/html');
+          }
+        }
+      } catch {
+        if (__DEV__) console.log('[FOOTNOTE_RESOLVE_FAILED]', JSON.stringify({ rawHref: ref.rawHref }));
+      }
+      targetElement = targetDoc ? findFragmentElement(targetDoc, ref.fragment) : null;
+      if (!targetElement) {
+        if (__DEV__) console.log('[FOOTNOTE_TARGET_MISSING]', JSON.stringify({ rawHref: ref.rawHref, crossDocument: true }));
+        // Fallback: the EPUB's natural navigation to the resolved target.
+        try {
+          await this.view?.goTo(`${ref.targetPath}#${ref.fragment}`);
+        } catch {
+          // The reader stays where it is; the tap was at least not swallowed silently.
+        }
+        return;
+      }
+    }
+    if (!targetElement) return;
+    // The cross-document path awaits I/O above; the reader may have paginated
+    // meanwhile. Never open a popover against a detached anchor rect.
+    if (!anchor.isConnected) {
+      if (__DEV__) console.log('[FOOTNOTE_ANCHOR_GONE]', JSON.stringify({ rawHref: ref.rawHref }));
+      return;
+    }
+    const { text, richText, html } = extractFootnoteContent(targetElement, anchor.textContent ?? '');
+    if (!text) {
+      if (__DEV__) console.log('[FOOTNOTE_EMPTY]', JSON.stringify({ rawHref: ref.rawHref, crossDocument: ref.crossDocument }));
+      // Fallback: the EPUB's natural navigation to the resolved target, so
+      // the tap is never swallowed silently.
+      try {
+        await this.view?.goTo(`${ref.targetPath}#${ref.fragment}`);
+      } catch {
+        // The reader stays where it is.
+      }
+      return;
+    }
+    const anchorRect = this.mapIframeRectToWebView(anchor.getBoundingClientRect(), doc);
+    const payload: FootnotePayload = {
+      id: ref.fragment,
+      text,
+      richText,
+      html,
+      sourceHref: ref.rawHref,
+      anchorRect,
+      crossDocument: ref.crossDocument,
+      semanticType: ref.semanticType,
+    };
+    if (__DEV__) {
+      console.log('[FOOTNOTE_OPEN]', JSON.stringify({
+        sectionIndex: ref.sectionIndex,
+        sourceHref: ref.rawHref,
+        targetHref: `${ref.targetPath}#${ref.fragment}`,
+        semanticType: ref.semanticType,
+        anchorRect,
+        contentLength: text.length,
+        crossDocument: ref.crossDocument,
+      }));
+    }
+    this.onFootnoteOpen(payload);
+  }
+
+  /**
+   * DEV-only record of plausible-but-non-semantic footnote markers
+   * (`<a href="#fn1"><sup>1</sup></a>` with no footnote semantics). Never
+   * intercepted in v1; the log fuels future compatibility heuristics.
+   */
+  private logFootnoteCandidate(doc: Document, anchor: HTMLAnchorElement): void {
+    if (!__DEV__) return;
+    // Explicit noterefs are already covered by [FOOTNOTE_TARGET_MISSING];
+    // candidates are the non-semantic markers we deliberately don't intercept.
+    if (anchor.getAttribute('epub:type') === 'noteref' || anchor.getAttribute('role') === 'doc-noteref') return;
+    const rawHref = anchor.getAttribute('href')?.trim() ?? '';
+    if (!rawHref.startsWith('#')) return;
+    const label = (anchor.textContent ?? '').trim();
+    if (label === '' || label.length > 4 || !FOOTNOTE_LEADING_NUMBER_RE.test(label)) return;
+    const fragment = decodeFootnoteFragment(rawHref.slice(1));
+    if (!fragment) return;
+    const target = findFragmentElement(doc, fragment);
+    if (!target) return;
+    console.log('[FOOTNOTE_CANDIDATE]', JSON.stringify({
+      href: rawHref,
+      targetTag: target.tagName.toLowerCase(),
+      targetClass: (target as HTMLElement).className ?? '',
+      targetTextPreview: (target.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 80),
+    }));
+  }
+
+  /**
+   * Map an iframe-local rect (e.g. anchor.getBoundingClientRect()) into the
+   * WebView's CSS-pixel space. Same mapping the selection bubble uses, so
+   * the coordinates are directly usable as native points.
+   */
+  private mapIframeRectToWebView(rect: { left: number; top: number; right: number; bottom: number }, doc: Document): FootnoteAnchorRect {
+    const frame = doc.defaultView?.frameElement as HTMLElement | null;
+    const frameRect = frame?.getBoundingClientRect();
+    const viewportWidth = doc.defaultView?.innerWidth || frame?.clientWidth || 1;
+    const viewportHeight = doc.defaultView?.innerHeight || frame?.clientHeight || 1;
+    const measuredScaleX = frameRect && frame?.clientWidth ? frameRect.width / frame.clientWidth : NaN;
+    const measuredScaleY = frameRect && frame?.clientHeight ? frameRect.height / frame.clientHeight : NaN;
+    const scaleX = Number.isFinite(measuredScaleX) ? measuredScaleX : frameRect ? frameRect.width / viewportWidth : 1;
+    const scaleY = Number.isFinite(measuredScaleY) ? measuredScaleY : frameRect ? frameRect.height / viewportHeight : 1;
+    return {
+      x: (frameRect?.left ?? 0) + rect.left * scaleX,
+      y: (frameRect?.top ?? 0) + rect.top * scaleY,
+      width: Math.max(0, rect.right - rect.left) * scaleX,
+      height: Math.max(0, rect.bottom - rect.top) * scaleY,
+    };
   }
 
   private clearActiveSelection(removeNativeRange: boolean) {
@@ -1031,19 +1521,7 @@ export class FoliateEpubEngineAdapter {
       right: Math.max(union.right, rect.right),
       bottom: Math.max(union.bottom, rect.bottom),
     }), { left: rects[0].left, top: rects[0].top, right: rects[0].right, bottom: rects[0].bottom }) : range.getBoundingClientRect();
-    const frame = doc.defaultView?.frameElement as HTMLElement | null;
-    const frameRect = frame?.getBoundingClientRect();
-    const viewportWidth = doc.defaultView?.innerWidth || frame?.clientWidth || 1;
-    const viewportHeight = doc.defaultView?.innerHeight || frame?.clientHeight || 1;
-    const measuredScaleX = frameRect && frame?.clientWidth ? frameRect.width / frame.clientWidth : NaN;
-    const measuredScaleY = frameRect && frame?.clientHeight ? frameRect.height / frame.clientHeight : NaN;
-    const scaleX = Number.isFinite(measuredScaleX) ? measuredScaleX : frameRect ? frameRect.width / viewportWidth : 1;
-    const scaleY = Number.isFinite(measuredScaleY) ? measuredScaleY : frameRect ? frameRect.height / viewportHeight : 1;
-    const x = (frameRect?.left ?? 0) + rangeRect.left * scaleX;
-    const y = (frameRect?.top ?? 0) + rangeRect.top * scaleY;
-    const width = Math.max(0, rangeRect.right - rangeRect.left) * scaleX;
-    const height = Math.max(0, rangeRect.bottom - rangeRect.top) * scaleY;
-    return { x, y, width, height };
+    return this.mapIframeRectToWebView(rangeRect, doc);
   }
 
   private verifySelectionAnchor(doc: Document, payload: ReaderSelectionPayload) {
@@ -1082,6 +1560,8 @@ export class FoliateEpubEngineAdapter {
       selectionWasActive: this.hasActiveSelection(doc),
       startedWhileTurning,
     };
+    // Footnote taps must not fire when the tap began with an active selection.
+    this.footnoteTapSelectionGuard = this.hasActiveSelection(doc);
     if (!startedWhileTurning) {
       this.interactionState = this.hasActiveSelection(doc) ? 'selecting' : 'pointerDown';
     }

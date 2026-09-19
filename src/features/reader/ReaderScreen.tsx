@@ -4,7 +4,8 @@ import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Pressable, StyleSheet, Text, TextStyle, useWindowDimensions, View, ViewStyle } from 'react-native';
+import type { ReactNode } from 'react';
+import { AccessibilityInfo, Linking, Pressable, ScrollView, StyleSheet, Text, TextStyle, useWindowDimensions, View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { AnimatedStyle, cancelAnimation, Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
@@ -17,6 +18,8 @@ import { bookmarkRepository, type ReaderBookmark } from './bookmark-repository';
 import { bookSearchHistoryRepository, type BookSearchHistoryItem } from './book-search-history-repository';
 import { excerptRepository } from './excerpt-repository';
 import type {
+  FootnotePayload,
+  FootnoteRichTextNode,
   ReaderBookmarkNavigationRequest,
   ReaderBookmarkSnapshot,
   ReaderBookmarkSnapshotRequest,
@@ -54,6 +57,12 @@ const EXCERPT_ACTION_WIDTH = 72;
 const EXCERPT_ACTION_HEIGHT = 40;
 const EXCERPT_ACTION_EDGE_GAP = 12;
 const EXCERPT_ACTION_SELECTION_GAP = 10;
+const FOOTNOTE_POPOVER_WIDTH_RATIO = 0.76;
+const FOOTNOTE_POPOVER_MAX_HEIGHT_RATIO = 0.42;
+const FOOTNOTE_POPOVER_EDGE_GAP = 12;
+const FOOTNOTE_POPOVER_ANCHOR_GAP = 8;
+const FOOTNOTE_POPOVER_MIN_HEIGHT = 96;
+const FOOTNOTE_POPOVER_FONT_SIZE = 14;
 
 const readerOpeningCoverTones = new Set<CoverTone>(['paper', 'coral', 'mist', 'ink', 'sage', 'plum', 'ocean']);
 
@@ -289,6 +298,96 @@ function ReaderExcerptAction({
   );
 }
 
+function renderFootnoteNodes(nodes: FootnoteRichTextNode[], linkColor: string, keyPrefix: string): ReactNode[] {
+  return nodes.map((node, index) => {
+    const key = `${keyPrefix}-${index}`;
+    switch (node.kind) {
+      case 'text':
+        return <Text key={key}>{node.text}</Text>;
+      case 'em':
+        return <Text key={key} style={{ fontStyle: 'italic' }}>{renderFootnoteNodes(node.children, linkColor, key)}</Text>;
+      case 'strong':
+        return <Text key={key} style={{ fontWeight: '600' }}>{renderFootnoteNodes(node.children, linkColor, key)}</Text>;
+      case 'break':
+        return <Text key={key}>{'\n'}</Text>;
+      case 'paragraph':
+        return <Text key={key}>{renderFootnoteNodes(node.children, linkColor, key)}{'\n\n'}</Text>;
+      case 'link': {
+        const tappable = /^https?:/i.test(node.href);
+        return (
+          <Text
+            key={key}
+            onPress={tappable ? () => { void Linking.openURL(node.href).catch(() => {}); } : undefined}
+            style={tappable ? { color: linkColor } : undefined}
+          >
+            {renderFootnoteNodes(node.children, linkColor, key)}
+          </Text>
+        );
+      }
+    }
+  });
+}
+
+function FootnotePopover({
+  colorScheme,
+  fallbackColor,
+  layout,
+  linkColor,
+  onDismiss,
+  payload,
+  textColor,
+}: {
+  colorScheme: 'light' | 'dark';
+  fallbackColor: string;
+  layout: { left: number; width: number; maxHeight: number } & ({ top: number } | { bottom: number });
+  linkColor: string;
+  onDismiss: () => void;
+  payload: FootnotePayload;
+  textColor: string;
+}) {
+  const positionStyle = 'top' in layout
+    ? { bottom: undefined, left: layout.left, top: layout.top, width: layout.width }
+    : { bottom: layout.bottom, left: layout.left, top: undefined, width: layout.width };
+  const content = (
+    <ScrollView
+      contentContainerStyle={styles.footnotePopoverScrollContent}
+      scrollIndicatorInsets={{ right: 1 }}
+      showsVerticalScrollIndicator={false}
+      style={{ maxHeight: layout.maxHeight }}
+    >
+      <Text
+        accessibilityLabel={payload.text}
+        style={[styles.footnotePopoverText, { color: textColor }]}
+      >
+        {renderFootnoteNodes(payload.richText, linkColor, 'fn')}
+      </Text>
+    </ScrollView>
+  );
+
+  return (
+    <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+      {/* Outside tap dismisses only; the pressable covers the WebView so the
+          tap never reaches the reader (no page turn, no chrome toggle). */}
+      <Pressable
+        accessibilityHint={uiText.reader.dismissFootnoteHint}
+        accessibilityLabel={uiText.reader.dismissFootnote}
+        accessibilityRole="button"
+        onPress={onDismiss}
+        style={StyleSheet.absoluteFill}
+      />
+      <View style={[styles.footnotePopoverPosition, positionStyle]}>
+        {isGlassEffectAPIAvailable() ? (
+          <GlassView colorScheme={colorScheme} glassEffectStyle="regular" isInteractive style={styles.footnotePopoverGlass}>
+            {content}
+          </GlassView>
+        ) : (
+          <View style={[styles.footnotePopoverFallback, { backgroundColor: fallbackColor }]}>{content}</View>
+        )}
+      </View>
+    </View>
+  );
+}
+
 export default function ReaderScreen() {
   const routeParams = useLocalSearchParams<{
     bookId: string | string[];
@@ -314,8 +413,8 @@ export default function ReaderScreen() {
   const controller = useReaderController(bookId);
   const readerAppearance = controller.appliedReaderSettings.appearance;
   const readerColors = readerAppearance === 'dark'
-    ? { background: '#151517', primary: '#f2f2f7', secondary: '#aeaeb2', glassFallback: 'rgba(44,44,46,0.88)' }
-    : { background: tokens.colors.background, primary: '#171719', secondary: '#8b8b90', glassFallback: 'rgba(250,250,252,0.88)' };
+    ? { background: '#151517', primary: '#f2f2f7', secondary: '#aeaeb2', glassFallback: 'rgba(44,44,46,0.88)', link: '#64d2ff' }
+    : { background: tokens.colors.background, primary: '#171719', secondary: '#8b8b90', glassFallback: 'rgba(250,250,252,0.88)', link: '#007aff' };
   const chromeVisibleRef = useRef(false);
   const displayedPageLocationRef = useRef<ReaderLocation | null>(null);
   const pageIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -372,6 +471,36 @@ export default function ReaderScreen() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchInitialQueryRequest, setSearchInitialQueryRequest] = useState<ReaderSearchInitialQueryRequest | null>(null);
   const [activeSelection, setActiveSelection] = useState<ReaderSelectionPayload | null>(null);
+  const [footnotePopover, setFootnotePopover] = useState<FootnotePayload | null>(null);
+
+  const handleFootnoteOpen = useCallback(async (payload: FootnotePayload) => {
+    setFootnotePopover((current) => {
+      if (
+        current &&
+        current.id === payload.id &&
+        current.sourceHref === payload.sourceHref &&
+        Math.abs(current.anchorRect.x - payload.anchorRect.x) < 2 &&
+        Math.abs(current.anchorRect.y - payload.anchorRect.y) < 2
+      ) {
+        // Re-tapping the same anchor toggles the popover closed.
+        if (__DEV__) console.log('[FOOTNOTE_CLOSE]');
+        return null;
+      }
+      return payload;
+    });
+  }, []);
+
+  const dismissFootnotePopover = useCallback(() => {
+    if (__DEV__) console.log('[FOOTNOTE_CLOSE]');
+    setFootnotePopover(null);
+  }, []);
+
+  // The footnote popover never floats above sheets; opening one dismisses it.
+  useEffect(() => {
+    if (tocSheetPresented || settingsSheetPresented || searchSheetPresented) {
+      setFootnotePopover(null);
+    }
+  }, [tocSheetPresented, settingsSheetPresented, searchSheetPresented]);
   const [excerptSaving, setExcerptSaving] = useState(false);
   const [selectionCommand, setSelectionCommand] = useState<ReaderSelectionCommand | null>(null);
   const [excerptVerificationRequest, setExcerptVerificationRequest] = useState<ReaderExcerptVerificationRequest | null>(null);
@@ -1107,6 +1236,38 @@ export default function ReaderScreen() {
     return { left, top };
   }, [activeSelection, insets.bottom, insets.top, readerViewportHeight, readerViewportWidth]);
 
+  const footnotePopoverLayout = useMemo(() => {
+    if (!footnotePopover) return null;
+    const width = Math.round(readerViewportWidth * FOOTNOTE_POPOVER_WIDTH_RATIO);
+    const cappedMaxHeight = Math.round(readerViewportHeight * FOOTNOTE_POPOVER_MAX_HEIGHT_RATIO);
+    const anchor = footnotePopover.anchorRect;
+    const anchorCenterX = anchor.x + anchor.width / 2;
+    const left = Math.min(
+      readerViewportWidth - width - FOOTNOTE_POPOVER_EDGE_GAP,
+      Math.max(FOOTNOTE_POPOVER_EDGE_GAP, anchorCenterX - width / 2),
+    );
+    const spaceAbove = anchor.y - insets.top - FOOTNOTE_POPOVER_ANCHOR_GAP;
+    const spaceBelow = readerViewportHeight - insets.bottom - (anchor.y + anchor.height) - FOOTNOTE_POPOVER_ANCHOR_GAP;
+    // Prefer above the anchor; fall back below when space is tight. Anchoring
+    // by the bottom edge lets short popovers shrink toward the anchor without
+    // measuring content height.
+    const placeAbove = spaceAbove >= FOOTNOTE_POPOVER_MIN_HEIGHT || spaceAbove >= spaceBelow;
+    if (placeAbove) {
+      return {
+        left,
+        width,
+        bottom: readerViewportHeight - anchor.y + FOOTNOTE_POPOVER_ANCHOR_GAP,
+        maxHeight: Math.max(FOOTNOTE_POPOVER_MIN_HEIGHT, Math.min(cappedMaxHeight, spaceAbove)),
+      };
+    }
+    return {
+      left,
+      width,
+      top: anchor.y + anchor.height + FOOTNOTE_POPOVER_ANCHOR_GAP,
+      maxHeight: Math.max(FOOTNOTE_POPOVER_MIN_HEIGHT, Math.min(cappedMaxHeight, spaceBelow)),
+    };
+  }, [footnotePopover, insets.bottom, insets.top, readerViewportHeight, readerViewportWidth]);
+
   const chromeContentStyle = useAnimatedStyle(() => ({ opacity: chromeProgress.get() }));
   const totalPageStyle = useAnimatedStyle(() => ({ opacity: chromeProgress.get() }));
   const pageIndicatorStyle = useAnimatedStyle(() => ({ opacity: pageIndicatorOpacity.get() }));
@@ -1149,6 +1310,7 @@ export default function ReaderScreen() {
           onSearchUpdate={handleSearchUpdate}
           onSearchNavigationResult={handleSearchNavigationResult}
           onSelectionChange={handleSelectionChange}
+          onFootnoteOpen={handleFootnoteOpen}
           dom={{
             scrollEnabled: false,
             style: [styles.domReader, { backgroundColor: readerColors.background }],
@@ -1302,6 +1464,18 @@ export default function ReaderScreen() {
         />
       ) : null}
 
+      {footnotePopover && footnotePopoverLayout ? (
+        <FootnotePopover
+          colorScheme={readerAppearance}
+          fallbackColor={readerColors.glassFallback}
+          layout={footnotePopoverLayout}
+          linkColor={readerColors.link}
+          onDismiss={dismissFootnotePopover}
+          payload={footnotePopover}
+          textColor={readerColors.primary}
+        />
+      ) : null}
+
       {readerOpeningVisible && openingTitle ? (
         <Animated.View pointerEvents="auto" style={[styles.readerLaunchTransition, { backgroundColor: openingBackground }, readerOpeningStyle]}>
           <View style={[styles.readerLaunchCover, { backgroundColor: tokens.coverTones[openingCoverTone], height: readerLaunchCoverWidth / tokens.cover.gridAspectRatio, width: readerLaunchCoverWidth }]}>
@@ -1364,6 +1538,20 @@ const styles = StyleSheet.create({
   },
   excerptActionContent: { alignItems: 'center', flex: 1, justifyContent: 'center' },
   excerptActionText: { fontSize: 15, fontWeight: '600', letterSpacing: -0.1 },
+  footnotePopoverPosition: { position: 'absolute', zIndex: 90 },
+  footnotePopoverGlass: { borderRadius: 18, overflow: 'hidden' },
+  footnotePopoverFallback: {
+    borderColor: 'rgba(60,60,67,0.15)',
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+  },
+  footnotePopoverScrollContent: { paddingHorizontal: 14, paddingVertical: 12 },
+  footnotePopoverText: { fontSize: FOOTNOTE_POPOVER_FONT_SIZE, lineHeight: Math.round(FOOTNOTE_POPOVER_FONT_SIZE * 1.45), textAlign: 'left' },
   positionContainer: { alignItems: 'center', flexDirection: 'row' },
   positionText: { color: '#8e8e93', fontSize: 13, fontVariant: ['tabular-nums'], fontWeight: '600' },
 });

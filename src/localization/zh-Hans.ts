@@ -16,6 +16,8 @@ export const zhHans = {
     returnToLibrary: '返回书库',
     excerpt: '摘录',
     excerptSelection: '摘录所选文字',
+    dismissFootnote: '关闭脚注',
+    dismissFootnoteHint: '关闭脚注弹窗',
   },
   search: {
     title: '在图书中搜索',
