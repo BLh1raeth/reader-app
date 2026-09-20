@@ -1,0 +1,19 @@
+require 'json'
+
+package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
+
+Pod::Spec.new do |s|
+  s.name           = 'ReaderPopoverSpike'
+  s.version        = package['version']
+  s.summary        = package['description']
+  s.description    = package['description']
+  s.license        = 'MIT'
+  s.author         = 'Reader App'
+  s.homepage       = 'https://localhost.invalid/reader-popover-spike'
+  s.platforms      = { :ios => '16.4' }
+  s.swift_version  = '5.9'
+  s.source         = { :path => '.' }
+  s.static_framework = true
+  s.source_files   = 'ios/**/*.{h,m,mm,swift}'
+  s.dependency 'ExpoModulesCore'
+end
