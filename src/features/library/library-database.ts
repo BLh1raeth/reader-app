@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 
 const DATABASE_NAME = 'reader-library.db';
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -249,5 +249,46 @@ async function bootstrapDatabase() {
       `);
     });
   }
+  if (currentVersion < 15) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      // ReadingSession Core A: behavioral reading data. Raw facts only
+      // (active seconds, forward characters); no aggregates, no UI here.
+      // forwardCharacters is the behavior counter; startCfi/endCfi are just
+      // position markers and must never be used to derive characters.
+      await transaction.execAsync(`
+        CREATE TABLE IF NOT EXISTS reader_reading_sessions (
+          id TEXT PRIMARY KEY NOT NULL,
+          book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+          started_at TEXT NOT NULL,
+          ended_at TEXT,
+          active_seconds REAL NOT NULL DEFAULT 0,
+          start_cfi TEXT,
+          end_cfi TEXT,
+          start_section_index INTEGER,
+          end_section_index INTEGER,
+          forward_characters INTEGER NOT NULL DEFAULT 0,
+          last_interaction_at TEXT,
+          last_checkpoint_at TEXT,
+          close_reason TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS reader_reading_sessions_book_started_idx
+          ON reader_reading_sessions(book_id, started_at);
+        CREATE INDEX IF NOT EXISTS reader_reading_sessions_started_idx
+          ON reader_reading_sessions(started_at);
+        CREATE INDEX IF NOT EXISTS reader_reading_sessions_open_idx
+          ON reader_reading_sessions(ended_at) WHERE ended_at IS NULL;
+        PRAGMA user_version = ${SCHEMA_VERSION};
+      `);
+    });
+  }
+  // Stale-session recovery runs after every migration, before any repository
+  // use. A crash can leave ended_at NULL; recovered sessions close at their
+  // last checkpoint without inventing unconfirmed reading time. The dynamic
+  // import keeps library-database free of a static cycle with the reader
+  // repository layer.
+  const { readingSessionRepository } = await import('../reader/reading-session-repository');
+  await readingSessionRepository.recoverStaleReadingSessions();
   return database;
 }

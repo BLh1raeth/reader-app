@@ -11,7 +11,37 @@ export type ReaderLocation = {
   percentage: number;
   currentPage: number | null;
   totalPages: number | null;
+  /**
+   * Why this location changed. Marked explicitly at the navigation call site
+   * (ReadingSession Core A); never inferred from CFI distance or timing.
+   * Absent on locations produced before the reason pipeline existed.
+   */
+  navigationReason?: ReaderLocationChangeReason;
 };
+
+/**
+ * Explicit source of a Reader location change (ReadingSession Core A).
+ *
+ * - reading-forward / reading-backward: a genuine user page turn.
+ * - toc / search / bookmark / annotation: user-initiated jumps; they rebase
+ *   the forward-reading segment and never contribute forward characters.
+ * - restore: initial CFI restore and viewport-change recovery.
+ * - settings-repagination: typography/layout changes that reflow text.
+ * - programmatic: engine fallbacks (footnote navigation fallback etc.).
+ * - unknown: the reason pipeline could not classify this relocation;
+ *   treated conservatively as a segment rebase (never as reading).
+ */
+export type ReaderLocationChangeReason =
+  | 'reading-forward'
+  | 'reading-backward'
+  | 'toc'
+  | 'search'
+  | 'bookmark'
+  | 'annotation'
+  | 'restore'
+  | 'settings-repagination'
+  | 'programmatic'
+  | 'unknown';
 
 /**
  * A Reader session is deliberately inert until a requested CFI has either
@@ -83,6 +113,8 @@ export type ReaderTocItem = {
 export type ReaderTocNavigationRequest = {
   id: number;
   href: string;
+  /** Explicit navigation reason, consumed by the adapter before goTo(). */
+  reason: ReaderLocationChangeReason;
 };
 
 export type ReaderBookmarkAnchor = {
@@ -111,6 +143,8 @@ export type ReaderBookmarkSnapshotRequest = {
 export type ReaderBookmarkNavigationRequest = {
   id: number;
   cfi: string;
+  /** Explicit navigation reason, consumed by the adapter before goTo(). */
+  reason: ReaderLocationChangeReason;
 };
 
 export type ReaderPageLocationTarget = {
@@ -154,7 +188,36 @@ export type ReaderSearchRequest = {
 export type ReaderSearchNavigationRequest = {
   id: number;
   cfi: string;
+  /** Explicit navigation reason, consumed by the adapter before goTo(). */
+  reason: ReaderLocationChangeReason;
 };
+
+/**
+ * Forward-text measurement bridge (ReadingSession Core A). The adapter owns
+ * all EPUB DOM / CFI work; the Native side only supplies the two location
+ * CFIs and receives the counted characters. Async and off the page-turn
+ * critical path.
+ */
+export type ReaderTextMeasureRequest = {
+  id: string;
+  fromCfi: string;
+  toCfi: string;
+};
+
+export type ReaderTextMeasureResult =
+  | {
+      id: string;
+      ok: true;
+      direction: 'forward' | 'backward' | 'same';
+      characters: number;
+      fromSectionIndex: number;
+      toSectionIndex: number;
+    }
+  | {
+      id: string;
+      ok: false;
+      error: string;
+    };
 
 export type ReaderSelectionRect = {
   x: number;

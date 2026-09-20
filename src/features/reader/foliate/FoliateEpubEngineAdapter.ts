@@ -7,6 +7,7 @@ import type {
   ReaderBookmarkSnapshot,
   ReaderEngineDiagnostic,
   ReaderLocation,
+  ReaderLocationChangeReason,
   ReaderResourcePayload,
   ReaderRestoreState,
   ReaderSearchResult,
@@ -129,6 +130,76 @@ const READER_CONTENT_TOP_PX = READER_VERTICAL_MARGIN_PX + READER_CONTENT_OFFSET_
 const READER_CONTENT_BOTTOM_PX = READER_VERTICAL_MARGIN_PX;
 const READER_VERTICAL_MARGIN = `${READER_VERTICAL_MARGIN_PX}px`;
 const READER_STANDALONE_MEDIA_HEIGHT = `calc(100vh - ${READER_CONTENT_TOP_PX + READER_CONTENT_BOTTOM_PX}px)`;
+
+/**
+ * ReadingSession Core A: forward-text measurement helpers. The adapter owns
+ * all EPUB DOM / CFI work so the screen layer never touches section
+ * documents. Per AGENTS.md, section docs live in a different window: never
+ * use cross-window `instanceof` on their nodes (always false); `nodeType`
+ * checks are used instead.
+ */
+export type ForwardTextMeasurement =
+  | {
+      ok: true;
+      direction: 'forward' | 'backward' | 'same';
+      characters: number;
+      fromSectionIndex: number;
+      toSectionIndex: number;
+    }
+  | { ok: false; error: string };
+
+type DocPoint = { node: Node; offset: number };
+
+function anchorToDocPoint(anchor: unknown, doc: Document): DocPoint | null {
+  if (!anchor || typeof anchor === 'number') return null;
+  const asRange = anchor as Partial<Range>;
+  if (typeof asRange.startContainer !== 'undefined' && typeof asRange.collapse === 'function') {
+    const range = asRange as Range;
+    return { node: range.startContainer, offset: range.startOffset };
+  }
+  const asElement = anchor as Partial<Element>;
+  if (asElement.nodeType === 1) {
+    const range = doc.createRange();
+    range.selectNode(asElement as Element);
+    range.collapse(true);
+    return { node: range.startContainer, offset: range.startOffset };
+  }
+  return null;
+}
+
+/** Readable text inside a range: boundary-clipped, script/style-free. */
+function rangeReadableText(range: Range): string {
+  const fragment = range.cloneContents();
+  fragment.querySelectorAll('script, style, noscript').forEach((element) => element.remove());
+  return fragment.textContent ?? '';
+}
+
+/**
+ * Count readable characters: Unicode grapheme clusters (Intl.Segmenter with
+ * a surrogate-pair-aware code-point fallback), whitespace excluded, CJK /
+ * letters / digits / punctuation kept. No new dependencies.
+ */
+function countReadableCharacters(text: string): number {
+  const stripped = text.replace(/\s+/gu, '');
+  if (!stripped) return 0;
+  const segmenterCtor = (Intl as unknown as {
+    Segmenter?: new (
+      locale?: string,
+      options?: { granularity?: string },
+    ) => { segment(input: string): Iterable<unknown> };
+  }).Segmenter;
+  if (typeof segmenterCtor === 'function') {
+    try {
+      const segmenter = new segmenterCtor(undefined, { granularity: 'grapheme' });
+      let count = 0;
+      for (const _segment of segmenter.segment(stripped)) count += 1;
+      return count;
+    } catch {
+      // Fall through to the code-point fallback below.
+    }
+  }
+  return Array.from(stripped).length;
+}
 
 type PendingPageTurn = {
   direction: 'next' | 'prev';
@@ -832,6 +903,18 @@ export class FoliateEpubEngineAdapter {
   private searchActive = false;
   private searchQueue = Promise.resolve();
   private selectedSearchHighlightCfi: string | null = null;
+  /**
+   * ReadingSession Core A: explicit source of the in-flight navigation.
+   * Set by the call site before view.next()/prev()/goTo(), attached to every
+   * relocate that fires while set, and cleared in the call-site finally.
+   * Relocates outside an explicit navigation get no reason ('unknown') and
+   * are treated conservatively as a segment rebase by the session tracker.
+   */
+  private pendingNavigationReason: ReaderLocationChangeReason | null = null;
+  /** Serializes measureForwardText so bursts settle in occurrence order. */
+  private textMeasureQueue: Promise<void> = Promise.resolve();
+  /** Lightweight per-section plain-text cache for forward measurement. */
+  private sectionTextCache = new Map<number, Promise<string | null>>();
 
   constructor(
     private readonly host: HTMLElement,
@@ -927,7 +1010,14 @@ export class FoliateEpubEngineAdapter {
     this.onDiagnostic({ event: 'RESTORE_REQUEST', targetCfi });
     this.onDiagnostic({ event: 'VIEW_INIT_START' });
     this.onDiagnostic({ event: 'PAGINATION_START' });
-    await view.init({ lastLocation: targetCfi, showTextStart: true });
+    // The initial restore is an explicit non-reading relocation for the
+    // session tracker: it establishes the segment baseline, not progress.
+    this.pendingNavigationReason = 'restore';
+    try {
+      await view.init({ lastLocation: targetCfi, showTextStart: true });
+    } finally {
+      this.pendingNavigationReason = null;
+    }
     this.onDiagnostic({ event: 'PAGINATION_END' });
     this.onDiagnostic({ event: 'VIEW_INIT_END' });
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -1014,7 +1104,7 @@ export class FoliateEpubEngineAdapter {
     };
   }
 
-  async goTo(location: string) {
+  async goTo(location: string, reason: ReaderLocationChangeReason = 'programmatic') {
     const view = this.view;
     if (!view) throw new Error('Reader 尚未就绪。');
     const resolved = view.resolveNavigation?.(location) ?? view.book?.resolveHref?.(location);
@@ -1024,6 +1114,9 @@ export class FoliateEpubEngineAdapter {
     this.clearActiveSelection(true);
     await this.clearSelectedSearchHighlight();
     this.reflowing = true;
+    // The relocation(s) emitted by view.goTo() carry this explicit reason;
+    // the tracker never guesses from CFI distance.
+    this.pendingNavigationReason = reason;
     try {
       await view.goTo(location);
       await this.nextFrame();
@@ -1031,17 +1124,132 @@ export class FoliateEpubEngineAdapter {
       if (current.spineIndex !== resolved.index) throw new Error(`Reader 目标未能定位：${location}`);
       return current;
     } finally {
+      this.pendingNavigationReason = null;
       this.reflowing = false;
     }
   }
 
-  async goToSearchResult(cfi: string) {
-    const location = await this.goTo(cfi);
+  async goToSearchResult(cfi: string, reason: ReaderLocationChangeReason = 'search') {
+    const location = await this.goTo(cfi, reason);
     const view = this.view;
     if (!view?.addAnnotation) return location;
     this.selectedSearchHighlightCfi = cfi;
     await view.addAnnotation({ kind: 'reader-search-result', value: cfi });
     return location;
+  }
+
+  /**
+   * ReadingSession Core A: count the readable characters between two CFIs.
+   *
+   * The ReaderScreen never parses EPUB DOM or compares CFIs; all measurement
+   * lives here next to foliate. Rules:
+   * - only confirmed forward movement counts (caller decides what "forward"
+   *   means via navigation reasons; this method just measures the span);
+   * - Unicode grapheme clusters via Intl.Segmenter with a code-point
+   *   fallback; whitespace is excluded, CJK/letters/digits/punctuation kept;
+   * - cross-section spans count the tail of the start section, full middle
+   *   sections in spine order, and the head of the end section;
+   * - failures resolve { ok: false } — never throw into the tracker queue,
+   *   never print book text, never guess from progress or page counts.
+   * Serialized so rapid A→B→C bursts settle in occurrence order.
+   */
+  async measureForwardText(fromCfi: string, toCfi: string): Promise<ForwardTextMeasurement> {
+    const run = async (): Promise<ForwardTextMeasurement> => {
+      try {
+        return await this.measureForwardTextInternal(fromCfi, toCfi);
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    };
+    const queued = this.textMeasureQueue.then(run);
+    this.textMeasureQueue = queued.then(() => undefined, () => undefined);
+    return queued;
+  }
+
+  private async measureForwardTextInternal(fromCfi: string, toCfi: string): Promise<ForwardTextMeasurement> {
+    const view = this.view;
+    const sections = view?.book?.sections;
+    if (!view?.resolveNavigation || !sections || sections.length === 0) {
+      throw new Error('engine not ready');
+    }
+    const fromResolved = view.resolveNavigation(fromCfi);
+    const toResolved = view.resolveNavigation(toCfi);
+    const fromIndex = fromResolved?.index;
+    const toIndex = toResolved?.index;
+    if (typeof fromIndex !== 'number' || typeof toIndex !== 'number' || fromIndex < 0 || toIndex < 0) {
+      throw new Error('unresolvable cfi');
+    }
+    if (fromIndex > toIndex) {
+      return { ok: true, direction: 'backward', characters: 0, fromSectionIndex: fromIndex, toSectionIndex: toIndex };
+    }
+    if (fromIndex === toIndex) {
+      const doc = await sections[fromIndex].createDocument?.();
+      if (!doc) throw new Error('section document unavailable');
+      const fromPoint = anchorToDocPoint(fromResolved?.anchor?.(doc), doc);
+      const toPoint = anchorToDocPoint(toResolved?.anchor?.(doc), doc);
+      if (!fromPoint || !toPoint) throw new Error('anchor unresolvable');
+      const span = doc.createRange();
+      span.setStart(fromPoint.node, fromPoint.offset);
+      span.setEnd(toPoint.node, toPoint.offset);
+      if (span.collapsed) {
+        return { ok: true, direction: 'same', characters: 0, fromSectionIndex: fromIndex, toSectionIndex: toIndex };
+      }
+      return {
+        ok: true,
+        direction: 'forward',
+        characters: countReadableCharacters(rangeReadableText(span)),
+        fromSectionIndex: fromIndex,
+        toSectionIndex: toIndex,
+      };
+    }
+    // Cross-section: tail of the start section, full middle sections in
+    // spine order, head of the end section.
+    const fromDoc = await sections[fromIndex].createDocument?.();
+    const toDoc = await sections[toIndex].createDocument?.();
+    if (!fromDoc || !toDoc) throw new Error('section document unavailable');
+    const fromPoint = anchorToDocPoint(fromResolved?.anchor?.(fromDoc), fromDoc);
+    const toPoint = anchorToDocPoint(toResolved?.anchor?.(toDoc), toDoc);
+    if (!fromPoint || !toPoint) throw new Error('anchor unresolvable');
+    const fromBody = fromDoc.body ?? fromDoc.documentElement;
+    const tail = fromDoc.createRange();
+    tail.setStart(fromPoint.node, fromPoint.offset);
+    tail.setEnd(fromBody, fromBody.childNodes.length);
+    const toBody = toDoc.body ?? toDoc.documentElement;
+    const head = toDoc.createRange();
+    head.setStart(toBody, 0);
+    head.setEnd(toPoint.node, toPoint.offset);
+    let characters = countReadableCharacters(rangeReadableText(tail))
+      + countReadableCharacters(rangeReadableText(head));
+    for (let index = fromIndex + 1; index < toIndex; index += 1) {
+      const middleText = await this.getSectionPlainText(index);
+      if (middleText !== null) characters += countReadableCharacters(middleText);
+    }
+    return { ok: true, direction: 'forward', characters, fromSectionIndex: fromIndex, toSectionIndex: toIndex };
+  }
+
+  /**
+   * Full plain text of one section for cross-section measurement.
+   * Cached per adapter lifetime; documents are created offscreen and
+   * released after extraction.
+   */
+  private getSectionPlainText(sectionIndex: number): Promise<string | null> {
+    const cached = this.sectionTextCache.get(sectionIndex);
+    if (cached) return cached;
+    const task = (async (): Promise<string | null> => {
+      try {
+        const section = this.view?.book?.sections?.[sectionIndex];
+        const doc = await section?.createDocument?.();
+        if (!doc) return null;
+        const body = doc.body ?? doc.documentElement;
+        const clone = body.cloneNode(true) as Element;
+        clone.querySelectorAll('script, style, noscript').forEach((element) => element.remove());
+        return clone.textContent ?? '';
+      } catch {
+        return null;
+      }
+    })();
+    this.sectionTextCache.set(sectionIndex, task);
+    return task;
   }
 
   getProgress() {
@@ -1524,6 +1732,11 @@ export class FoliateEpubEngineAdapter {
     this.dismissHighlightBubble();
     this.highlightRanges.clear();
     this.highlightRegistry.clear();
+    // ReadingSession measurement state is per-book: never let one book's
+    // section text leak into the next book's forward-character counts.
+    this.sectionTextCache.clear();
+    this.textMeasureQueue = Promise.resolve();
+    this.pendingNavigationReason = null;
     if (this.view) {
       this.view.removeEventListener('relocate', this.handleRelocate);
       this.view.removeEventListener('load', this.handleDocumentLoad as EventListener);
@@ -1571,6 +1784,10 @@ export class FoliateEpubEngineAdapter {
   private readonly handleRelocate = () => {
     try {
       const location = this.getLocation();
+      // Attach the explicit navigation reason (if any) stamped by the call
+      // site. Without one this relocate is 'unknown': the session tracker
+      // treats it as a segment rebase, never as reading progress.
+      location.navigationReason = this.pendingNavigationReason ?? 'unknown';
       // A same-section turn normally resolves `view.next()` quickly. A
       // cross-spine turn can render the new section before that promise
       // settles, however. Relocation is foliate's authoritative signal that
@@ -2347,7 +2564,14 @@ export class FoliateEpubEngineAdapter {
       // recursively in the same task that completed the previous one could
       // race WebKit's snapshot cleanup and intermittently drop frames.
       while (nextDirection) {
-        await this.turnWithCrossDissolve(nextDirection);
+        // Stamp per turn: a queued opposite direction inside the same burst
+        // must not inherit this turn's reason.
+        this.pendingNavigationReason = nextDirection === 'next' ? 'reading-forward' : 'reading-backward';
+        try {
+          await this.turnWithCrossDissolve(nextDirection);
+        } finally {
+          this.pendingNavigationReason = null;
+        }
         const pendingTurn = this.takePendingPageTurn();
         if (!pendingTurn) break;
         await this.nextFrame();
@@ -2509,6 +2733,9 @@ export class FoliateEpubEngineAdapter {
       this.pageCountTimer = null;
     }
     this.fadeOut();
+    // Engine-initiated reflow (rotation/host resize), not user reading:
+    // rebase the forward segment instead of measuring.
+    this.pendingNavigationReason = 'programmatic';
     try {
       await this.nextFrame();
       await this.view.goTo(cfi);
@@ -2518,6 +2745,7 @@ export class FoliateEpubEngineAdapter {
       this.onLocation(location, this.restoreState);
       this.scheduleBackgroundPageCount();
     } finally {
+      this.pendingNavigationReason = null;
       this.restoreState = 'active';
       this.reflowing = false;
       await this.fadeIn();
@@ -2563,6 +2791,9 @@ export class FoliateEpubEngineAdapter {
       for (const doc of this.loadedDocuments.keys()) this.applyReaderStyles(doc);
       view.renderer?.setAttribute('gap', `${nextSettings.pageMargin}%`);
       this.layoutSignature = this.createLayoutSignature();
+      // Typography/layout repagination reflows to the same CFI: rebase the
+      // forward segment, never measure the reflow as reading progress.
+      this.pendingNavigationReason = 'settings-repagination';
       await this.nextFrame();
       await view.goTo(cfi);
       await this.nextFrame();
@@ -2576,6 +2807,7 @@ export class FoliateEpubEngineAdapter {
       this.onLocation(location, this.restoreState);
       this.scheduleBackgroundPageCount();
     } finally {
+      this.pendingNavigationReason = null;
       this.restoreState = 'active';
       this.reflowing = false;
     }

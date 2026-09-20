@@ -1,4 +1,4 @@
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -35,6 +35,7 @@ import type {
   ReaderLocation,
   ReaderPageLocationRequest,
   ReaderPageLocationResult,
+  ReaderRestoreState,
   ReaderSearchNavigationRequest,
   ReaderSearchRequest,
   ReaderSearchResult,
@@ -43,10 +44,14 @@ import type {
   ReaderSelectionActionEvent,
   ReaderSelectionCommand,
   ReaderSelectionPayload,
+  ReaderTextMeasureRequest,
+  ReaderTextMeasureResult,
   ReaderTocItem,
   ReaderTocNavigationRequest,
 } from './reader-types';
 import { markReaderOpen } from './reader-open-performance';
+import { READING_SESSION_MEASURE_TIMEOUT_MS } from './reading-session-tracker';
+import { useReadingSessionTracker } from './use-reading-session-tracker';
 import { DEFAULT_READER_SETTINGS, READER_SETTINGS_LIMITS } from './reader-settings';
 import FoliateReaderDom from './FoliateReaderDom';
 import { ReaderSearchSheet } from './ReaderSearchSheet';
@@ -503,6 +508,71 @@ export default function ReaderScreen() {
   const isSameFootnoteAnchor = (a: FootnoteAnchorRect, b: FootnoteAnchorRect) =>
     Math.abs(a.x - b.x) < 2 && Math.abs(a.y - b.y) < 2;
 
+  // ── ReadingSession Core A ─────────────────────────────────────────────
+  // Behavioral reading data layer (no formal UI in this phase). The tracker
+  // owns session lifecycle, effective active time, idle detection and the
+  // forward-character high-water mark; this screen only feeds it context,
+  // activity signals, locations, and the text-measure bridge.
+  const isFocused = useIsFocused();
+  const readingSessionBlocked = tocSheetPresented || settingsSheetPresented || searchSheetPresented;
+
+  const [textMeasureRequest, setTextMeasureRequest] = useState<ReaderTextMeasureRequest | null>(null);
+  const textMeasureSequenceRef = useRef(0);
+  const pendingTextMeasuresRef = useRef(new Map<string, (result: ReaderTextMeasureResult) => void>());
+
+  // Resolves via the DOM bridge (adapter.measureForwardText). Always
+  // resolves — a bridge timeout reports ok:false so the tracker's serial
+  // queue can never stall on a lost response.
+  const requestTextMeasure = useCallback(
+    (fromCfi: string, toCfi: string): Promise<ReaderTextMeasureResult> => {
+      const id = `tm-${++textMeasureSequenceRef.current}`;
+      return new Promise<ReaderTextMeasureResult>((resolve) => {
+        const timer = setTimeout(() => {
+          pendingTextMeasuresRef.current.delete(id);
+          setTextMeasureRequest((current) => (current?.id === id ? null : current));
+          resolve({ id, ok: false, error: 'text measure timeout' });
+        }, READING_SESSION_MEASURE_TIMEOUT_MS);
+        pendingTextMeasuresRef.current.set(id, (result) => {
+          clearTimeout(timer);
+          resolve(result);
+        });
+        setTextMeasureRequest({ id, fromCfi, toCfi });
+      });
+    },
+    [],
+  );
+
+  const handleTextMeasureResult = useCallback((result: ReaderTextMeasureResult) => {
+    const resolve = pendingTextMeasuresRef.current.get(result.id);
+    if (!resolve) return Promise.resolve();
+    pendingTextMeasuresRef.current.delete(result.id);
+    setTextMeasureRequest((current) => (current?.id === result.id ? null : current));
+    resolve(result);
+    return Promise.resolve();
+  }, []);
+
+  const readingSessionTrackerRef = useReadingSessionTracker({
+    bookId: bookId ?? null,
+    readerReady: controller.state.kind === 'ready',
+    routeFocused: isFocused,
+    blocked: readingSessionBlocked,
+    requestTextMeasure,
+  });
+
+  const markReaderActivity = useCallback(() => {
+    readingSessionTrackerRef.current.markActivity();
+  }, [readingSessionTrackerRef]);
+
+  // Feed every engine location to the session tracker before the controller
+  // consumes it. The tracker only reads; it never mutates location state.
+  const handleLocation = useCallback(async (
+    location: ReaderLocation,
+    restoreState: ReaderRestoreState,
+  ) => {
+    readingSessionTrackerRef.current.handleLocation(location, restoreState);
+    await controller.onLocation(location, restoreState);
+  }, [controller.onLocation, readingSessionTrackerRef]);
+
   // RN fallback overlay path: kept until the native popover is verified on a
   // real Development Build. Used only when the native module is unavailable
   // or native presentation throws. Never shown together with the native one.
@@ -525,6 +595,9 @@ export default function ReaderScreen() {
   }, []);
 
   const handleFootnoteOpen = useCallback(async (payload: FootnotePayload) => {
+    // Footnote open/close is reading activity; the popover itself does not
+    // block active time (unlike TOC/search/settings sheets).
+    markReaderActivity();
     // A footnote tap is a reading action, not a chrome action: opening the
     // popover must keep the reader in immersive mode. The tap's pointer-up
     // fires before the click is classified as a footnote, so a chrome toggle
@@ -591,10 +664,11 @@ export default function ReaderScreen() {
       }
     }
     openFootnoteFallbackOverlay(payload);
-  }, [readerAppearance, openFootnoteFallbackOverlay]);
+  }, [markReaderActivity, readerAppearance, openFootnoteFallbackOverlay]);
 
   const dismissFootnotePopover = useCallback(() => {
     if (__DEV__) console.log('[FOOTNOTE_CLOSE]');
+    markReaderActivity();
     // Clear native first, then the RN fallback state; at most one is ever set.
     nativeFootnoteAnchorRef.current = null;
     setFootnoteModalOpen(false);
@@ -602,7 +676,7 @@ export default function ReaderScreen() {
       if (__DEV__) console.log('[FOOTNOTE_NATIVE_DISMISS_FAILED]', String(error));
     });
     setFootnotePopover(null);
-  }, []);
+  }, [markReaderActivity]);
 
   // The system tells us when it dismisses the native popover on its own
   // (outside tap / swipe). The touch is consumed by the presentation, so it
@@ -976,8 +1050,11 @@ export default function ReaderScreen() {
   }, [setReaderChromeVisible]);
 
   const toggleChrome = useCallback(async () => {
+    // Center tap / chrome toggle is reader activity (also covers the DOM
+    // onChromeRequest path).
+    markReaderActivity();
     setReaderChromeVisible(!chromeVisibleRef.current);
-  }, [setReaderChromeVisible]);
+  }, [markReaderActivity, setReaderChromeVisible]);
 
   const bookmarkAnchors = useMemo(() => bookmarks
     .filter((bookmark) => bookmark.spineIndex === controller.currentLocation?.spineIndex)
@@ -1004,9 +1081,10 @@ export default function ReaderScreen() {
 
   const toggleCurrentBookmark = useCallback(() => {
     if (!bookId || !controller.currentLocation || bookmarkBusy) return;
+    markReaderActivity();
     setBookmarkBusy(true);
     requestBookmarkSnapshot('toggle');
-  }, [bookId, bookmarkBusy, controller.currentLocation, requestBookmarkSnapshot]);
+  }, [bookId, bookmarkBusy, controller.currentLocation, markReaderActivity, requestBookmarkSnapshot]);
 
   const handleBookmarkSnapshot = useCallback(async (
     requestId: number,
@@ -1071,6 +1149,7 @@ export default function ReaderScreen() {
   }, [bookId, bookmarks]);
 
   const openToc = useCallback(() => {
+    markReaderActivity();
     pendingTocItemRef.current = null;
     pendingBookmarkRef.current = null;
     setTocNavigating(false);
@@ -1079,18 +1158,20 @@ export default function ReaderScreen() {
     activeSearchRequestRef.current = null;
     setSearchRequest(null);
     setTocSheetPresented(true);
-  }, []);
+  }, [markReaderActivity]);
 
   const openSettings = useCallback(() => {
+    markReaderActivity();
     setTocSheetPresented(false);
     setSearchSheetPresented(false);
     activeSearchRequestRef.current = null;
     setSearchRequest(null);
     setSettingsSheetPresented(true);
-  }, []);
+  }, [markReaderActivity]);
 
   const openSearch = useCallback(() => {
     if (!bookId) return;
+    markReaderActivity();
     pendingSearchResultRef.current = null;
     setTocSheetPresented(false);
     setSettingsSheetPresented(false);
@@ -1214,7 +1295,7 @@ export default function ReaderScreen() {
     pendingSearchResultRef.current = null;
     cancelSearch();
     if (!target) return;
-    setSearchNavigationRequest({ id: ++searchNavigationSequenceRef.current, cfi: target.cfi });
+    setSearchNavigationRequest({ id: ++searchNavigationSequenceRef.current, cfi: target.cfi, reason: 'search' });
   }, [cancelSearch]);
 
   const handleSearchNavigationResult = useCallback(async (requestId: number, succeeded: boolean, message: string | null) => {
@@ -1259,7 +1340,7 @@ export default function ReaderScreen() {
     const bookmark = pendingBookmarkRef.current;
     pendingBookmarkRef.current = null;
     if (bookmark) {
-      setBookmarkNavigationRequest({ id: ++bookmarkNavigationSequenceRef.current, cfi: bookmark.cfi });
+      setBookmarkNavigationRequest({ id: ++bookmarkNavigationSequenceRef.current, cfi: bookmark.cfi, reason: 'bookmark' });
       return;
     }
     const target = pendingTocItemRef.current;
@@ -1268,7 +1349,7 @@ export default function ReaderScreen() {
       setTocNavigating(false);
       return;
     }
-    setTocNavigationRequest({ id: ++tocRequestSequenceRef.current, href: target.href });
+    setTocNavigationRequest({ id: ++tocRequestSequenceRef.current, href: target.href, reason: 'toc' });
   }, []);
 
   const handleBookmarkNavigationResult = useCallback(async (requestId: number, succeeded: boolean, message: string | null) => {
@@ -1292,10 +1373,13 @@ export default function ReaderScreen() {
     // Pressable dispatches `onPress`. Keep the already-serialized payload
     // frozen until the repository write has either succeeded or failed.
     if (!selection && (excerptActionPressingRef.current || excerptSavingRef.current)) return;
+    // A real selection gesture is reading activity; the clear path is covered
+    // by the tap/page-turn signals that caused it.
+    if (selection) markReaderActivity();
     activeSelectionRef.current = selection;
     if (selection) excerptActionPayloadRef.current = selection;
     setActiveSelection(selection);
-  }, []);
+  }, [markReaderActivity]);
 
   const freezeExcerptSelection = useCallback(() => {
     excerptActionPressingRef.current = true;
@@ -1311,6 +1395,7 @@ export default function ReaderScreen() {
   const createExcerptFromSelection = useCallback(async () => {
     const payload = excerptActionPayloadRef.current ?? activeSelectionRef.current;
     if (!payload || excerptSavingRef.current) return;
+    markReaderActivity();
     excerptSavingRef.current = true;
     setExcerptSaving(true);
     try {
@@ -1344,7 +1429,7 @@ export default function ReaderScreen() {
       excerptActionPressingRef.current = false;
       setExcerptSaving(false);
     }
-  }, []);
+  }, [markReaderActivity]);
 
   const clearReaderSelection = useCallback(() => {
     activeSelectionRef.current = null;
@@ -1363,6 +1448,7 @@ export default function ReaderScreen() {
 
   const onHighlightRequested = useCallback(async (payload: ReaderSelectionPayload) => {
     if (highlightSavingRef.current) return;
+    markReaderActivity();
     highlightSavingRef.current = true;
     try {
       const result = await highlightRepository.createHighlight({
@@ -1399,7 +1485,7 @@ export default function ReaderScreen() {
     } finally {
       highlightSavingRef.current = false;
     }
-  }, []);
+  }, [markReaderActivity]);
 
   // Fired by the adapter after it already removed the paint for a tapped
   // highlight. Only the SQLite row and the RN-side snapshot remain.
@@ -1422,6 +1508,9 @@ export default function ReaderScreen() {
       if (__DEV__) console.warn('[ANNOTATION_ACTION_MISSING_SELECTION]', action);
       return;
     }
+    // Any native selection action (excerpt / highlight / note / search-in-book)
+    // is reading activity.
+    markReaderActivity();
     if (action === 'excerpt') {
       void createExcerptFromSelection();
       return;
@@ -1437,7 +1526,7 @@ export default function ReaderScreen() {
       return;
     }
     if (action === 'note') onNoteRequested(payload);
-  }, [createExcerptFromSelection, onHighlightRequested, onNoteRequested, searchSelectionInBook]);
+  }, [createExcerptFromSelection, markReaderActivity, onHighlightRequested, onNoteRequested, searchSelectionInBook]);
 
   const excerptActionPosition = useMemo(() => {
     if (!activeSelection) return null;
@@ -1518,9 +1607,11 @@ export default function ReaderScreen() {
           selectionCommand={selectionCommand}
           excerptVerificationRequest={excerptVerificationRequest}
           highlightSnapshot={highlightSnapshot}
+          textMeasureRequest={textMeasureRequest}
+          onTextMeasureResult={handleTextMeasureResult}
           onHighlightDeleteRequest={handleHighlightDeleteRequest}
           onReady={controller.onEngineReady}
-          onLocation={controller.onLocation}
+          onLocation={handleLocation}
           onDiagnostic={controller.onDiagnostic}
           onChromeRequest={toggleChrome}
           onError={controller.onEngineError}

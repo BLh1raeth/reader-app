@@ -30,6 +30,8 @@ import type {
   ReaderSelectionCommand,
   ReaderSelectionActionEvent,
   ReaderExcerptVerificationRequest,
+  ReaderTextMeasureRequest,
+  ReaderTextMeasureResult,
   ReaderTocItem,
   ReaderTocNavigationRequest,
   FootnotePayload,
@@ -55,6 +57,8 @@ type Props = {
   selectionCommand: ReaderSelectionCommand | null;
   excerptVerificationRequest: ReaderExcerptVerificationRequest | null;
   highlightSnapshot: ReaderHighlightSnapshotItem[] | null;
+  textMeasureRequest: ReaderTextMeasureRequest | null;
+  onTextMeasureResult: (result: ReaderTextMeasureResult) => Promise<void>;
   onHighlightDeleteRequest: (rangeCfi: string) => void;
   onReady: (location: ReaderLocation) => Promise<void>;
   onLocation: (location: ReaderLocation, restoreState: ReaderRestoreState) => Promise<void>;
@@ -81,7 +85,7 @@ type Props = {
   dom?: ReaderDomProps;
 };
 
-export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, readerSettings, settingsSessionActive, tocNavigationRequest, bookmarkSnapshotRequest, bookmarkNavigationRequest, pageLocationRequest, searchRequest, searchNavigationRequest, selectionCommand, excerptVerificationRequest, highlightSnapshot, onHighlightDeleteRequest, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen }: Props) {
+export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, readerSettings, settingsSessionActive, tocNavigationRequest, bookmarkSnapshotRequest, bookmarkNavigationRequest, pageLocationRequest, searchRequest, searchNavigationRequest, selectionCommand, excerptVerificationRequest, highlightSnapshot, textMeasureRequest, onTextMeasureResult, onHighlightDeleteRequest, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<FoliateEpubEngineAdapter | null>(null);
   const loadedSessionRef = useRef<string | null>(null);
@@ -90,8 +94,8 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
   const highlightSnapshotRef = useRef(highlightSnapshot);
   highlightSnapshotRef.current = highlightSnapshot;
   const settingsApplicationRef = useRef<Promise<void>>(Promise.resolve());
-  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest });
-  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest };
+  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest });
+  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest };
 
   useEffect(() => {
     document.documentElement.lang = 'zh-CN';
@@ -231,7 +235,7 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
     const adapter = adapterRef.current;
     if (!request || !adapter) return;
     let active = true;
-    void adapter.goTo(request.href).then(() => {
+    void adapter.goTo(request.href, request.reason).then(() => {
       if (active) return callbacksRef.current.onTocNavigationResult(request.id, true, null);
       return undefined;
     }).catch((error) => {
@@ -264,7 +268,7 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
     const adapter = adapterRef.current;
     if (!request || !adapter) return;
     let active = true;
-    void adapter.goTo(request.cfi).then(() => {
+    void adapter.goTo(request.cfi, request.reason).then(() => {
       if (active) return callbacksRef.current.onBookmarkNavigationResult(request.id, true, null);
       return undefined;
     }).catch((error: unknown) => {
@@ -318,7 +322,7 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
     const adapter = adapterRef.current;
     if (!request || !adapter) return;
     let active = true;
-    void adapter.goToSearchResult(request.cfi).then(() => {
+    void adapter.goToSearchResult(request.cfi, request.reason).then(() => {
       if (active) return callbacksRef.current.onSearchNavigationResult(request.id, true, null);
       return undefined;
     }).catch((error: unknown) => {
@@ -329,6 +333,22 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
     });
     return () => { active = false; };
   }, [searchNavigationRequest?.id]);
+
+  // ReadingSession Core A: forward-text measurement. The adapter owns all
+  // EPUB DOM / CFI work; the result crosses the bridge with the request id
+  // so the Native side can resolve the matching pending promise.
+  useEffect(() => {
+    const request = textMeasureRequest;
+    const adapter = adapterRef.current;
+    if (!request || !adapter) return;
+    let active = true;
+    void adapter.measureForwardText(request.fromCfi, request.toCfi).then((measurement) => {
+      if (!active) return undefined;
+      const result: ReaderTextMeasureResult = { ...measurement, id: request.id };
+      return callbacksRef.current.onTextMeasureResult(result);
+    });
+    return () => { active = false; };
+  }, [textMeasureRequest?.id]);
 
   useEffect(() => {
     const command = selectionCommand;
