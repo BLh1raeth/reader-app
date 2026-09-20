@@ -50,6 +50,8 @@ export const tokens = {
     tertiaryLabel: PlatformColor('tertiaryLabel'),
     separator: PlatformColor('separator'),
     fill: PlatformColor('tertiarySystemFill'),
+    /** iOS grouped list cell 背景（浅色白 / 深色深灰），随系统自动适配。 */
+    groupedCell: PlatformColor('secondarySystemGroupedBackground'),
     blue: PlatformColor('systemBlue'),
     destructive: PlatformColor('systemRed'),
   },

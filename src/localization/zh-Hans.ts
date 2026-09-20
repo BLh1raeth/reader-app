@@ -63,4 +63,14 @@ export const zhHans = {
   debug: {
     readerEngine: '阅读引擎调试',
   },
+  excerpts: {
+    title: '摘录',
+    today: '今天',
+    yesterday: '昨天',
+    past7Days: '过去7天',
+    thisMonth: '本月',
+    monthTitle: (year: number, month: number) => `${year}年${month}月`,
+    emptyTitle: '还没有摘录',
+    emptyHint: '阅读时选中文字，即可保存摘录或添加笔记。',
+  },
 } as const;
