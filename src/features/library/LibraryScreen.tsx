@@ -1,4 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
 import { MenuView, type MenuAction } from '@expo/ui/community/menu';
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
@@ -667,6 +668,12 @@ export default function LibraryScreen() {
 
   return (
     <>
+      {/* Fade the status bar out the moment the opening cover animation
+          starts, instead of waiting for the reader route to mount. React
+          Native merges stacked StatusBar props, so the reader's own
+          StatusBar takes over seamlessly on mount, and this restores
+          automatically when the transition tears down. */}
+      <StatusBar animated hidden={readerOpeningTransition != null} />
       <GestureHandlerRootView style={styles.safeArea}>
         <Animated.ScrollView
           contentInsetAdjustmentBehavior={nativeHeaderVisible ? 'automatic' : 'never'}
