@@ -318,6 +318,29 @@ function resolveFootnoteBody(target: Element): Element {
 }
 
 /**
+ * The id a footnote's backlink points to. Usually the marker's own id, but
+ * some producers put it on an empty placeholder anchor immediately before
+ * the marker link instead:
+ * `<a id="w1"></a><a href="part0065.xhtml#m1"><sup>[1]</sup></a>`.
+ * Used both to recognize the mutual-linkage footnote pattern and to strip
+ * the backlink from the extracted popover content.
+ */
+function resolveCitingAnchorId(anchor: HTMLAnchorElement): string | null {
+  const ownId = anchor.getAttribute('id');
+  if (ownId) return ownId;
+  const prev = anchor.previousElementSibling;
+  if (
+    prev
+    && prev.tagName.toLowerCase() === 'a'
+    && !prev.hasAttribute('href')
+    && (prev.textContent ?? '').trim() === ''
+  ) {
+    return prev.getAttribute('id');
+  }
+  return null;
+}
+
+/**
  * True when the target contains a back-to-text link. Besides explicit
  * backlink semantics and arrow labels, recognizes mutual linkage: a link
  * whose fragment equals the citing anchor's own id (e.g. `<a class="hl"
@@ -339,7 +362,8 @@ function footnoteTargetHasBacklink(target: Element, anchorId: string | null): bo
 
 /**
  * True when the element sits inside a footnote area: explicit footnote
- * semantics on self/ancestors, or a "notes" label block (e.g.
+ * semantics on self/ancestors, a footnote-hint id/class (e.g.
+ * `<p class="note">`, `<li id="fn1">`), or a "notes" label block (e.g.
  * `<p><span>注 释</span></p>`, `<h2>Footnotes</h2>`) among preceding
  * siblings. Real-world books often use flat structures with no section
  * wrapper, so the sibling scan covers that. Used to keep backlink taps
@@ -347,8 +371,13 @@ function footnoteTargetHasBacklink(target: Element, anchorId: string | null): bo
  */
 function isInFootnoteArea(element: Element): boolean {
   let el: Element | null = element;
+  let isSelf = true;
   while (el && el.tagName.toLowerCase() !== 'body') {
     if (getFootnoteSemanticType(el)) return true;
+    // The element's own marker class (e.g. `footnote-ref`) must not count:
+    // only ancestors make it a footnote area.
+    if (!isSelf && footnoteTargetIdClassHint(el)) return true;
+    isSelf = false;
     el = el.parentElement;
   }
   const block = element.closest('p,li,aside,div,section,blockquote,dd');
@@ -364,6 +393,15 @@ function isInFootnoteArea(element: Element): boolean {
 }
 
 /**
+ * Combined id + class string for footnote-hint matching. Trimmed: the
+ * anchored `^(fn|note)[-_ ]?\d*$` alternative needs exact boundaries, so an
+ * untrimmed `" note"` / `"fn1 "` would never match it.
+ */
+function idClassHintString(el: Element): string {
+  return `${el.getAttribute('id') ?? ''} ${(el as HTMLElement).className ?? ''}`.trim();
+}
+
+/**
  * True when the target sits inside a notes-like section: an ancestor
  * section/aside/div/ol/ul whose heading or id/class mentions
  * 注/释/footnote/endnote, or whose own id/class carries a note hint.
@@ -373,7 +411,7 @@ function footnoteTargetInNotesSection(target: Element): boolean {
   while (el && el.tagName.toLowerCase() !== 'body') {
     const tag = el.tagName.toLowerCase();
     if (tag === 'section' || tag === 'aside' || tag === 'div' || tag === 'ol' || tag === 'ul') {
-      const idClass = `${el.getAttribute('id') ?? ''} ${(el as HTMLElement).className ?? ''}`;
+      const idClass = idClassHintString(el);
       if (FOOTNOTE_ID_CLASS_HINT_RE.test(idClass)) return true;
       const headings = el.querySelectorAll('h1,h2,h3,h4,h5,h6');
       for (const h of Array.from(headings)) {
@@ -388,8 +426,7 @@ function footnoteTargetInNotesSection(target: Element): boolean {
 }
 
 function footnoteTargetIdClassHint(target: Element): boolean {
-  const idClass = `${target.getAttribute('id') ?? ''} ${(target as HTMLElement).className ?? ''}`;
-  return FOOTNOTE_ID_CLASS_HINT_RE.test(idClass);
+  return FOOTNOTE_ID_CLASS_HINT_RE.test(idClassHintString(target));
 }
 
 /**
@@ -411,7 +448,7 @@ function isHeuristicFootnoteReference(
   const text = (target.textContent ?? '').replace(/\s+/g, ' ').trim();
   if (text.length < FOOTNOTE_HEURISTIC_MIN_TEXT) return false;
   return (
-    footnoteTargetHasBacklink(target, anchor.getAttribute('id'))
+    footnoteTargetHasBacklink(target, resolveCitingAnchorId(anchor))
     || footnoteTargetInNotesSection(target)
     || footnoteTargetIdClassHint(target)
     || hasFootnoteMarkerClass(anchor)
@@ -446,7 +483,7 @@ function isHeuristicCrossDocFootnoteTarget(target: Element, anchor: HTMLAnchorEl
   if (text.length < FOOTNOTE_HEURISTIC_MIN_TEXT) return false;
   return (
     getFootnoteSemanticType(target) !== null
-    || footnoteTargetHasBacklink(target, anchor.getAttribute('id'))
+    || footnoteTargetHasBacklink(target, resolveCitingAnchorId(anchor))
     || footnoteTargetInNotesSection(target)
     || footnoteTargetIdClassHint(target)
   );
@@ -1520,7 +1557,7 @@ export class FoliateEpubEngineAdapter {
       // Never swallow a tap: if the footnote has no extractable content,
       // let the EPUB's default anchor navigation proceed untouched.
       // (With embedded marker text there is always something to show.)
-      if (!extractFootnoteContent(ref.targetElement, anchorLabel, anchor.getAttribute('id')).text) {
+      if (!extractFootnoteContent(ref.targetElement, anchorLabel, resolveCitingAnchorId(anchor)).text) {
         if (__DEV__) console.log('[FOOTNOTE_EMPTY]', JSON.stringify({ rawHref: ref.rawHref }));
         return;
       }
@@ -1755,13 +1792,13 @@ export class FoliateEpubEngineAdapter {
       if (__DEV__) console.log('[FOOTNOTE_ANCHOR_GONE]', JSON.stringify({ rawHref: ref.rawHref }));
       return;
     }
-    let extracted = extractFootnoteContent(targetElement, anchor.textContent ?? '', anchor.getAttribute('id'));
+    let extracted = extractFootnoteContent(targetElement, anchor.textContent ?? '', resolveCitingAnchorId(anchor));
     if (!extracted.text && ref.embeddedText) {
       // The target had no extractable content; fall back to the marker's
       // embedded note text instead of navigating away.
       const p = doc.createElement('p');
       p.textContent = ref.embeddedText;
-      extracted = extractFootnoteContent(p, anchor.textContent ?? '', anchor.getAttribute('id'));
+      extracted = extractFootnoteContent(p, anchor.textContent ?? '', resolveCitingAnchorId(anchor));
     }
     const { text, richText, html } = extracted;
     if (!text) {
