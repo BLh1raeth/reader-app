@@ -12,6 +12,23 @@ export type ImportFailure = { name: string; reason: string };
 export type DuplicateImport = { asset: DocumentPicker.DocumentPickerAsset; existingBook: Book };
 export type ImportSummary = { duplicates: DuplicateImport[]; failures: ImportFailure[]; imported: Book[] };
 
+/** Per-file import progress. `fraction` is 0..1 across all picked files. */
+export type ImportProgress = {
+  fileIndex: number;
+  totalFiles: number;
+  /** Completed stages for the current file (1..IMPORT_STAGE_COUNT). */
+  stage: number;
+  totalStages: number;
+  fraction: number;
+};
+
+/**
+ * Import stages per file: read bytes → SHA-256 → parse EPUB → persist files
+ * → DB insert. The duplicate-confirm dialog pauses between stages 3 and 4;
+ * progress simply doesn't advance while it's up.
+ */
+const IMPORT_STAGE_COUNT = 5;
+
 function sha256(bytes: Uint8Array) {
   const constants = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -72,16 +89,25 @@ function isEpub(asset: DocumentPicker.DocumentPickerAsset) {
 
 type PreparedImport = { asset: DocumentPicker.DocumentPickerAsset; bytes: Uint8Array; fileHash: string; parsed: ParsedEpub };
 
-async function prepareImport(asset: DocumentPicker.DocumentPickerAsset): Promise<PreparedImport> {
+async function prepareImport(
+  asset: DocumentPicker.DocumentPickerAsset,
+  onStage: (stage: number) => void,
+): Promise<PreparedImport> {
   if (!isEpub(asset)) throw new Error('只支持 EPUB 图书。');
   const bytes = await new File(asset.uri).bytes();
   if (bytes.length === 0) throw new Error('文件为空。');
-  return { asset, bytes, fileHash: sha256(bytes), parsed: parseEpub(bytes) };
+  onStage(1);
+  const fileHash = sha256(bytes);
+  onStage(2);
+  const parsed = parseEpub(bytes);
+  onStage(3);
+  return { asset, bytes, fileHash, parsed };
 }
 
 async function writePreparedImport(
   prepared: PreparedImport,
   forceDuplicate: boolean,
+  onStage: (stage: number) => void,
 ): Promise<{ duplicate: Book } | { book: Book }> {
   const duplicate = await bookRepository.getDuplicate(prepared.parsed.identifier, prepared.fileHash);
   if (duplicate !== null && !forceDuplicate) return { duplicate };
@@ -95,6 +121,7 @@ async function writePreparedImport(
     coverUri = prepared.parsed.cover
       ? persistCoverBytes(id, prepared.parsed.cover.bytes, prepared.parsed.cover.extension)
       : null;
+    onStage(4);
     const title = prepared.parsed.title ?? titleFromFilename(prepared.asset.name);
     const now = new Date().toISOString();
     const book: Omit<Book, 'coverTone' | 'hasGeneratedCover'> = {
@@ -121,6 +148,7 @@ async function writePreparedImport(
       tocJson: JSON.stringify(prepared.parsed.toc),
     };
     await bookRepository.insertBook(book);
+    onStage(5);
     return { book: (await bookRepository.getBookById(id))! };
   } catch (error) {
     if (fileUri) removeBookFiles({ coverUri, fileUri, id, originalCoverUri: coverUri });
@@ -128,7 +156,10 @@ async function writePreparedImport(
   }
 }
 
-export async function importPickedEpubs(onDuplicate: (duplicate: DuplicateImport) => Promise<boolean>): Promise<ImportSummary | null> {
+export async function importPickedEpubs(
+  onDuplicate: (duplicate: DuplicateImport) => Promise<boolean>,
+  onProgress?: (progress: ImportProgress) => void,
+): Promise<ImportSummary | null> {
   const picked = await DocumentPicker.getDocumentAsync({
     copyToCacheDirectory: true,
     multiple: true,
@@ -136,15 +167,30 @@ export async function importPickedEpubs(onDuplicate: (duplicate: DuplicateImport
   });
   if (picked.canceled) return null;
 
+  // The iOS system document picker reports no progress of its own; the ring
+  // appears only after files are picked, starting here.
+  const totalFiles = picked.assets.length;
+  const reportStage = (fileIndex: number, stage: number) => {
+    onProgress?.({
+      fileIndex,
+      totalFiles,
+      stage,
+      totalStages: IMPORT_STAGE_COUNT,
+      fraction: (fileIndex + stage / IMPORT_STAGE_COUNT) / totalFiles,
+    });
+  };
+
   const summary: ImportSummary = { duplicates: [], failures: [], imported: [] };
-  for (const asset of picked.assets) {
+  for (let fileIndex = 0; fileIndex < picked.assets.length; fileIndex += 1) {
+    const asset = picked.assets[fileIndex];
+    reportStage(fileIndex, 0);
     try {
-      const prepared = await prepareImport(asset);
-      let result = await writePreparedImport(prepared, false);
+      const prepared = await prepareImport(asset, (stage) => reportStage(fileIndex, stage));
+      let result = await writePreparedImport(prepared, false, (stage) => reportStage(fileIndex, stage));
       if ('duplicate' in result) {
         const duplicate = { asset, existingBook: result.duplicate };
         summary.duplicates.push(duplicate);
-        if (await onDuplicate(duplicate)) result = await writePreparedImport(prepared, true);
+        if (await onDuplicate(duplicate)) result = await writePreparedImport(prepared, true, (stage) => reportStage(fileIndex, stage));
       }
       if ('book' in result) summary.imported.push(result.book);
     } catch (error) {

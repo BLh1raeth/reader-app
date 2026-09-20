@@ -11,11 +11,13 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  useColorScheme,
   useWindowDimensions,
   View,
 } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Circle } from 'react-native-svg';
 import Animated, {
   Easing,
   Extrapolation,
@@ -204,6 +206,8 @@ export default function LibraryScreen() {
   const [manualOrderingMode, setManualOrderingMode] = useState(false);
   const [readerBackgroundColor, setReaderBackgroundColor] = useState<string>(tokens.colors.background);
   const [readerOpeningTransition, setReaderOpeningTransition] = useState<ReaderOpeningTransition | null>(null);
+  // Import progress ring: 0..1 while an import is running, null when idle.
+  const [importProgress, setImportProgress] = useState<number | null>(null);
   const selectionExitTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const readerOpeningPendingRef = useRef(false);
   const readerOpeningSequenceRef = useRef(0);
@@ -437,7 +441,15 @@ export default function LibraryScreen() {
   ), []);
 
   const importBooks = useCallback(() => {
-    void importPickedEpubs(confirmDuplicateImport).then(async (summary) => {
+    // Ring progress: 0..1 while importing, null when idle. The first
+    // onProgress fires right after files are picked (the iOS system picker
+    // reports no progress of its own). Cleared on every exit path (done,
+    // canceled, error) so the ring never gets stuck.
+    void importPickedEpubs(
+      confirmDuplicateImport,
+      (progress) => setImportProgress(progress.fraction),
+    ).then(async (summary) => {
+      setImportProgress(null);
       if (!summary) return;
       await reloadBooks();
       if (summary.failures.length > 0) {
@@ -447,7 +459,7 @@ export default function LibraryScreen() {
         ].filter(Boolean);
         Alert.alert('导入结果', lines.join('\n'));
       }
-    }).catch(() => undefined);
+    }).catch(() => setImportProgress(null));
   }, [confirmDuplicateImport, reloadBooks]);
 
   const shareSelectedBooks = useCallback(() => {
@@ -689,6 +701,7 @@ export default function LibraryScreen() {
                   onFilter={setFilterMode}
                   onAdjustOrder={enterManualOrderingMode}
                   selectionProgress={selectionUiProgress}
+                  importProgress={importProgress}
                 />
               </View>
           ) : null}
@@ -816,7 +829,7 @@ function BookTitleMenu({ book, children, handlers }: {
   );
 }
 
-function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport, onSelect, onSort, onFilter, onAdjustOrder, selectionProgress }: {
+function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport, onSelect, onSort, onFilter, onAdjustOrder, selectionProgress, importProgress }: {
   booksExist: boolean;
   filterMode: FilterMode;
   sortMode: SortMode;
@@ -826,6 +839,8 @@ function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport, onSel
   onFilter: (filterMode: FilterMode) => void;
   onAdjustOrder: () => void;
   selectionProgress: SharedValue<number>;
+  /** 0..1 while importing, null when idle. */
+  importProgress: number | null;
 }) {
   const bookActions: MenuAction[] = booksExist
     ? [
@@ -874,31 +889,62 @@ function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport, onSel
 
   return (
     <MenuView actions={actions} onPressAction={(event) => handleMenuAction(event.nativeEvent.event)}>
-      <LibraryMenuTrigger selectionProgress={selectionProgress} />
+      <LibraryMenuTrigger selectionProgress={selectionProgress} importProgress={importProgress} />
     </MenuView>
   );
 }
 
-function LibraryMenuTrigger({ selectionProgress }: { selectionProgress: SharedValue<number> }) {
+const IMPORT_RING_RADIUS = 19;
+const IMPORT_RING_CIRCUMFERENCE = 2 * Math.PI * IMPORT_RING_RADIUS;
+
+function LibraryMenuTrigger({ selectionProgress, importProgress }: { selectionProgress: SharedValue<number>; importProgress: number | null }) {
+  const colorScheme = useColorScheme();
   const glyphReturnStyle = useAnimatedStyle(() => ({
     opacity: interpolate(selectionProgress.get(), [0, 1], [1, 0], Extrapolation.CLAMP),
     transform: [{ scale: interpolate(selectionProgress.get(), [0, 1], [1, 0.85], Extrapolation.CLAMP) }],
   }));
+  const importing = importProgress !== null;
   const trigger = (
-    <Pressable accessibilityLabel="书库菜单" accessibilityRole="button" style={styles.menuTriggerContent}>
+    <Pressable
+      accessibilityLabel="书库菜单"
+      accessibilityRole="button"
+      accessibilityState={{ disabled: importing }}
+      disabled={importing}
+      style={[styles.menuTriggerContent, importing && styles.menuTriggerDisabled]}
+    >
       <Animated.Text style={[styles.menuTriggerGlyph, glyphReturnStyle]}>•••</Animated.Text>
     </Pressable>
   );
 
-  if (isGlassEffectAPIAvailable()) {
-    return (
-      <GlassView glassEffectStyle="regular" isInteractive style={styles.menuGlass}>
-        {trigger}
-      </GlassView>
-    );
-  }
+  const surface = isGlassEffectAPIAvailable() ? (
+    <GlassView glassEffectStyle="regular" isInteractive style={styles.menuGlass}>
+      {trigger}
+    </GlassView>
+  ) : (
+    <View style={styles.menuTriggerFallback}>{trigger}</View>
+  );
 
-  return <View style={styles.menuTriggerFallback}>{trigger}</View>;
+  return (
+    // pointerEvents none while importing so the menu can't be opened mid-import.
+    <View style={styles.menuTriggerWrap} pointerEvents={importing ? 'none' : 'auto'}>
+      {surface}
+      {importing ? (
+        <Svg style={styles.menuProgressRing} viewBox="0 0 44 44">
+          <Circle
+            cx={22}
+            cy={22}
+            r={IMPORT_RING_RADIUS}
+            fill="none"
+            stroke={colorScheme === 'dark' ? '#0A84FF' : '#007AFF'}
+            strokeWidth={3}
+            strokeLinecap="round"
+            strokeDasharray={`${IMPORT_RING_CIRCUMFERENCE * Math.min(1, Math.max(0, importProgress))} ${IMPORT_RING_CIRCUMFERENCE}`}
+            transform="rotate(-90 22 22)"
+          />
+        </Svg>
+      ) : null}
+    </View>
+  );
 }
 
 function ContinueReading({ book, onOpenReader, opening, selectionMode }: { book: LibraryBook; onOpenReader: (frame: ReaderOpeningFrame) => void; opening: boolean; selectionMode: boolean }) {
@@ -1329,6 +1375,9 @@ const styles = StyleSheet.create({
   menuGlass: { borderRadius: 22, height: 44, width: 44 },
   menuTriggerFallback: { borderColor: tokens.colors.separator, borderRadius: 22, borderWidth: StyleSheet.hairlineWidth, height: 44, width: 44 },
   menuTriggerContent: { alignItems: 'center', height: 44, justifyContent: 'center', width: 44 },
+  menuTriggerDisabled: { opacity: 0.5 },
+  menuTriggerWrap: { height: 44, width: 44 },
+  menuProgressRing: { height: 44, left: 0, position: 'absolute', top: 0, width: 44 },
   menuTriggerGlyph: { color: tokens.colors.label, fontSize: 18, fontWeight: '700', letterSpacing: 1, marginLeft: 1, marginTop: -2 },
   scrollContent: { paddingHorizontal: tokens.spacing.screen, paddingBottom: tokens.spacing.section * 6, gap: tokens.spacing.section },
   continueSection: { gap: tokens.spacing.item },

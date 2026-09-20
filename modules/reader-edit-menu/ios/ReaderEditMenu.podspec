@@ -1,6 +1,6 @@
 require 'json'
 
-package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
+package = JSON.parse(File.read(File.join(__dir__, '..', 'package.json')))
 
 Pod::Spec.new do |s|
   s.name           = 'ReaderEditMenu'
@@ -14,9 +14,9 @@ Pod::Spec.new do |s|
   s.swift_version  = '5.9'
   s.source         = { :path => '.' }
   s.static_framework = true
-  s.source_files   = 'ios/**/*.{h,m,mm,swift}'
+  s.source_files   = '**/*.{h,m,mm,swift}'
   s.resource_bundles = {
-    'ReaderEditMenu' => ['ios/Resources/**/*']
+    'ReaderEditMenu' => ['Resources/**/*']
   }
   s.dependency 'ExpoModulesCore'
 end
