@@ -224,7 +224,7 @@ function isFootnoteTargetElement(element: Element): boolean {
 // ── Heuristic footnote detection (exclusion-based) ────────────────────
 // Semantic-first stays the primary path. For fragment links with NO
 // explicit footnote semantics, the heuristic now defaults to ACCEPT: any
-// marker-like inline link (`[1]`, `1`, `*`, `〔1〕` …) in body text whose
+// marker-like inline link (`[1]`, `1`, `注1`, `*`, `〔1〕` …) in body text whose
 // target carries substantive text pops over, unless an exclusion fires
 // (backlink label, inside a notes area / TOC / nav / heading, or a
 // heading-like target). EPUB producers invent a new footnote markup
@@ -233,8 +233,8 @@ function isFootnoteTargetElement(element: Element): boolean {
 // A tap is still never swallowed: targets with no extractable content
 // fall back to default navigation in the click handler.
 
-/** Marker-like labels: digits, [1], (1), 〔1〕, superscript ¹²³, *, †, ‡. */
-const FOOTNOTE_HEURISTIC_MARKER_RE = /^[0-9¹²³⁴⁵⁶⁷⁸⁹⁰\s.[\]()\-–—*†‡〔〕【】〈〉《》]+$/;
+/** Marker-like labels: digits, [1], (1), 〔1〕, 注1/註1, superscript ¹²³, *, †, ‡. */
+const FOOTNOTE_HEURISTIC_MARKER_RE = /^(?:[0-9¹²³⁴⁵⁶⁷⁸⁹⁰\s.[\]()\-–—*†‡〔〕【】〈〉《》]+|[注註][0-9¹²³⁴⁵⁶⁷⁸⁹⁰]+)$/;
 /** Section headings that suggest a notes area: 注/释/footnote/endnote. */
 const FOOTNOTE_NOTES_HEADING_RE = /注|释|footnote|endnote/i;
 /** id/class hints: footnote, endnote, fn1, note-2, ntb, references … */
@@ -409,7 +409,7 @@ function footnoteTargetIdClassHint(target: Element): boolean {
 /**
  * Heuristic: does this non-semantic same-document link look like a footnote
  * reference? Exclusion-based (default ACCEPT): a marker-like inline label
- * (`[1]`, `1`, `*`, `〔1〕` …) pointing at a substantive non-heading target
+ * (`[1]`, `1`, `注1`, `*`, `〔1〕` …) pointing at a substantive non-heading target
  * pops over, unless the link is clearly navigational — a backlink, inside
  * the notes area / TOC / nav / a heading. New producer markup variants are
  * accepted without needing a dedicated signal first.
