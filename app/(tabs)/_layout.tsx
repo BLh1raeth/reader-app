@@ -46,11 +46,6 @@ function AppTabs() {
         <NativeTabs.Trigger.Icon sf="text.bubble" />
         <NativeTabs.Trigger.Label>{uiText.tabs.excerpts}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
-      {/* SPIKE-ONLY: temporary native popover feasibility test tab. Remove after the spike. */}
-      <NativeTabs.Trigger name="dev-popover-spike">
-        <NativeTabs.Trigger.Icon sf="flask" />
-        <NativeTabs.Trigger.Label>Spike</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
     </NativeTabs>
   );
 }

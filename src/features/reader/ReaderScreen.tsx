@@ -5,11 +5,17 @@ import { StatusBar } from 'expo-status-bar';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AccessibilityInfo, Linking, Pressable, ScrollView, StyleSheet, Text, TextStyle, useWindowDimensions, View, ViewStyle } from 'react-native';
+import { AccessibilityInfo, AppState, Linking, Pressable, ScrollView, StyleSheet, Text, TextStyle, useWindowDimensions, View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { AnimatedStyle, cancelAnimation, Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { isReaderEditMenuNativeAvailable } from '../../../modules/reader-edit-menu';
+import {
+  addNativeFootnotePopoverDismissListener,
+  dismissFootnotePopover as dismissNativeFootnotePopover,
+  isNativeReaderPopoverAvailable,
+  presentFootnotePopover as presentNativeFootnotePopover,
+} from '../../../modules/reader-popover';
 import { tokens } from '../../design-system/tokens';
 import { uiText } from '../../localization';
 import { BookCoverArt } from '../library/BookCoverArt';
@@ -18,6 +24,7 @@ import { bookmarkRepository, type ReaderBookmark } from './bookmark-repository';
 import { bookSearchHistoryRepository, type BookSearchHistoryItem } from './book-search-history-repository';
 import { excerptRepository } from './excerpt-repository';
 import type {
+  FootnoteAnchorRect,
   FootnotePayload,
   FootnoteRichTextNode,
   ReaderBookmarkNavigationRequest,
@@ -472,15 +479,24 @@ export default function ReaderScreen() {
   const [searchInitialQueryRequest, setSearchInitialQueryRequest] = useState<ReaderSearchInitialQueryRequest | null>(null);
   const [activeSelection, setActiveSelection] = useState<ReaderSelectionPayload | null>(null);
   const [footnotePopover, setFootnotePopover] = useState<FootnotePayload | null>(null);
+  // Anchor of the currently shown *native* footnote popover (null when none
+  // or when the RN fallback overlay is used). System outside-tap dismisses
+  // are reported back through the native dismiss event below.
+  const nativeFootnoteAnchorRef = useRef<FootnoteAnchorRect | null>(null);
 
-  const handleFootnoteOpen = useCallback(async (payload: FootnotePayload) => {
+  const isSameFootnoteAnchor = (a: FootnoteAnchorRect, b: FootnoteAnchorRect) =>
+    Math.abs(a.x - b.x) < 2 && Math.abs(a.y - b.y) < 2;
+
+  // RN fallback overlay path: kept until the native popover is verified on a
+  // real Development Build. Used only when the native module is unavailable
+  // or native presentation throws. Never shown together with the native one.
+  const openFootnoteFallbackOverlay = useCallback((payload: FootnotePayload) => {
     setFootnotePopover((current) => {
       if (
         current &&
         current.id === payload.id &&
         current.sourceHref === payload.sourceHref &&
-        Math.abs(current.anchorRect.x - payload.anchorRect.x) < 2 &&
-        Math.abs(current.anchorRect.y - payload.anchorRect.y) < 2
+        isSameFootnoteAnchor(current.anchorRect, payload.anchorRect)
       ) {
         // Re-tapping the same anchor toggles the popover closed.
         if (__DEV__) console.log('[FOOTNOTE_CLOSE]');
@@ -490,14 +506,90 @@ export default function ReaderScreen() {
     });
   }, []);
 
+  const handleFootnoteOpen = useCallback(async (payload: FootnotePayload) => {
+    if (isNativeReaderPopoverAvailable()) {
+      const shown = nativeFootnoteAnchorRef.current;
+      if (shown && isSameFootnoteAnchor(shown, payload.anchorRect)) {
+        // Same noteref tapped again: toggle the native popover closed.
+        // At most one native popover ever exists; never stack a second one.
+        if (__DEV__) console.log('[FOOTNOTE_CLOSE]');
+        nativeFootnoteAnchorRef.current = null;
+        try {
+          await dismissNativeFootnotePopover();
+        } catch (error) {
+          if (__DEV__) console.log('[FOOTNOTE_NATIVE_DISMISS_FAILED]', String(error));
+        }
+        return;
+      }
+      try {
+        // payload.anchorRect is already in native window points
+        // (FoliateEpubEngineAdapter.mapIframeRectToWebView). RN layout points
+        // and UIKit layout points are the same unit: no scaling here.
+        await presentNativeFootnotePopover({
+          text: payload.text,
+          anchor: payload.anchorRect,
+          appearance: readerAppearance,
+        });
+        nativeFootnoteAnchorRef.current = payload.anchorRect;
+        if (__DEV__) console.log('[FOOTNOTE_OPEN_NATIVE]');
+        return;
+      } catch (error) {
+        // Native presentation failed: fall through to the RN overlay so the
+        // tap is never swallowed silently. Never render both at once.
+        nativeFootnoteAnchorRef.current = null;
+        if (__DEV__) console.log('[FOOTNOTE_NATIVE_FAILED]', String(error));
+      }
+    }
+    openFootnoteFallbackOverlay(payload);
+  }, [readerAppearance, openFootnoteFallbackOverlay]);
+
   const dismissFootnotePopover = useCallback(() => {
     if (__DEV__) console.log('[FOOTNOTE_CLOSE]');
+    // Clear native first, then the RN fallback state; at most one is ever set.
+    nativeFootnoteAnchorRef.current = null;
+    dismissNativeFootnotePopover().catch((error) => {
+      if (__DEV__) console.log('[FOOTNOTE_NATIVE_DISMISS_FAILED]', String(error));
+    });
     setFootnotePopover(null);
+  }, []);
+
+  // The system tells us when it dismisses the native popover on its own
+  // (outside tap / swipe). The touch is consumed by the presentation, so it
+  // never reaches reader gestures: the next tap behaves normally again.
+  useEffect(() => {
+    if (!isNativeReaderPopoverAvailable()) return;
+    const subscription = addNativeFootnotePopoverDismissListener(() => {
+      if (__DEV__) console.log('[FOOTNOTE_CLOSE]');
+      nativeFootnoteAnchorRef.current = null;
+    });
+    return () => subscription.remove();
+  }, []);
+
+  // Never let a native popover outlive the reader route, the current book,
+  // or the foreground session.
+  useEffect(() => {
+    return () => {
+      nativeFootnoteAnchorRef.current = null;
+      dismissNativeFootnotePopover().catch(() => undefined);
+    };
+  }, [bookId]);
+
+  useEffect(() => {
+    if (!isNativeReaderPopoverAvailable()) return;
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active') {
+        nativeFootnoteAnchorRef.current = null;
+        dismissNativeFootnotePopover().catch(() => undefined);
+      }
+    });
+    return () => subscription.remove();
   }, []);
 
   // The footnote popover never floats above sheets; opening one dismisses it.
   useEffect(() => {
     if (tocSheetPresented || settingsSheetPresented || searchSheetPresented) {
+      nativeFootnoteAnchorRef.current = null;
+      dismissNativeFootnotePopover().catch(() => undefined);
       setFootnotePopover(null);
     }
   }, [tocSheetPresented, settingsSheetPresented, searchSheetPresented]);

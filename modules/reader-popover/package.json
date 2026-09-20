@@ -1,0 +1,1 @@
+{"description":"Reader-native anchored popover (UIPopoverPresentationController) for transient contextual UI: footnotes first, citations/glossary later.","main":"index.ts","name":"reader-popover","private":true,"version":"1.0.0"}

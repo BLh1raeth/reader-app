@@ -1,42 +1,63 @@
 import UIKit
 
-// SPIKE-ONLY: native popover presenter for the Liquid Glass feasibility spike.
+// ReaderPopoverPresenter: the single owner of the reader's native popover.
 //
-// Design decisions under test:
+// Design:
 // - System draws the popover chrome (background + arrow). No custom blur,
-//   material, border, shadow, or corner radius is applied anywhere: on iOS 26
-//   the system popover background is Liquid Glass automatically, and the
-//   arrow is part of that same chrome.
+//   material, border, shadow, or corner radius: on iOS 26 the system popover
+//   background is Liquid Glass automatically, and the arrow is part of that
+//   same chrome.
 // - iPhone compact size class: UIAdaptivePresentationControllerDelegate
 //   returns `.none` so the popover stays a popover instead of adapting to a
-//   sheet. This is public API available since iOS 8.
-// - Sizing: fixed content width (280pt), adaptive height up to 300pt, long
-//   content scrolls inside a UIScrollView.
+//   sheet. The presenter is a long-lived singleton, so the delegate
+//   outlives every presentation.
+// - Sizing: fixed content width 280pt (inside the 260-300pt target band),
+//   height fitted to the text and capped at 300pt; longer text scrolls
+//   inside a UIScrollView. Short footnotes produce a visibly shorter popover.
+// - Outside tap: consumed by the system presentation (it never reaches the
+//   underlying reader gestures); `onSystemDismiss` notifies JS so its
+//   bookkeeping stays in sync.
+// - At most one popover exists at a time: presenting a new one dismisses
+//   any current one first, which prevents "already presenting" warnings and
+//   view-controller leaks.
 
 @MainActor
-final class ReaderPopoverSpikePresenter: NSObject {
+final class ReaderPopoverPresenter: NSObject {
 
-  static let shared = ReaderPopoverSpikePresenter()
+  static let shared = ReaderPopoverPresenter()
 
   private weak var presentedPopover: UIViewController?
+
+  /// Called when the system dismisses the popover on its own (outside tap,
+  /// swipe). Set by the module; the module forwards it to JS as an event.
+  var onSystemDismiss: (() -> Void)?
 
   private override init() {
     super.init()
   }
 
-  /// Presents the spike popover anchored at `anchorRect`.
+  /// Presents the footnote popover anchored at `anchorRect`.
   ///
-  /// - Parameter anchorRect: Rect in **window points** (the same space as RN
-  ///   `Dimensions.get('window')`). Converted into the source view's
-  ///   coordinates before being assigned to `sourceRect`.
-  func present(from presentingVC: UIViewController, anchorRect: CGRect, text: String) {
+  /// - Parameter anchorRect: Rect in **native window points** (identical to
+  ///   RN `Dimensions.get('window')` points — no scale multiplication).
+  ///   Converted into the source view's coordinates before being assigned
+  ///   to `sourceRect`.
+  func present(
+    from presentingVC: UIViewController,
+    anchorRect: CGRect,
+    text: String,
+    userInterfaceStyle: UIUserInterfaceStyle
+  ) throws {
     dismiss(animated: false)
 
-    let content = ReaderPopoverSpikeContentViewController(text: text)
+    let content = ReaderPopoverFootnoteViewController(
+      text: text,
+      userInterfaceStyle: userInterfaceStyle
+    )
     content.modalPresentationStyle = .popover
 
     guard let popover = content.popoverPresentationController else {
-      return
+      throw ReaderPopoverError.presentationFailed("popoverPresentationController is nil")
     }
     popover.delegate = self
 
@@ -47,13 +68,13 @@ final class ReaderPopoverSpikePresenter: NSObject {
     }
     popover.sourceView = sourceView
     popover.sourceRect = sourceRect
-    // Explicitly .any: the system picks up/down/left/right automatically and
-    // keeps the popover inside the screen edges.
+    // Explicitly .any: the system picks up/down/left/right automatically
+    // and keeps the popover inside the screen edges. Never hard-code a
+    // direction here.
     popover.permittedArrowDirections = .any
 
-    // NOTE: deliberately no backgroundView / custom chrome here. The goal of
-    // the spike is to verify that the *system default* popover is Liquid Glass
-    // with a matching arrow.
+    // NOTE: deliberately no backgroundView / custom chrome. The system
+    // default popover is Liquid Glass on iOS 26 with a matching arrow.
 
     presentingVC.present(content, animated: true)
     presentedPopover = content
@@ -69,7 +90,7 @@ final class ReaderPopoverSpikePresenter: NSObject {
 
 // MARK: - UIPopoverPresentationControllerDelegate
 
-extension ReaderPopoverSpikePresenter: UIPopoverPresentationControllerDelegate {
+extension ReaderPopoverPresenter: UIPopoverPresentationControllerDelegate {
 
   /// Keeps the popover as a popover on iPhone (compact size classes) instead
   /// of the default adaptation to a fullscreen sheet.
@@ -83,21 +104,28 @@ extension ReaderPopoverSpikePresenter: UIPopoverPresentationControllerDelegate {
   func popoverPresentationControllerDidDismissPopover(
     _ popoverPresentationController: UIPopoverPresentationController
   ) {
-    // Outside-tap dismiss: drop our reference so the next present() starts clean.
+    // System-initiated dismiss (outside tap / swipe): drop our reference so
+    // the next present() starts clean, and tell JS so it can clear its own
+    // "currently shown" state.
     presentedPopover = nil
+    onSystemDismiss?()
   }
 }
 
 // MARK: - Content view controller
 
-/// Plain-text footnote body for the spike.
+/// Plain-text footnote body.
 ///
 /// - Width: fixed 280pt (inside the 260-300pt target band).
 /// - Height: fitted to the text, capped at 300pt; longer text scrolls inside.
 /// - Font: system 16pt; color: `.label` (semantic, auto light/dark).
+/// - `overrideUserInterfaceStyle` follows the Reader's own appearance
+///   (the app forces UIUserInterfaceStyle=Light, so without this the popover
+///   could never match Reader dark mode).
 /// - Background: untouched so the system popover chrome (Liquid Glass on
 ///   iOS 26) shows through.
-final class ReaderPopoverSpikeContentViewController: UIViewController {
+/// - VoiceOver: `accessibilityViewIsModal` keeps focus inside while visible.
+final class ReaderPopoverFootnoteViewController: UIViewController {
 
   private static let contentWidth: CGFloat = 280
   private static let maxContentHeight: CGFloat = 300
@@ -105,9 +133,11 @@ final class ReaderPopoverSpikeContentViewController: UIViewController {
 
   private let text: String
 
-  init(text: String) {
+  init(text: String, userInterfaceStyle: UIUserInterfaceStyle) {
     self.text = text
     super.init(nibName: nil, bundle: nil)
+    self.overrideUserInterfaceStyle = userInterfaceStyle
+    self.accessibilityViewIsModal = true
   }
 
   @available(*, unavailable)
@@ -120,8 +150,6 @@ final class ReaderPopoverSpikeContentViewController: UIViewController {
 
     let scrollView = UIScrollView()
     scrollView.translatesAutoresizingMaskIntoConstraints = false
-    // VoiceOver: the scroll view exposes the label; no extra work needed for
-    // the spike, but keep scrolling available to accessibility.
     view.addSubview(scrollView)
 
     let label = UILabel()

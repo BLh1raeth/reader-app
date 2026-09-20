@@ -1,1 +1,0 @@
-{"description":"SPIKE-ONLY: native UIPopoverPresentationController + Liquid Glass feasibility test. Not wired to the real reader footnote flow. Remove after the spike.","main":"index.ts","name":"reader-popover-spike","private":true,"version":"1.0.0"}

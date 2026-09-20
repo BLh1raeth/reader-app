@@ -3,13 +3,13 @@ require 'json'
 package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
 
 Pod::Spec.new do |s|
-  s.name           = 'ReaderPopoverSpike'
+  s.name           = 'ReaderPopover'
   s.version        = package['version']
   s.summary        = package['description']
   s.description    = package['description']
   s.license        = 'MIT'
   s.author         = 'Reader App'
-  s.homepage       = 'https://localhost.invalid/reader-popover-spike'
+  s.homepage       = 'https://localhost.invalid/reader-popover'
   s.platforms      = { :ios => '16.4' }
   s.swift_version  = '5.9'
   s.source         = { :path => '.' }
