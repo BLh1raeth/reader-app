@@ -96,23 +96,6 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
   const settingsApplicationRef = useRef<Promise<void>>(Promise.resolve());
   const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest });
   callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest };
-  // TEMP DEV diagnostic for the open-animation replay investigation.
-  const mountIdRef = useRef(0);
-  if (mountIdRef.current === 0) {
-    mountIdRef.current = Math.floor(Math.random() * 1e9);
-  }
-  useEffect(() => {
-    if (__DEV__) {
-      // eslint-disable-next-line no-console
-      console.log('[DOM_LIFECYCLE] mount', JSON.stringify({ mountId: mountIdRef.current }));
-    }
-    return () => {
-      if (__DEV__) {
-        // eslint-disable-next-line no-console
-        console.log('[DOM_LIFECYCLE] unmount', JSON.stringify({ mountId: mountIdRef.current }));
-      }
-    };
-  }, []);
 
   useEffect(() => {
     document.documentElement.lang = 'zh-CN';
@@ -181,16 +164,6 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
 
   useEffect(() => {
     const nextSource = source;
-    if (__DEV__) {
-      // eslint-disable-next-line no-console
-      console.log('[DOM_LIFECYCLE] source-effect', JSON.stringify({
-        mountId: mountIdRef.current,
-        hasSource: Boolean(nextSource),
-        sessionId: nextSource?.sessionId ?? null,
-        loadedSession: loadedSessionRef.current,
-        hasHost: Boolean(hostRef.current),
-      }));
-    }
     if (!nextSource || loadedSessionRef.current === nextSource.sessionId || !hostRef.current) return;
     let active = true;
     void callbacksRef.current.onDiagnostic({ event: 'EPUB_TRANSFER_END' });
