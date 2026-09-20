@@ -215,8 +215,8 @@ function isFootnoteTargetElement(element: Element): boolean {
 // over instead of jumping to the chapter end. Conservative by design:
 // every base condition must hold, plus at least one footnote signal.
 
-/** Marker-like labels: digits, [1], (1), superscript ¹²³, *, †, ‡. */
-const FOOTNOTE_HEURISTIC_MARKER_RE = /^[0-9¹²³⁴⁵⁶⁷⁸⁹⁰\s.[\]()\-–—*†‡]+$/;
+/** Marker-like labels: digits, [1], (1), 〔1〕, superscript ¹²³, *, †, ‡. */
+const FOOTNOTE_HEURISTIC_MARKER_RE = /^[0-9¹²³⁴⁵⁶⁷⁸⁹⁰\s.[\]()\-–—*†‡〔〕【】〈〉《》]+$/;
 /** Section headings that suggest a notes area: 注/释/footnote/endnote. */
 const FOOTNOTE_NOTES_HEADING_RE = /注|释|footnote|endnote/i;
 /** id/class hints: footnote, endnote, fn1, note-2 … */
@@ -234,14 +234,67 @@ function isBacklinkAnchor(anchor: HTMLAnchorElement): boolean {
   return FOOTNOTE_BACKLINK_ARROWS.has((anchor.textContent ?? '').trim());
 }
 
-/** True when the target contains a back-to-text link (strong footnote signal). */
-function footnoteTargetHasBacklink(target: Element): boolean {
+/**
+ * Real-world footnote targets are often marker anchors (`<a id="fn1">`, or
+ * the backlink itself carrying the id) rather than the footnote body.
+ * Promote text-less anchor targets to the enclosing block so extraction and
+ * heuristics operate on the actual note content.
+ */
+function resolveFootnoteBody(target: Element): Element {
+  if (target.tagName.toLowerCase() !== 'a') return target;
+  const label = (target.textContent ?? '').trim();
+  // An anchor carrying real text is the content itself; a marker-like (or
+  // empty) anchor is just a marker — delegate to the enclosing block.
+  const isMarker = label === ''
+    || label.length < FOOTNOTE_HEURISTIC_MIN_TEXT
+    || FOOTNOTE_HEURISTIC_MARKER_RE.test(label);
+  if (!isMarker) return target;
+  const parent = target.closest('p,li,aside,div,section,blockquote,dd');
+  return parent && parent !== target ? parent : target;
+}
+
+/**
+ * True when the target contains a back-to-text link. Besides explicit
+ * backlink semantics and arrow labels, recognizes mutual linkage: a link
+ * whose fragment equals the citing anchor's own id (e.g. `<a class="hl"
+ * href="#id0">` inside the note citing `<a id="id0">`). Sloppy real-world
+ * books use this instead of any backlink markup.
+ */
+function footnoteTargetHasBacklink(target: Element, anchorId: string | null): boolean {
   const links = target.querySelectorAll('a[href]');
   for (const link of Array.from(links)) {
     const href = link.getAttribute('href') ?? '';
     if (FOOTNOTE_EXTERNAL_SCHEME_RE.test(href)) continue;
-    if (href.indexOf('#') < 0) continue;
+    const hashIndex = href.indexOf('#');
+    if (hashIndex < 0) continue;
     if (isBacklinkAnchor(link as HTMLAnchorElement)) return true;
+    if (anchorId && decodeFootnoteFragment(href.slice(hashIndex + 1)) === anchorId) return true;
+  }
+  return false;
+}
+
+/**
+ * True when the element sits inside a footnote area: explicit footnote
+ * semantics on self/ancestors, or a "notes" label block (e.g.
+ * `<p><span>注 释</span></p>`, `<h2>Footnotes</h2>`) among preceding
+ * siblings. Real-world books often use flat structures with no section
+ * wrapper, so the sibling scan covers that. Used to keep backlink taps
+ * (inside the notes) on default navigation.
+ */
+function isInFootnoteArea(element: Element): boolean {
+  let el: Element | null = element;
+  while (el && el.tagName.toLowerCase() !== 'body') {
+    if (getFootnoteSemanticType(el)) return true;
+    el = el.parentElement;
+  }
+  const block = element.closest('p,li,aside,div,section,blockquote,dd');
+  let sibling: Element | null = block?.previousElementSibling ?? null;
+  while (sibling) {
+    const tag = sibling.tagName.toLowerCase();
+    const text = (sibling.textContent ?? '').replace(/[\s\u3000]+/g, '');
+    if (text.length > 0 && text.length <= 16 && FOOTNOTE_NOTES_HEADING_RE.test(text)) return true;
+    if (/^h[1-6]$/.test(tag)) return false;
+    sibling = sibling.previousElementSibling;
   }
   return false;
 }
@@ -285,13 +338,16 @@ function isHeuristicFootnoteReference(
   target: Element,
 ): boolean {
   if (isBacklinkAnchor(anchor)) return false;
+  // A tap inside the notes area is a backlink (or nested content), never a
+  // new reference — leave it on default navigation.
+  if (isInFootnoteArea(anchor)) return false;
   const label = (anchor.textContent ?? '').trim();
   if (label === '' || label.length > 8 || !FOOTNOTE_HEURISTIC_MARKER_RE.test(label)) return false;
   if (FOOTNOTE_HEURISTIC_BAD_TARGET_RE.test(target.tagName)) return false;
   const text = (target.textContent ?? '').replace(/\s+/g, ' ').trim();
   if (text.length < FOOTNOTE_HEURISTIC_MIN_TEXT) return false;
   return (
-    footnoteTargetHasBacklink(target)
+    footnoteTargetHasBacklink(target, anchor.getAttribute('id'))
     || footnoteTargetInNotesSection(target)
     || footnoteTargetIdClassHint(target)
   );
@@ -301,8 +357,10 @@ function isHeuristicFootnoteReference(
  * Strip backlinks ("↩", epub:type="backlink", role="doc-backlink"): closing
  * the popover already returns the reader to the original position, so a
  * back-to-text link inside the popover is meaningless.
+ * `citingAnchorId` catches mutual backlinks with no backlink markup: any
+ * same-document link pointing back at the citing anchor's own id.
  */
-function cleanFootnoteClone(clone: Element): void {
+function cleanFootnoteClone(clone: Element, citingAnchorId?: string | null): void {
   for (const backlink of Array.from(clone.querySelectorAll('[epub\\:type="backlink"], [role="doc-backlink"]'))) {
     backlink.remove();
   }
@@ -313,6 +371,28 @@ function cleanFootnoteClone(clone: Element): void {
       anchor.remove();
     } else if (href.startsWith('#') && FOOTNOTE_BACKLINK_ARROWS.has(label)) {
       anchor.remove();
+    } else if (citingAnchorId) {
+      const hashIndex = href.indexOf('#');
+      if (hashIndex >= 0 && decodeFootnoteFragment(href.slice(hashIndex + 1)) === citingAnchorId) {
+        anchor.remove();
+      }
+    }
+  }
+  for (const backlink of Array.from(clone.querySelectorAll('[epub\\:type="backlink"], [role="doc-backlink"]'))) {
+    backlink.remove();
+  }
+  for (const anchor of Array.from(clone.querySelectorAll('a'))) {
+    const href = anchor.getAttribute('href') ?? '';
+    const label = (anchor.textContent ?? '').trim();
+    if (anchor.getAttribute('epub:type') === 'backlink' || anchor.getAttribute('role') === 'doc-backlink') {
+      anchor.remove();
+    } else if (href.startsWith('#') && FOOTNOTE_BACKLINK_ARROWS.has(label)) {
+      anchor.remove();
+    } else if (citingAnchorId) {
+      const hashIndex = href.indexOf('#');
+      if (hashIndex >= 0 && decodeFootnoteFragment(href.slice(hashIndex + 1)) === citingAnchorId) {
+        anchor.remove();
+      }
     }
   }
   for (const inert of Array.from(clone.querySelectorAll('script, style, template, iframe, object, embed, audio, video, form, input, button, select, textarea'))) {
@@ -446,9 +526,13 @@ function footnoteRichTextToHtml(nodes: FootnoteRichTextNode[]): string {
   }).join('');
 }
 
-function extractFootnoteContent(target: Element, anchorLabel: string): { text: string; richText: FootnoteRichTextNode[]; html: string } {
+function extractFootnoteContent(
+  target: Element,
+  anchorLabel: string,
+  citingAnchorId?: string | null,
+): { text: string; richText: FootnoteRichTextNode[]; html: string } {
   const clone = target.cloneNode(true) as Element;
-  cleanFootnoteClone(clone);
+  cleanFootnoteClone(clone, citingAnchorId);
   stripLeadingFootnoteNumber(clone, anchorLabel);
   const richText = Array.from(clone.childNodes).flatMap(footnoteNodeToRichText);
   const text = footnoteRichTextToPlainText(richText);
@@ -1331,7 +1415,7 @@ export class FoliateEpubEngineAdapter {
     if (!ref.crossDocument && ref.targetElement) {
       // Never swallow a tap: if the footnote has no extractable content,
       // let the EPUB's default anchor navigation proceed untouched.
-      if (!extractFootnoteContent(ref.targetElement, anchorLabel).text) {
+      if (!extractFootnoteContent(ref.targetElement, anchorLabel, anchor.getAttribute('id')).text) {
         if (__DEV__) console.log('[FOOTNOTE_EMPTY]', JSON.stringify({ rawHref: ref.rawHref }));
         return;
       }
@@ -1446,9 +1530,10 @@ export class FoliateEpubEngineAdapter {
       // references (plain `<a href="#fn1">1</a>` in real-world books). The
       // empty-content guard in the click handler still applies, so a tap is
       // never swallowed when nothing extractable exists.
-      if (targetElement && isHeuristicFootnoteReference(anchor, targetElement)) {
+      const body = targetElement ? resolveFootnoteBody(targetElement) : null;
+      if (body && isHeuristicFootnoteReference(anchor, body)) {
         if (__DEV__) console.log('[FOOTNOTE_HEURISTIC]', JSON.stringify({ rawHref, sectionIndex }));
-        return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: 'heuristic', targetElement };
+        return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: 'heuristic', targetElement: body };
       }
       return null;
     }
@@ -1508,7 +1593,7 @@ export class FoliateEpubEngineAdapter {
       if (__DEV__) console.log('[FOOTNOTE_ANCHOR_GONE]', JSON.stringify({ rawHref: ref.rawHref }));
       return;
     }
-    const { text, richText, html } = extractFootnoteContent(targetElement, anchor.textContent ?? '');
+    const { text, richText, html } = extractFootnoteContent(targetElement, anchor.textContent ?? '', anchor.getAttribute('id'));
     if (!text) {
       if (__DEV__) console.log('[FOOTNOTE_EMPTY]', JSON.stringify({ rawHref: ref.rawHref, crossDocument: ref.crossDocument }));
       // Fallback: the EPUB's natural navigation to the resolved target, so
