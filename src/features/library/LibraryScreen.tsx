@@ -264,15 +264,26 @@ export default function LibraryScreen() {
   }, [router]);
 
   // Tear down a completed opening transition once the reader has taken over.
+  // NOTE: blur fires when navigation completes, which can be BEFORE the
+  // reader's first paint. Tearing down immediately exposes the library grid
+  // for a few frames (perceived as a "flash" or "animation replay"). Hold the
+  // overlay briefly after blur; it's invisible behind the opaque reader.
   useFocusEffect(useCallback(() => {
+    if (transitionTeardownTimeout.current) {
+      clearTimeout(transitionTeardownTimeout.current);
+      transitionTeardownTimeout.current = null;
+    }
     return () => {
       if (__DEV__) console.log('[OPEN_TRANSITION_BLUR_CLEANUP]');
       if (transitionTeardownTimeout.current) {
         clearTimeout(transitionTeardownTimeout.current);
         transitionTeardownTimeout.current = null;
       }
-      setReaderOpeningTransition(null);
-      readerOpeningPendingRef.current = false;
+      transitionTeardownTimeout.current = setTimeout(() => {
+        transitionTeardownTimeout.current = null;
+        setReaderOpeningTransition(null);
+        readerOpeningPendingRef.current = false;
+      }, 1000);
     };
   }, []));
 
