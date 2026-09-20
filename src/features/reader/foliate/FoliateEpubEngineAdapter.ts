@@ -2632,8 +2632,10 @@ export class FoliateEpubEngineAdapter {
       }
       const meaningfulChildren = Array.from(container.childNodes).filter((node) => {
         if (node.nodeType === Node.TEXT_NODE) return Boolean(node.textContent?.trim());
-        if (!(node instanceof Element)) return false;
-        if (node === media || node.contains(media)) return false;
+        // Cross-window safe: childNodes come from the section iframe's
+        // document, where `instanceof Element` (host window) is always false.
+        if (node.nodeType !== 1) return false;
+        if (node === media || (node as Element).contains(media)) return false;
         return true;
       });
       if (meaningfulChildren.length > 0) return;
