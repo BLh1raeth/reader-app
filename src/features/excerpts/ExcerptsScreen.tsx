@@ -23,12 +23,22 @@ const GROUP_LABELS = {
   monthTitle: uiText.excerpts.monthTitle,
 };
 
-const CELL_RADIUS = 12;
-const CONTENT_HORIZONTAL_PADDING = 16;
+const CELL_RADIUS = 20;
+const CONTENT_HORIZONTAL_PADDING = 20;
 
 function sourceLine(item: ExcerptFeedItem): string {
   const book = `《${item.bookTitle}》`;
   return item.chapterTitle ? `${book} · ${item.chapterTitle}` : book;
+}
+
+/** 备忘录风格的日期：M/d/yy，如 8/26/26。 */
+function formatNotesDate(isoString: string): string {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return '';
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const year = String(date.getFullYear()).slice(-2);
+  return `${month}/${day}/${year}`;
 }
 
 function accessibilityLabelFor(item: ExcerptFeedItem): string {
@@ -59,27 +69,34 @@ function ExcerptFeedItemRow({
     >
       <Text
         style={styles.quote}
-        numberOfLines={2}
-        ellipsizeMode="tail"
-      >
-        {item.quoteText}
-      </Text>
-      {item.noteText ? (
-        <Text
-          style={styles.notePreview}
-          numberOfLines={2}
-          ellipsizeMode="tail"
-        >
-          {item.noteText}
-        </Text>
-      ) : null}
-      <Text
-        style={styles.source}
         numberOfLines={1}
         ellipsizeMode="tail"
       >
-        {sourceLine(item)}
+        {item.noteText ?? item.quoteText}
       </Text>
+      <Text
+        style={styles.meta}
+        numberOfLines={1}
+        ellipsizeMode="tail"
+      >
+        {`${formatNotesDate(item.createdAt)}  《${item.bookTitle}》`}
+      </Text>
+      {item.chapterTitle ? (
+        <View style={styles.chapterRow}>
+          <SymbolView
+            name="book.closed"
+            size={14}
+            tintColor={tokens.colors.secondaryLabel}
+          />
+          <Text
+            style={[styles.meta, styles.chapterText]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {item.chapterTitle}
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -177,15 +194,15 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: tokens.colors.label,
-    fontSize: tokens.typography.sectionTitle,
+    fontSize: 22,
     fontWeight: '700',
-    marginTop: 20,
+    marginTop: 28,
     marginBottom: 8,
   },
   item: {
     backgroundColor: tokens.colors.groupedCell,
     paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
   itemFirst: {
     borderTopLeftRadius: CELL_RADIUS,
@@ -201,7 +218,7 @@ const styles = StyleSheet.create({
   separator: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: tokens.colors.separator,
-    // 从正文内容左边界开始，不横贯全屏
+    // 从正文内容左边界开始，不横贯全屏（备忘录风格）
     marginLeft: CONTENT_HORIZONTAL_PADDING,
   },
   sectionGap: {
@@ -209,20 +226,25 @@ const styles = StyleSheet.create({
   },
   quote: {
     color: tokens.colors.label,
-    fontSize: tokens.typography.body,
+    fontSize: 17,
+    fontWeight: '600',
     lineHeight: 22,
   },
-  notePreview: {
+  meta: {
     color: tokens.colors.secondaryLabel,
     fontSize: 15,
     lineHeight: 20,
-    marginTop: 4,
+    marginTop: 2,
   },
-  source: {
-    color: tokens.colors.secondaryLabel,
-    fontSize: tokens.typography.metadata,
-    lineHeight: 18,
-    marginTop: 4,
+  chapterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  chapterText: {
+    marginTop: 0,
+    marginLeft: 4,
+    flex: 1,
   },
   emptyContainer: {
     alignItems: 'center',
