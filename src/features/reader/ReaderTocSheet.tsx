@@ -201,35 +201,31 @@ export function ReaderTocSheet({
 
   const scrollToCurrent = useCallback(() => {
     if (!isPresented || mode !== 'toc' || currentIndex < 0 || listViewportHeight <= 0 || didAutoScrollRef.current) {
-      return undefined;
+      return;
     }
-    // BottomSheet 是原生 sheet：isPresented=true 到动画播完、列表真正量好高度需要几百毫秒。
-    // 旧代码只等一帧（16ms）就滚，原生 scrollToOffset 会静默失败，而标记已提前设为 true，导致永不重试。
-    // 改为延迟到动画完成后执行，成功执行后才标记。
-    const timer = setTimeout(() => {
-      const list = listRef.current;
-      if (!list) {
-        // 极端情况：拿不到列表引用也要显示出来，不能一直空白
-        setTocHidden(false);
-        return;
-      }
-      const itemOffset = listTopPadding + currentIndex * TOC_ROW_HEIGHT;
-      const centeredOffset = Math.max(0, itemOffset - centerInset);
-      list.scrollToOffset({ animated: false, offset: centeredOffset });
-      didAutoScrollRef.current = true;
-      // 滚动是同步生效的，下一帧显示时已经是居中好的位置
-      requestAnimationFrame(() => setTocHidden(false));
-    }, 400);
-    return () => clearTimeout(timer);
+    const list = listRef.current;
+    if (!list) return;
+    didAutoScrollRef.current = true;
+    const itemOffset = listTopPadding + currentIndex * TOC_ROW_HEIGHT;
+    const centeredOffset = Math.max(0, itemOffset - centerInset);
+    list.scrollToOffset({ animated: false, offset: centeredOffset });
+    // 滚动是同步生效的，下一帧显示时已经是居中好的位置
+    requestAnimationFrame(() => setTocHidden(false));
   }, [centerInset, currentIndex, isPresented, listTopPadding, listViewportHeight, mode]);
+
+  // 原生 contentSize 就绪（padding 已应用）时立刻滚，比固定等 400ms 快得多
+  const handleContentSizeChange = useCallback(() => {
+    scrollToCurrent();
+  }, [scrollToCurrent]);
 
   useEffect(() => {
     if (!isPresented) return undefined;
-    const cleanup = scrollToCurrent();
+    // 备份：极端情况下 onContentSizeChange 没触发时，300ms 后尝试
+    const backup = setTimeout(() => scrollToCurrent(), 300);
     // 兜底：1.2 秒后强制显示，避免任何极端情况下列表一直空白
     const fallback = setTimeout(() => setTocHidden(false), 1200);
     return () => {
-      cleanup?.();
+      clearTimeout(backup);
       clearTimeout(fallback);
     };
   }, [isPresented, scrollToCurrent]);
@@ -303,6 +299,7 @@ export function ReaderTocSheet({
                   initialNumToRender={18}
                   keyExtractor={(item) => item.key}
                   ListEmptyComponent={<View style={styles.emptyState}><SymbolView name="list.bullet" size={28} tintColor="#8e8e93" weight="regular" /><Text style={styles.emptyText}>{uiText.navigation.noToc}</Text></View>}
+                  onContentSizeChange={handleContentSizeChange}
                   onLayout={(event) => setListViewportHeight(event.nativeEvent.layout.height)}
                   ref={listRef}
                   removeClippedSubviews
