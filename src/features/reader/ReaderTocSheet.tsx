@@ -195,17 +195,27 @@ export function ReaderTocSheet({
   }, [isPresented, modeProgress]);
 
   const scrollToCurrent = useCallback(() => {
-    if (!isPresented || mode !== 'toc' || currentIndex < 0 || listViewportHeight <= 0 || didAutoScrollRef.current) return;
-    didAutoScrollRef.current = true;
-    const itemOffset = listTopPadding + currentIndex * TOC_ROW_HEIGHT;
-    const centeredOffset = Math.max(0, itemOffset - centerInset);
-    requestAnimationFrame(() => listRef.current?.scrollToOffset({ animated: false, offset: centeredOffset }));
+    if (!isPresented || mode !== 'toc' || currentIndex < 0 || listViewportHeight <= 0 || didAutoScrollRef.current) {
+      return undefined;
+    }
+    // BottomSheet 是原生 sheet：isPresented=true 到动画播完、列表真正量好高度需要几百毫秒。
+    // 旧代码只等一帧（16ms）就滚，原生 scrollToOffset 会静默失败，而标记已提前设为 true，导致永不重试。
+    // 改为延迟到动画完成后执行，成功执行后才标记。
+    const timer = setTimeout(() => {
+      const list = listRef.current;
+      if (!list) return;
+      const itemOffset = listTopPadding + currentIndex * TOC_ROW_HEIGHT;
+      const centeredOffset = Math.max(0, itemOffset - centerInset);
+      list.scrollToOffset({ animated: false, offset: centeredOffset });
+      didAutoScrollRef.current = true;
+    }, 400);
+    return () => clearTimeout(timer);
   }, [centerInset, currentIndex, isPresented, listTopPadding, listViewportHeight, mode]);
 
   useEffect(() => {
     if (!isPresented) return undefined;
-    const frame = requestAnimationFrame(scrollToCurrent);
-    return () => cancelAnimationFrame(frame);
+    const cleanup = scrollToCurrent();
+    return cleanup;
   }, [isPresented, scrollToCurrent]);
 
   const toggleMode = useCallback(() => {
