@@ -799,6 +799,9 @@ export class FoliateEpubEngineAdapter {
     private readonly onToc: (toc: ReaderTocItem[]) => void,
     private readonly onSelectionChange: (selection: ReaderSelectionPayload | null) => void,
     private readonly onFootnoteOpen: (payload: FootnotePayload) => void,
+    // Synchronous "a footnote popover is on screen" signal from the host.
+    // Read on every pointer-up so taps are classified modally while open.
+    private readonly isFootnotePopoverOpen: () => boolean,
   ) {}
 
   async open(input: FoliateOpenInput): Promise<ReaderLocation> {
@@ -2038,6 +2041,16 @@ export class FoliateEpubEngineAdapter {
     }
     if (turnInFlight) return;
     this.interactionState = 'idle';
+    // Modal footnote state: while a footnote popover (native or RN fallback)
+    // is on screen, a tap only dismisses it — the system consumes the outside
+    // tap for the native popover and the backdrop pressable handles it for
+    // the fallback. Swallow every reader gesture here so the dismiss tap can
+    // never turn the page or toggle chrome; normal gestures resume on the
+    // next tap after dismissal.
+    if (this.isFootnotePopoverOpen()) {
+      if (__DEV__) console.log('[FOOTNOTE_MODAL_SUPPRESS]');
+      return;
+    }
     if (action === 'chrome') this.onCenterTap();
     else if (action === 'prev' || action === 'next') {
       void this.requestPageTurn(action);

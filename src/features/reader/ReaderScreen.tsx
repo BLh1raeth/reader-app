@@ -483,6 +483,11 @@ export default function ReaderScreen() {
   const [searchInitialQueryRequest, setSearchInitialQueryRequest] = useState<ReaderSearchInitialQueryRequest | null>(null);
   const [activeSelection, setActiveSelection] = useState<ReaderSelectionPayload | null>(null);
   const [footnotePopover, setFootnotePopover] = useState<FootnotePayload | null>(null);
+  // True while any footnote popover is on screen (native or RN fallback).
+  // Forwarded to the DOM gesture layer as a plain prop so taps are classified
+  // synchronously: while open, a tap only dismisses the popover and never
+  // turns the page or toggles chrome. Updated at every open/close site below.
+  const [footnoteModalOpen, setFootnoteModalOpen] = useState(false);
   // Anchor of the currently shown *native* footnote popover (null when none
   // or when the RN fallback overlay is used). System outside-tap dismisses
   // are reported back through the native dismiss event below.
@@ -507,8 +512,10 @@ export default function ReaderScreen() {
       ) {
         // Re-tapping the same anchor toggles the popover closed.
         if (__DEV__) console.log('[FOOTNOTE_CLOSE]');
+        setFootnoteModalOpen(false);
         return null;
       }
+      setFootnoteModalOpen(true);
       return payload;
     });
   }, []);
@@ -551,6 +558,7 @@ export default function ReaderScreen() {
         // At most one native popover ever exists; never stack a second one.
         if (__DEV__) console.log('[FOOTNOTE_CLOSE]');
         nativeFootnoteAnchorRef.current = null;
+        setFootnoteModalOpen(false);
         try {
           await dismissNativeFootnotePopover();
         } catch (error) {
@@ -568,6 +576,7 @@ export default function ReaderScreen() {
           appearance: readerAppearance,
         });
         nativeFootnoteAnchorRef.current = payload.anchorRect;
+        setFootnoteModalOpen(true);
         if (__DEV__) console.log('[FOOTNOTE_OPEN_NATIVE]');
         return;
       } catch (error) {
@@ -584,6 +593,7 @@ export default function ReaderScreen() {
     if (__DEV__) console.log('[FOOTNOTE_CLOSE]');
     // Clear native first, then the RN fallback state; at most one is ever set.
     nativeFootnoteAnchorRef.current = null;
+    setFootnoteModalOpen(false);
     dismissNativeFootnotePopover().catch((error) => {
       if (__DEV__) console.log('[FOOTNOTE_NATIVE_DISMISS_FAILED]', String(error));
     });
@@ -598,6 +608,7 @@ export default function ReaderScreen() {
     const subscription = addNativeFootnotePopoverDismissListener(() => {
       if (__DEV__) console.log('[FOOTNOTE_CLOSE]');
       nativeFootnoteAnchorRef.current = null;
+      setFootnoteModalOpen(false);
     });
     return () => subscription.remove();
   }, []);
@@ -607,6 +618,7 @@ export default function ReaderScreen() {
   useEffect(() => {
     return () => {
       nativeFootnoteAnchorRef.current = null;
+      setFootnoteModalOpen(false);
       dismissNativeFootnotePopover().catch(() => undefined);
     };
   }, [bookId]);
@@ -616,6 +628,7 @@ export default function ReaderScreen() {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState !== 'active') {
         nativeFootnoteAnchorRef.current = null;
+        setFootnoteModalOpen(false);
         dismissNativeFootnotePopover().catch(() => undefined);
       }
     });
@@ -628,6 +641,7 @@ export default function ReaderScreen() {
       nativeFootnoteAnchorRef.current = null;
       dismissNativeFootnotePopover().catch(() => undefined);
       setFootnotePopover(null);
+      setFootnoteModalOpen(false);
     }
   }, [tocSheetPresented, settingsSheetPresented, searchSheetPresented]);
   const [excerptSaving, setExcerptSaving] = useState(false);
@@ -1449,6 +1463,7 @@ export default function ReaderScreen() {
           onSearchNavigationResult={handleSearchNavigationResult}
           onSelectionChange={handleSelectionChange}
           onFootnoteOpen={handleFootnoteOpen}
+          footnoteModalOpen={footnoteModalOpen}
           dom={{
             scrollEnabled: false,
             style: [styles.domReader, { backgroundColor: readerColors.background }],
