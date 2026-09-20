@@ -1996,7 +1996,13 @@ export class FoliateEpubEngineAdapter {
     const screenDeltaY = event.screenY - session.startScreenY;
     const duration = event.timeStamp - session.startedAt;
     const selectionActive = this.hasActiveSelection(doc);
-    const target = session.target instanceof Element ? session.target : null;
+    // Section documents render inside iframes while this adapter runs in the
+    // host window, so cross-window `instanceof Element` is always false for
+    // `session.target`. Use nodeType (same approach as getSelectionElement)
+    // so taps that start on links/buttons are correctly excluded from the
+    // center-tap chrome gesture; otherwise every footnote tap in the center
+    // zone fired onCenterTap() and chrome flashed before the popover opened.
+    const target = (session.target as Node | null)?.nodeType === 1 ? (session.target as Element) : null;
     const interactiveTarget = Boolean(target?.closest('a, button, input, select, textarea, [role="button"], [contenteditable="true"], audio, video'));
     const contentWidth = doc.defaultView?.innerWidth ?? doc.documentElement.clientWidth;
     // Expo DOM/WebKit reports clientX in the EPUB's scaled column canvas
