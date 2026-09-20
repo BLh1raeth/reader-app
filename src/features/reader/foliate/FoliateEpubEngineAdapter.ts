@@ -762,6 +762,29 @@ function drawSearchResultHighlight(rects: Array<{ left: number; top: number; wid
   return group;
 }
 
+// Phase 1 highlight color: single default blue. The color column already
+// exists in the DB so a future multi-color phase needs no migration.
+const HIGHLIGHT_FILL = '#0A84FF';
+const HIGHLIGHT_OPACITY = '0.28';
+
+function drawHighlightRects(rects: Array<{ left: number; top: number; width: number; height: number }>) {
+  const namespace = 'http://www.w3.org/2000/svg';
+  const group = document.createElementNS(namespace, 'g');
+  group.setAttribute('fill', HIGHLIGHT_FILL);
+  group.setAttribute('opacity', HIGHLIGHT_OPACITY);
+  for (const rect of rects) {
+    const highlight = document.createElementNS(namespace, 'rect');
+    highlight.setAttribute('x', String(rect.left - 1));
+    highlight.setAttribute('y', String(rect.top));
+    highlight.setAttribute('width', String(rect.width + 2));
+    highlight.setAttribute('height', String(rect.height));
+    highlight.setAttribute('rx', '3');
+    highlight.setAttribute('ry', '3');
+    group.append(highlight);
+  }
+  return group;
+}
+
 /** The only formal Reader Core wrapper around foliate-js. */
 export class FoliateEpubEngineAdapter {
   private view: FoliateView | null = null;
@@ -771,6 +794,14 @@ export class FoliateEpubEngineAdapter {
   private gestureCleanups = new Map<Document, () => void>();
   private selectionCleanups = new Map<Document, () => void>();
   private footnoteCleanups = new Map<Document, () => void>();
+  // Highlight paint registry: range CFI -> owning spine section. foliate's
+  // View keeps no persistent annotation list, so the adapter re-applies these
+  // whenever a section document (re)loads (settings change, chapter turn).
+  private highlightRegistry = new Map<string, { sectionIndex: number }>();
+  // Live Range cache per loaded document, captured from the draw-annotation
+  // event. Used for synchronous tap hit-testing; cleared on doc release.
+  private highlightRanges = new Map<Document, Array<{ rangeCfi: string; range: Range }>>();
+  private highlightBubble: { doc: Document; element: HTMLElement } | null = null;
   // A tap that begins with an active text selection is owned by selection
   // dismissal. The click handler consumes this flag so a footnote popover
   // never fires on the same tap (selection > footnote > page tap).
@@ -814,6 +845,9 @@ export class FoliateEpubEngineAdapter {
     // Synchronous "a footnote popover is on screen" signal from the host.
     // Read on every pointer-up so taps are classified modally while open.
     private readonly isFootnotePopoverOpen: () => boolean,
+    // A highlight was deleted from its in-doc bubble. The adapter already
+    // removed the paint; the host persists the deletion to SQLite.
+    private readonly onHighlightDeleteRequest: (rangeCfi: string) => void,
   ) {}
 
   async open(input: FoliateOpenInput): Promise<ReaderLocation> {
@@ -1314,10 +1348,147 @@ export class FoliateEpubEngineAdapter {
     }
   }
 
-  // Permanent EPUB paint remains disabled. Excerpts persist text anchors only;
-  // highlight and note rendering belong to later Annotation Core stages.
-  addAnnotation() { throw new Error('高亮尚未启用。'); }
-  removeAnnotation() { throw new Error('高亮尚未启用。'); }
+  // Highlight paint (Annotation Core phase 1). Paint goes through foliate's
+  // overlayer (SVG rects, pointer-events:none) so the book DOM is never
+  // mutated and CFI stability is unaffected. The registry is the source of
+  // truth for re-painting after section (re)loads.
+  async setHighlights(items: Array<{ rangeCfi: string; sectionIndex: number }>) {
+    this.highlightRegistry = new Map(
+      items.filter((item) => item.rangeCfi.startsWith('epubcfi('))
+        .map((item) => [item.rangeCfi, { sectionIndex: item.sectionIndex }]),
+    );
+    // Re-paint into whatever section is currently loaded; foliate silently
+    // skips annotations whose section has no live overlayer.
+    const view = this.view;
+    if (!view?.addAnnotation) return;
+    for (const rangeCfi of this.highlightRegistry.keys()) {
+      try {
+        await view.addAnnotation({ kind: 'reader-highlight', value: rangeCfi });
+      } catch (error) {
+        if (__DEV__) console.warn('[HIGHLIGHT_PAINT_FAILED]', rangeCfi, error);
+      }
+    }
+  }
+
+  async addAnnotation(rangeCfi: string, sectionIndex: number) {
+    if (!rangeCfi.startsWith('epubcfi(')) return;
+    this.highlightRegistry.set(rangeCfi, { sectionIndex });
+    const view = this.view;
+    if (!view?.addAnnotation) return;
+    try {
+      await view.addAnnotation({ kind: 'reader-highlight', value: rangeCfi });
+    } catch (error) {
+      if (__DEV__) console.warn('[HIGHLIGHT_PAINT_FAILED]', rangeCfi, error);
+    }
+  }
+
+  async removeAnnotation(rangeCfi: string) {
+    this.highlightRegistry.delete(rangeCfi);
+    for (const [doc, items] of this.highlightRanges) {
+      const next = items.filter((item) => item.rangeCfi !== rangeCfi);
+      if (next.length !== items.length) this.highlightRanges.set(doc, next);
+    }
+    this.dismissHighlightBubble();
+    const view = this.view;
+    if (!view?.deleteAnnotation) return;
+    try {
+      await view.deleteAnnotation({ kind: 'reader-highlight', value: rangeCfi });
+    } catch (error) {
+      if (__DEV__) console.warn('[HIGHLIGHT_REMOVE_FAILED]', rangeCfi, error);
+    }
+  }
+
+  private async applyHighlightsForSection(index: number) {
+    const view = this.view;
+    if (!view?.addAnnotation || index < 0) return;
+    for (const [rangeCfi, entry] of this.highlightRegistry) {
+      if (entry.sectionIndex !== index) continue;
+      try {
+        await view.addAnnotation({ kind: 'reader-highlight', value: rangeCfi });
+      } catch (error) {
+        if (__DEV__) console.warn('[HIGHLIGHT_PAINT_FAILED]', rangeCfi, error);
+      }
+    }
+  }
+
+  // Synchronous tap hit-test against the cached live Ranges. Both the tap's
+  // clientX/Y and getClientRects() live in the section iframe's viewport
+  // coordinate space, so they compare directly (no screenX mapping needed).
+  private hitTestHighlight(doc: Document, clientX: number, clientY: number): string | null {
+    const items = this.highlightRanges.get(doc);
+    if (!items || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+    for (const { rangeCfi, range } of items) {
+      let rects: DOMRectList | null = null;
+      try {
+        rects = range.getClientRects();
+      } catch {
+        continue;
+      }
+      for (const rect of Array.from(rects)) {
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+          return rangeCfi;
+        }
+      }
+    }
+    return null;
+  }
+
+  private showHighlightDeleteBubble(doc: Document, rangeCfi: string, clientX: number, clientY: number) {
+    this.dismissHighlightBubble();
+    const bubble = doc.createElement('div');
+    bubble.setAttribute('data-reader-ui', 'true');
+    bubble.setAttribute('data-reader-highlight-bubble', 'true');
+    // position:fixed shares the tap's iframe-viewport coordinate space.
+    bubble.style.cssText = [
+      'position:fixed',
+      'z-index:2147483647',
+      `left:${Math.round(clientX)}px`,
+      `top:${Math.round(clientY)}px`,
+      'transform:translate(-50%,-135%)',
+      'pointer-events:auto',
+    ].join(';');
+    const button = doc.createElement('button');
+    button.type = 'button';
+    button.textContent = '删除';
+    button.style.cssText = [
+      'appearance:none',
+      'border:none',
+      'border-radius:11px',
+      'background:rgba(28,28,30,0.94)',
+      'color:#fff',
+      'font-size:15px',
+      'font-family:-apple-system,system-ui,sans-serif',
+      'padding:9px 20px',
+      'box-shadow:0 4px 16px rgba(0,0,0,0.35)',
+      'cursor:pointer',
+    ].join(';');
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      void this.removeAnnotation(rangeCfi).then(() => {
+        try {
+          this.onHighlightDeleteRequest(rangeCfi);
+        } catch (error) {
+          if (__DEV__) console.warn('[HIGHLIGHT_DELETE_REQUEST_FAILED]', error);
+        }
+      });
+    });
+    bubble.append(button);
+    // data-reader-ui keeps this out of text selection (readSelection filter).
+    doc.body?.append(bubble);
+    this.highlightBubble = { doc, element: bubble };
+  }
+
+  private dismissHighlightBubble() {
+    const bubble = this.highlightBubble;
+    this.highlightBubble = null;
+    try {
+      bubble?.element.remove();
+    } catch {
+      // Already detached with its document.
+    }
+  }
 
   destroy() {
     if (this.view) this.onDiagnostic({ event: 'ENGINE_DESTROY' });
@@ -1350,6 +1521,9 @@ export class FoliateEpubEngineAdapter {
     this.activeSelection = null;
     this.bookId = null;
     this.loadedDocuments.clear();
+    this.dismissHighlightBubble();
+    this.highlightRanges.clear();
+    this.highlightRegistry.clear();
     if (this.view) {
       this.view.removeEventListener('relocate', this.handleRelocate);
       this.view.removeEventListener('load', this.handleDocumentLoad as EventListener);
@@ -1362,11 +1536,29 @@ export class FoliateEpubEngineAdapter {
   }
 
   private readonly handleDrawAnnotation = (event: CustomEvent<{
-    annotation?: { kind?: string };
+    annotation?: { kind?: string; value?: string };
+    doc?: Document;
+    range?: Range;
     draw?: (drawer: typeof drawSearchResultHighlight, options?: object) => void;
   }>) => {
-    if (event.detail?.annotation?.kind !== 'reader-search-result') return;
-    event.detail.draw?.(drawSearchResultHighlight);
+    const kind = event.detail?.annotation?.kind;
+    if (kind === 'reader-search-result') {
+      event.detail.draw?.(drawSearchResultHighlight);
+      return;
+    }
+    if (kind !== 'reader-highlight') return;
+    event.detail.draw?.(drawHighlightRects);
+    // Cache the live Range for synchronous tap hit-testing. foliate's
+    // overlayer keeps its own copy for redraws; this cache is only read.
+    const doc = event.detail?.doc;
+    const range = event.detail?.range;
+    const value = event.detail?.annotation?.value;
+    if (!doc || !range || !value) return;
+    const items = this.highlightRanges.get(doc) ?? [];
+    if (!items.some((item) => item.rangeCfi === value)) {
+      items.push({ rangeCfi: value, range });
+      this.highlightRanges.set(doc, items);
+    }
   };
 
   private async clearSelectedSearchHighlight() {
@@ -1407,6 +1599,8 @@ export class FoliateEpubEngineAdapter {
       this.selectionCleanups.delete(loadedDoc);
       this.footnoteCleanups.get(loadedDoc)?.();
       this.footnoteCleanups.delete(loadedDoc);
+      this.highlightRanges.delete(loadedDoc);
+      if (this.highlightBubble?.doc === loadedDoc) this.highlightBubble = null;
       this.loadedDocuments.delete(loadedDoc);
     }
     if (this.activeSelection && this.activeSelection.doc !== doc) {
@@ -1420,6 +1614,10 @@ export class FoliateEpubEngineAdapter {
     }
     if (!this.selectionCleanups.has(doc)) this.attachSelectionHandlers(doc, index);
     if (!this.footnoteCleanups.has(doc)) this.attachFootnoteHandlers(doc, index);
+    // foliate attaches the section overlayer AFTER the load event
+    // (create-overlayer), so defer highlight paint by a frame; a same-frame
+    // chapter turn makes this a harmless no-op via the section filter.
+    requestAnimationFrame(() => { void this.applyHighlightsForSection(index); });
   };
 
   private attachReaderGestures(doc: Document, index: number) {
@@ -1984,6 +2182,14 @@ export class FoliateEpubEngineAdapter {
   private readonly handlePointerDown = (event: PointerEvent) => {
     const doc = event.currentTarget as Document;
     if (!event.isPrimary || this.reflowing) return;
+    // A tap outside the highlight delete bubble dismisses it. Taps inside
+    // the bubble (the delete button) must not dismiss before click fires.
+    // Cross-window instanceof is unreliable here; guard with nodeType like
+    // the tap-target classification below.
+    const downTarget = (event.target as Node | null)?.nodeType === 1 ? (event.target as Element) : null;
+    if (this.highlightBubble && !downTarget?.closest('[data-reader-highlight-bubble]')) {
+      this.dismissHighlightBubble();
+    }
     const startedWhileTurning = this.interactionState === 'turning';
     this.pointerSession = {
       pointerId: event.pointerId,
@@ -2064,6 +2270,18 @@ export class FoliateEpubEngineAdapter {
     if (this.isFootnotePopoverOpen()) {
       if (__DEV__) console.log('[FOOTNOTE_MODAL_SUPPRESS]');
       return;
+    }
+    // Highlight tap: landing on a painted highlight opens the delete bubble
+    // instead of turning the page or toggling chrome. Selection gestures,
+    // interactive targets, and reflowing states keep their existing paths.
+    if (isTap && !selectionActive && !session.selectionWasActive && !interactiveTarget && !blockedByState
+      && this.view && this.restoreState === 'active') {
+      const hitRangeCfi = this.hitTestHighlight(doc, event.clientX, event.clientY);
+      if (hitRangeCfi) {
+        this.interactionState = 'idle';
+        this.showHighlightDeleteBubble(doc, hitRangeCfi, event.clientX, event.clientY);
+        return;
+      }
     }
     if (action === 'chrome') this.onCenterTap();
     else if (action === 'prev' || action === 'next') {

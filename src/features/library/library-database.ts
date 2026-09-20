@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 
 const DATABASE_NAME = 'reader-library.db';
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -220,6 +220,31 @@ async function bootstrapDatabase() {
           ON reader_excerpts(book_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS reader_excerpts_created_idx
           ON reader_excerpts(created_at DESC);
+        PRAGMA user_version = 13;
+      `);
+    });
+  }
+  if (currentVersion < 14) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.execAsync(`
+        CREATE TABLE IF NOT EXISTS reader_highlights (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+          text TEXT NOT NULL,
+          start_cfi TEXT NOT NULL,
+          end_cfi TEXT NOT NULL,
+          range_cfi TEXT NOT NULL,
+          chapter_title TEXT,
+          section_index INTEGER NOT NULL,
+          color TEXT NOT NULL DEFAULT 'blue',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(book_id, range_cfi)
+        );
+        CREATE INDEX IF NOT EXISTS reader_highlights_book_section_idx
+          ON reader_highlights(book_id, section_index);
+        CREATE INDEX IF NOT EXISTS reader_highlights_book_created_idx
+          ON reader_highlights(book_id, created_at DESC);
         PRAGMA user_version = ${SCHEMA_VERSION};
       `);
     });

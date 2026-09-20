@@ -23,6 +23,8 @@ import type { CoverTone } from '../library/library-types';
 import { bookmarkRepository, type ReaderBookmark } from './bookmark-repository';
 import { bookSearchHistoryRepository, type BookSearchHistoryItem } from './book-search-history-repository';
 import { excerptRepository } from './excerpt-repository';
+import { highlightRepository } from './highlight-repository';
+import type { ReaderHighlightSnapshotItem } from './highlight-repository';
 import type {
   FootnoteAnchorRect,
   FootnotePayload,
@@ -451,8 +453,10 @@ export default function ReaderScreen() {
   const excerptActionPayloadRef = useRef<ReaderSelectionPayload | null>(null);
   const excerptActionPressingRef = useRef(false);
   const excerptSavingRef = useRef(false);
+  const highlightSavingRef = useRef(false);
   const selectionCommandSequenceRef = useRef(0);
   const excerptVerificationSequenceRef = useRef(0);
+  const [highlightSnapshot, setHighlightSnapshot] = useState<ReaderHighlightSnapshotItem[] | null>(null);
   const [chromeMounted, setChromeMounted] = useState(false);
   const [chromeVisible, setChromeVisible] = useState(false);
   const [chromeInteractive, setChromeInteractive] = useState(false);
@@ -767,6 +771,7 @@ export default function ReaderScreen() {
     setExcerptSaving(false);
     setSelectionCommand(null);
     setExcerptVerificationRequest(null);
+    setHighlightSnapshot(null);
   }, [bookId]);
 
   useEffect(() => {
@@ -779,6 +784,22 @@ export default function ReaderScreen() {
     }).catch((error: unknown) => {
       console.warn('[BOOKMARK_LOAD_FAILED]', error);
       if (active) setBookmarksLoaded(true);
+    });
+    return () => { active = false; };
+  }, [bookId]);
+
+  useEffect(() => {
+    if (!bookId) {
+      setHighlightSnapshot(null);
+      return undefined;
+    }
+    let active = true;
+    void highlightRepository.listSnapshotForBook(bookId).then((items) => {
+      if (!active) return;
+      setHighlightSnapshot(items);
+    }).catch((error: unknown) => {
+      console.warn('[HIGHLIGHT_SNAPSHOT_LOAD_FAILED]', error);
+      if (active) setHighlightSnapshot([]);
     });
     return () => { active = false; };
   }, [bookId]);
@@ -1340,9 +1361,55 @@ export default function ReaderScreen() {
     clearReaderSelection();
   }, [clearReaderSelection, openSearch]);
 
-  const onHighlightRequested = useCallback((payload: ReaderSelectionPayload) => {
-    if (__DEV__) console.log('[ANNOTATION_ACTION]', JSON.stringify({ action: 'highlight', rangeCfi: payload.rangeCfi, textLength: payload.text.length }));
+  const onHighlightRequested = useCallback(async (payload: ReaderSelectionPayload) => {
+    if (highlightSavingRef.current) return;
+    highlightSavingRef.current = true;
+    try {
+      const result = await highlightRepository.createHighlight({
+        bookId: payload.bookId,
+        text: payload.text,
+        startCfi: payload.startCfi,
+        endCfi: payload.endCfi,
+        rangeCfi: payload.rangeCfi,
+        chapterTitle: payload.chapterTitle,
+        sectionIndex: payload.sectionIndex,
+        color: 'blue',
+      });
+      // Paint even on a dedup hit: the adapter registry may have been rebuilt
+      // since, and overlayer paint is idempotent for the same range CFI.
+      const snapshotItem = { rangeCfi: result.highlight.rangeCfi, sectionIndex: result.highlight.sectionIndex };
+      setHighlightSnapshot((prev) => {
+        const next = (prev ?? []).filter((item) => item.rangeCfi !== snapshotItem.rangeCfi);
+        next.push(snapshotItem);
+        return next;
+      });
+      setSelectionCommand({
+        id: ++selectionCommandSequenceRef.current,
+        type: 'apply-highlight',
+        rangeCfi: result.highlight.rangeCfi,
+        sectionIndex: result.highlight.sectionIndex,
+      });
+      await Haptics.selectionAsync().catch(() => undefined);
+      activeSelectionRef.current = null;
+      excerptActionPayloadRef.current = null;
+      setActiveSelection(null);
+    } catch (error) {
+      if (__DEV__) console.error('[HIGHLIGHT_CREATE_FAILED]', error);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
+    } finally {
+      highlightSavingRef.current = false;
+    }
   }, []);
+
+  // Fired by the adapter after it already removed the paint for a tapped
+  // highlight. Only the SQLite row and the RN-side snapshot remain.
+  const handleHighlightDeleteRequest = useCallback((rangeCfi: string) => {
+    if (!bookId) return;
+    setHighlightSnapshot((prev) => prev?.filter((item) => item.rangeCfi !== rangeCfi) ?? prev);
+    void highlightRepository.deleteHighlightByRange(bookId, rangeCfi).catch((error: unknown) => {
+      if (__DEV__) console.error('[HIGHLIGHT_DELETE_FAILED]', error);
+    });
+  }, [bookId]);
 
   const onNoteRequested = useCallback((payload: ReaderSelectionPayload) => {
     if (__DEV__) console.log('[ANNOTATION_ACTION]', JSON.stringify({ action: 'note', rangeCfi: payload.rangeCfi, textLength: payload.text.length }));
@@ -1363,9 +1430,12 @@ export default function ReaderScreen() {
       searchSelectionInBook(payload);
       return;
     }
-    // Native bridge contracts for the next Annotation Core phases. They are
-    // deliberately not presented as successful persistence yet.
-    if (action === 'highlight') onHighlightRequested(payload);
+    // The note bridge contract stays a stub for the next Annotation Core phase;
+    // highlight persistence above is real.
+    if (action === 'highlight') {
+      void onHighlightRequested(payload);
+      return;
+    }
     if (action === 'note') onNoteRequested(payload);
   }, [createExcerptFromSelection, onHighlightRequested, onNoteRequested, searchSelectionInBook]);
 
@@ -1447,6 +1517,8 @@ export default function ReaderScreen() {
           searchNavigationRequest={searchNavigationRequest}
           selectionCommand={selectionCommand}
           excerptVerificationRequest={excerptVerificationRequest}
+          highlightSnapshot={highlightSnapshot}
+          onHighlightDeleteRequest={handleHighlightDeleteRequest}
           onReady={controller.onEngineReady}
           onLocation={controller.onLocation}
           onDiagnostic={controller.onDiagnostic}

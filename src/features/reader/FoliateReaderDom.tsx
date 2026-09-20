@@ -10,6 +10,7 @@ import {
   READER_PAGE_DISSOLVE_MS,
 } from './foliate/FoliateEpubEngineAdapter';
 import type { ReaderPageCountCache } from './reader-page-cache-repository';
+import type { ReaderHighlightSnapshotItem } from './highlight-repository';
 import type { ReaderSettings } from './reader-settings';
 import type {
   ReaderBookmarkNavigationRequest,
@@ -53,6 +54,8 @@ type Props = {
   searchNavigationRequest: ReaderSearchNavigationRequest | null;
   selectionCommand: ReaderSelectionCommand | null;
   excerptVerificationRequest: ReaderExcerptVerificationRequest | null;
+  highlightSnapshot: ReaderHighlightSnapshotItem[] | null;
+  onHighlightDeleteRequest: (rangeCfi: string) => void;
   onReady: (location: ReaderLocation) => Promise<void>;
   onLocation: (location: ReaderLocation, restoreState: ReaderRestoreState) => Promise<void>;
   onDiagnostic: (diagnostic: ReaderEngineDiagnostic) => Promise<void>;
@@ -78,13 +81,17 @@ type Props = {
   dom?: ReaderDomProps;
 };
 
-export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, readerSettings, settingsSessionActive, tocNavigationRequest, bookmarkSnapshotRequest, bookmarkNavigationRequest, pageLocationRequest, searchRequest, searchNavigationRequest, selectionCommand, excerptVerificationRequest, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen }: Props) {
+export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, readerSettings, settingsSessionActive, tocNavigationRequest, bookmarkSnapshotRequest, bookmarkNavigationRequest, pageLocationRequest, searchRequest, searchNavigationRequest, selectionCommand, excerptVerificationRequest, highlightSnapshot, onHighlightDeleteRequest, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<FoliateEpubEngineAdapter | null>(null);
   const loadedSessionRef = useRef<string | null>(null);
+  // Latest snapshot for the open-completion path: the highlightSnapshot
+  // effect below no-ops while the adapter does not exist yet.
+  const highlightSnapshotRef = useRef(highlightSnapshot);
+  highlightSnapshotRef.current = highlightSnapshot;
   const settingsApplicationRef = useRef<Promise<void>>(Promise.resolve());
-  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen });
-  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen };
+  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest });
+  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest };
 
   useEffect(() => {
     document.documentElement.lang = 'zh-CN';
@@ -174,6 +181,7 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
       // Getter (not a snapshot): the adapter is constructed once, but the
       // modal flag changes over time; callbacksRef always holds the latest.
       () => callbacksRef.current.footnoteModalOpen,
+      (rangeCfi) => { callbacksRef.current.onHighlightDeleteRequest(rangeCfi); },
     );
     adapterRef.current = adapter;
     loadedSessionRef.current = nextSource.sessionId;
@@ -192,6 +200,8 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
       readerSettings,
     }).then((location) => {
       if (!active) return undefined;
+      // The snapshot may have arrived before the adapter existed; paint it now.
+      void adapter.setHighlights(highlightSnapshotRef.current ?? []);
       return callbacksRef.current.onReady(location);
     }).catch((error: unknown) => {
       if (!active) return;
@@ -321,8 +331,28 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
   }, [searchNavigationRequest?.id]);
 
   useEffect(() => {
-    if (selectionCommand?.type === 'clear') adapterRef.current?.clearSelection();
+    const command = selectionCommand;
+    if (!command) return;
+    if (command.type === 'clear') {
+      adapterRef.current?.clearSelection();
+    } else if (command.type === 'apply-highlight') {
+      // Paint first (it only needs the CFI string), then release the native
+      // selection so the iOS edit menu dismisses like the excerpt flow.
+      const adapter = adapterRef.current;
+      if (adapter) {
+        void adapter.addAnnotation(command.rangeCfi, command.sectionIndex)
+          .then(() => { adapter.clearSelection(); });
+      }
+    }
   }, [selectionCommand?.id]);
+
+  useEffect(() => {
+    // setHighlights always refreshes the adapter registry; paint applies to
+    // the live section when one exists, otherwise the next document load
+    // re-applies via the registry. All orderings (snapshot before/after open)
+    // are covered.
+    if (highlightSnapshot) void adapterRef.current?.setHighlights(highlightSnapshot);
+  }, [highlightSnapshot]);
 
   useEffect(() => {
     const request = excerptVerificationRequest;

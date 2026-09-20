@@ -182,6 +182,11 @@ export type ReaderSelectionPayload = {
 export type ReaderSelectionCommand = {
   id: number;
   type: 'clear';
+} | {
+  id: number;
+  type: 'apply-highlight';
+  rangeCfi: string;
+  sectionIndex: number;
 };
 
 export type ReaderSelectionAction = 'excerpt' | 'highlight' | 'note' | 'searchInBook';
