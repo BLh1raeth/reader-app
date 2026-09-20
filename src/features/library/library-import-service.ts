@@ -224,8 +224,11 @@ export async function restoreOriginalBookMetadata(bookId: string) {
 
 export async function replaceBookCover(book: Book) {
   // expo-image-picker 是原生模块：旧 EAS build 里没有，会抛错。
-  // 动态 import + try/catch：有则用图库，没有则回退到文件选择器，避免启动红屏。
+  // 动态 import + try/catch：模块缺失（或权限被拒）时回退到文件选择器，
+  // 避免旧 build 启动红屏。但用户主动取消图库选择视为放弃，直接返回，
+  // 不再弹文件选择器。
   let imageAsset: { uri: string; fileName?: string | null } | null = null;
+  let userCanceledImageLibrary = false;
   try {
     const ImagePicker = await import('expo-image-picker');
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -234,7 +237,9 @@ export async function replaceBookCover(book: Book) {
         mediaTypes: ['images'],
         quality: 0.9,
       });
-      if (!picked.canceled) {
+      if (picked.canceled) {
+        userCanceledImageLibrary = true;
+      } else {
         const asset = picked.assets[0];
         imageAsset = { uri: asset.uri, fileName: asset.fileName };
       }
@@ -242,12 +247,13 @@ export async function replaceBookCover(book: Book) {
   } catch {
     imageAsset = null;
   }
-  if (!imageAsset) {
+  if (!imageAsset && !userCanceledImageLibrary) {
     const picked = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false, type: 'image/*' });
     if (picked.canceled) return null;
     const asset = picked.assets[0];
     imageAsset = { uri: asset.uri, fileName: asset.name };
   }
+  if (!imageAsset) return null;
   const nextCoverUri = await persistCustomCover(imageAsset.uri, book.id, fileExtensionFromName(imageAsset.fileName ?? 'cover.jpg'));
   await bookRepository.updateBookMetadata(book.id, { title: book.title, author: book.author, coverUri: nextCoverUri });
   if (book.coverUri && book.coverUri !== book.originalCoverUri && book.coverUri !== nextCoverUri) removeManagedFile(book.coverUri);
