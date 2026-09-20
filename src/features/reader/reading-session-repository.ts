@@ -215,7 +215,12 @@ export const readingSessionRepository = {
   /**
    * Crash recovery. Closes every session left open (ended_at IS NULL) at its
    * last checkpoint — never at "now", so offline/killed time is not invented
-   * as reading time. Runs once during database bootstrap.
+   * as reading time.
+   *
+   * WARNING: never call this from inside database bootstrap. It goes through
+   * getLibraryDatabase(), which during bootstrap is the same still-pending
+   * promise — the await would deadlock and hang every DB query. Bootstrap
+   * performs the equivalent UPDATE with its live handle instead.
    */
   async recoverStaleReadingSessions(): Promise<number> {
     const stale = await readingSessionRepository.getOpenReadingSessions();

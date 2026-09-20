@@ -283,12 +283,20 @@ async function bootstrapDatabase() {
       `);
     });
   }
-  // Stale-session recovery runs after every migration, before any repository
-  // use. A crash can leave ended_at NULL; recovered sessions close at their
-  // last checkpoint without inventing unconfirmed reading time. The dynamic
-  // import keeps library-database free of a static cycle with the reader
-  // repository layer.
-  const { readingSessionRepository } = await import('../reader/reading-session-repository');
-  await readingSessionRepository.recoverStaleReadingSessions();
+  // Stale-session recovery runs inside bootstrap with the live `database`
+  // handle, never via the repository: the repository calls
+  // getLibraryDatabase(), which is this same still-pending promise — routing
+  // through it would deadlock bootstrap and hang every DB query (empty
+  // library). A crash can leave ended_at NULL; recovered sessions close at
+  // their last checkpoint without inventing unconfirmed reading time.
+  const recoveredAt = new Date().toISOString();
+  await database.runAsync(
+    `UPDATE reader_reading_sessions
+     SET ended_at = COALESCE(last_checkpoint_at, started_at),
+         close_reason = 'recovered-stale',
+         updated_at = ?
+     WHERE ended_at IS NULL;`,
+    [recoveredAt],
+  );
   return database;
 }
