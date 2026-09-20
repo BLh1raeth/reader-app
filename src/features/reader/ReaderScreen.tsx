@@ -423,6 +423,10 @@ export default function ReaderScreen() {
     ? { background: '#151517', primary: '#f2f2f7', secondary: '#aeaeb2', glassFallback: 'rgba(44,44,46,0.88)', link: '#64d2ff' }
     : { background: tokens.colors.background, primary: '#171719', secondary: '#8b8b90', glassFallback: 'rgba(250,250,252,0.88)', link: '#007aff' };
   const chromeVisibleRef = useRef(false);
+  // Latest setReaderChromeVisible for callbacks declared before it (e.g.
+  // handleFootnoteOpen). Assigned in an effect below; footnote taps call
+  // through this ref so they never summon reader chrome.
+  const setReaderChromeVisibleRef = useRef<(visible: boolean) => void>(() => undefined);
   const displayedPageLocationRef = useRef<ReaderLocation | null>(null);
   const pageIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chromeMountedRef = useRef(false);
@@ -510,6 +514,16 @@ export default function ReaderScreen() {
   }, []);
 
   const handleFootnoteOpen = useCallback(async (payload: FootnotePayload) => {
+    // A footnote tap is a reading action, not a chrome action: opening the
+    // popover must keep the reader in immersive mode. The tap's pointer-up
+    // fires before the click is classified as a footnote, so a chrome toggle
+    // from that same tap may already be in flight; force chrome hidden here
+    // instead of racing that earlier toggle. This also covers the toggle-off
+    // path below (re-tapping the marker never leaves chrome visible).
+    if (chromeVisibleRef.current) {
+      if (__DEV__) console.log('[FOOTNOTE_CHROME_HIDE]');
+      setReaderChromeVisibleRef.current(false);
+    }
     if (__DEV__) {
       // Empirical anchor-space check (no footnote content is logged). The
       // Reader root is flex:1 at window origin (0,0); if readerRootWindowRect
@@ -919,6 +933,12 @@ export default function ReaderScreen() {
       if (finished) runOnJS(unmountChromeAfterFade)();
     }));
   }, [cancelChromeReadyFrame, chromeProgress, reduceMotion, unmountChromeAfterFade]);
+
+  // Keep the ref used by handleFootnoteOpen (declared above) pointing at the
+  // latest setter; footnote taps must keep the reader in immersive mode.
+  useEffect(() => {
+    setReaderChromeVisibleRef.current = setReaderChromeVisible;
+  }, [setReaderChromeVisible]);
 
   const toggleChrome = useCallback(async () => {
     setReaderChromeVisible(!chromeVisibleRef.current);
