@@ -7,7 +7,7 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -168,6 +168,7 @@ export function ReaderTocSheet({
 }: Props) {
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList<FlatTocItem>>(null);
+  const didAutoScrollRef = useRef(false);
   const modeProgress = useRef(new Animated.Value(0)).current;
   const [mode, setMode] = useState<ReaderNavigationMode>('toc');
   const [modeSwitching, setModeSwitching] = useState(false);
@@ -178,13 +179,35 @@ export function ReaderTocSheet({
 
   useLayoutEffect(() => {
     if (!isPresented) {
+      didAutoScrollRef.current = false;
       return;
     }
+    didAutoScrollRef.current = false;
     modeProgress.stopAnimation();
     modeProgress.setValue(0);
     setMode('toc');
     setModeSwitching(false);
   }, [isPresented, modeProgress]);
+
+  // 简单版：打开时滚到当前章节，不居中。不需要量高度，也就没有空白等待。
+  const scrollToCurrent = useCallback(() => {
+    if (!isPresented || mode !== 'toc' || currentIndex < 0 || didAutoScrollRef.current) return;
+    const list = listRef.current;
+    if (!list) return;
+    didAutoScrollRef.current = true;
+    list.scrollToIndex({ animated: false, index: currentIndex });
+  }, [currentIndex, isPresented, mode]);
+
+  useEffect(() => {
+    if (!isPresented) return undefined;
+    // 原生列表就绪后滚一次；300ms 备份兜底
+    const t1 = setTimeout(() => scrollToCurrent(), 50);
+    const t2 = setTimeout(() => scrollToCurrent(), 300);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [isPresented, scrollToCurrent]);
 
   const toggleMode = useCallback(() => {
     if (modeSwitching) return;
