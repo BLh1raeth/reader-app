@@ -47,6 +47,12 @@
       "expo-status-bar",
       "expo-sqlite",
       "expo-sharing",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "需要访问你的照片图库，以便为图书设置自定义封面。"
+        }
+      ],
       "./plugins/with-reader-edit-menu"
     ]
   }
