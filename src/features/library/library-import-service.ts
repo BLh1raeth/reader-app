@@ -1,6 +1,5 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
-import * as ImagePicker from 'expo-image-picker';
 import * as Sharing from 'expo-sharing';
 import { File } from 'expo-file-system';
 
@@ -224,15 +223,32 @@ export async function restoreOriginalBookMetadata(bookId: string) {
 }
 
 export async function replaceBookCover(book: Book) {
-  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) return null;
-  const picked = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ['images'],
-    quality: 0.9,
-  });
-  if (picked.canceled) return null;
-  const asset = picked.assets[0];
-  const nextCoverUri = await persistCustomCover(asset.uri, book.id, fileExtensionFromName(asset.fileName ?? 'cover.jpg'));
+  // expo-image-picker 是原生模块：旧 EAS build 里没有，会抛错。
+  // 动态 import + try/catch：有则用图库，没有则回退到文件选择器，避免启动红屏。
+  let imageAsset: { uri: string; fileName?: string | null } | null = null;
+  try {
+    const ImagePicker = await import('expo-image-picker');
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (permission.granted) {
+      const picked = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.9,
+      });
+      if (!picked.canceled) {
+        const asset = picked.assets[0];
+        imageAsset = { uri: asset.uri, fileName: asset.fileName };
+      }
+    }
+  } catch {
+    imageAsset = null;
+  }
+  if (!imageAsset) {
+    const picked = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false, type: 'image/*' });
+    if (picked.canceled) return null;
+    const asset = picked.assets[0];
+    imageAsset = { uri: asset.uri, fileName: asset.name };
+  }
+  const nextCoverUri = await persistCustomCover(imageAsset.uri, book.id, fileExtensionFromName(imageAsset.fileName ?? 'cover.jpg'));
   await bookRepository.updateBookMetadata(book.id, { title: book.title, author: book.author, coverUri: nextCoverUri });
   if (book.coverUri && book.coverUri !== book.originalCoverUri && book.coverUri !== nextCoverUri) removeManagedFile(book.coverUri);
   return nextCoverUri;
