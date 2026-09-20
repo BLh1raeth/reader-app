@@ -84,14 +84,21 @@ export const bookRepository = {
     return row ? mapRow(row) : null;
   },
 
-  async getDuplicate(identifier: string | null, fileHash: string) {
+  async getDuplicate(identifier: string | null, fileHash: string, title: string) {
     const database = await getLibraryDatabase();
+    // file_hash match = same file bytes, a strong duplicate signal.
+    // identifier match alone is NOT enough: some sources (e.g. Z-Library)
+    // stamp the same <dc:identifier> on completely different books, so we
+    // also require the title to match (case-insensitive).
+    const normalizedTitle = title.trim();
     const row = identifier
       ? await database.getFirstAsync<BookRow>(`
         SELECT books.*, reading_progress.percentage AS progress_percentage
         FROM books LEFT JOIN reading_progress ON reading_progress.book_id = books.id
-        WHERE books.identifier = ? OR books.file_hash = ? LIMIT 1;
-      `, identifier, fileHash)
+        WHERE books.file_hash = ?
+          OR (books.identifier = ? AND books.title COLLATE NOCASE = ?)
+        LIMIT 1;
+      `, fileHash, identifier, normalizedTitle)
       : await database.getFirstAsync<BookRow>(`
         SELECT books.*, reading_progress.percentage AS progress_percentage
         FROM books LEFT JOIN reading_progress ON reading_progress.book_id = books.id

@@ -109,7 +109,8 @@ async function writePreparedImport(
   forceDuplicate: boolean,
   onStage: (stage: number) => void,
 ): Promise<{ duplicate: Book } | { book: Book }> {
-  const duplicate = await bookRepository.getDuplicate(prepared.parsed.identifier, prepared.fileHash);
+  const title = prepared.parsed.title ?? titleFromFilename(prepared.asset.name);
+  const duplicate = await bookRepository.getDuplicate(prepared.parsed.identifier, prepared.fileHash, title);
   if (duplicate !== null && !forceDuplicate) return { duplicate };
 
   const allBooks = await bookRepository.getAllBooks();
@@ -122,7 +123,6 @@ async function writePreparedImport(
       ? persistCoverBytes(id, prepared.parsed.cover.bytes, prepared.parsed.cover.extension)
       : null;
     onStage(4);
-    const title = prepared.parsed.title ?? titleFromFilename(prepared.asset.name);
     const now = new Date().toISOString();
     const book: Omit<Book, 'coverTone' | 'hasGeneratedCover'> = {
       id,
