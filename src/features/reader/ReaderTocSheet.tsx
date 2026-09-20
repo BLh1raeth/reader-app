@@ -7,7 +7,7 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -168,67 +168,23 @@ export function ReaderTocSheet({
 }: Props) {
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList<FlatTocItem>>(null);
-  const didAutoScrollRef = useRef(false);
   const modeProgress = useRef(new Animated.Value(0)).current;
   const [mode, setMode] = useState<ReaderNavigationMode>('toc');
   const [modeSwitching, setModeSwitching] = useState(false);
-  const [listViewportHeight, setListViewportHeight] = useState(0);
-  // 打开目录时先隐藏列表，等滚动到当前章节居中后再显示，避免用户看到"先在顶部、再跳到中间"的闪动
-  const [tocHidden, setTocHidden] = useState(true);
   const flatToc = useMemo(() => flattenToc(toc, pageByDestination), [pageByDestination, toc]);
   const currentIndex = useMemo(() => findCurrentIndex(flatToc, currentLocation), [currentLocation, flatToc]);
-  const centerInset = Math.max(0, (listViewportHeight - TOC_ROW_HEIGHT) / 2);
-  const rowsBeforeCurrent = currentIndex >= 0 ? currentIndex : 0;
-  const rowsAfterCurrent = currentIndex >= 0 ? Math.max(0, flatToc.length - currentIndex - 1) : 0;
-  const listTopPadding = Math.max(TOC_FLOATING_HEADER_HEIGHT, centerInset - rowsBeforeCurrent * TOC_ROW_HEIGHT);
-  const listBottomPadding = currentIndex >= 0 ? Math.max(0, centerInset - rowsAfterCurrent * TOC_ROW_HEIGHT) : 0;
   const tocOpacity = modeProgress.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
   const bookmarkOpacity = modeProgress;
 
   useLayoutEffect(() => {
     if (!isPresented) {
-      didAutoScrollRef.current = false;
       return;
     }
-    didAutoScrollRef.current = false;
-    // 同步在绘制前隐藏，避免闪出未居中的初始位置
-    setTocHidden(true);
     modeProgress.stopAnimation();
     modeProgress.setValue(0);
     setMode('toc');
     setModeSwitching(false);
   }, [isPresented, modeProgress]);
-
-  const scrollToCurrent = useCallback(() => {
-    if (!isPresented || mode !== 'toc' || currentIndex < 0 || listViewportHeight <= 0 || didAutoScrollRef.current) {
-      return;
-    }
-    const list = listRef.current;
-    if (!list) return;
-    didAutoScrollRef.current = true;
-    const itemOffset = listTopPadding + currentIndex * TOC_ROW_HEIGHT;
-    const centeredOffset = Math.max(0, itemOffset - centerInset);
-    list.scrollToOffset({ animated: false, offset: centeredOffset });
-    // 滚动是同步生效的，下一帧显示时已经是居中好的位置
-    requestAnimationFrame(() => setTocHidden(false));
-  }, [centerInset, currentIndex, isPresented, listTopPadding, listViewportHeight, mode]);
-
-  // 原生 contentSize 就绪（padding 已应用）时立刻滚，比固定等 400ms 快得多
-  const handleContentSizeChange = useCallback(() => {
-    scrollToCurrent();
-  }, [scrollToCurrent]);
-
-  useEffect(() => {
-    if (!isPresented) return undefined;
-    // 备份：极端情况下 onContentSizeChange 没触发时，300ms 后尝试
-    const backup = setTimeout(() => scrollToCurrent(), 300);
-    // 兜底：1.2 秒后强制显示，避免任何极端情况下列表一直空白
-    const fallback = setTimeout(() => setTocHidden(false), 1200);
-    return () => {
-      clearTimeout(backup);
-      clearTimeout(fallback);
-    };
-  }, [isPresented, scrollToCurrent]);
 
   const toggleMode = useCallback(() => {
     if (modeSwitching) return;
@@ -293,19 +249,17 @@ export function ReaderTocSheet({
 
               <Animated.View accessibilityElementsHidden={mode !== 'toc'} importantForAccessibility={mode === 'toc' ? 'auto' : 'no-hide-descendants'} pointerEvents={mode === 'toc' ? 'auto' : 'none'} style={[StyleSheet.absoluteFill, { opacity: tocOpacity }]}>
                 <FlatList
-                  contentContainerStyle={flatToc.length ? [styles.listContent, { paddingBottom: listBottomPadding, paddingTop: listTopPadding }] : styles.emptyListContent}
+                  contentContainerStyle={flatToc.length ? styles.listContent : styles.emptyListContent}
                   data={flatToc}
-                  getItemLayout={(_, index) => ({ index, length: TOC_ROW_HEIGHT, offset: listTopPadding + TOC_ROW_HEIGHT * index })}
+                  getItemLayout={(_, index) => ({ index, length: TOC_ROW_HEIGHT, offset: TOC_FLOATING_HEADER_HEIGHT + TOC_ROW_HEIGHT * index })}
                   initialNumToRender={18}
                   keyExtractor={(item) => item.key}
                   ListEmptyComponent={<View style={styles.emptyState}><SymbolView name="list.bullet" size={28} tintColor="#8e8e93" weight="regular" /><Text style={styles.emptyText}>{uiText.navigation.noToc}</Text></View>}
-                  onContentSizeChange={handleContentSizeChange}
-                  onLayout={(event) => setListViewportHeight(event.nativeEvent.layout.height)}
                   ref={listRef}
                   removeClippedSubviews
                   renderItem={renderTocItem}
                   nestedScrollEnabled
-                  style={[styles.list, { marginBottom: -insets.bottom, opacity: tocHidden ? 0 : 1 }]}
+                  style={[styles.list, { marginBottom: -insets.bottom }]}
                   windowSize={9}
                 />
               </Animated.View>
@@ -353,7 +307,7 @@ const styles = StyleSheet.create({
   modeButtonFallback: { backgroundColor: 'rgba(250,250,252,0.76)', borderColor: 'rgba(60,60,67,0.12)', borderWidth: StyleSheet.hairlineWidth },
   modeButtonContent: { alignItems: 'center', flex: 1, justifyContent: 'center' },
   list: { flex: 1 },
-  listContent: { paddingHorizontal: 12 },
+  listContent: { paddingHorizontal: 12, paddingTop: TOC_FLOATING_HEADER_HEIGHT },
   bookmarkListContent: { paddingHorizontal: 12 },
   tocRow: { alignItems: 'center', borderBottomColor: 'rgba(60,60,67,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', gap: 12, height: TOC_ROW_HEIGHT, justifyContent: 'center', paddingLeft: 22, paddingRight: 18 },
   rowPressed: { backgroundColor: 'rgba(60,60,67,0.08)', borderRadius: 12 },
