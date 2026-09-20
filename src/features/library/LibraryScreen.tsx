@@ -102,6 +102,7 @@ function ReaderOpeningTransitionOverlay({
   }));
 
   useEffect(() => {
+    if (__DEV__) console.log('[OPEN_TRANSITION_OVERLAY_MOUNT]', JSON.stringify({ id: transition.id }));
     const frame = requestAnimationFrame(() => {
       progress.set(withTiming(1, {
         duration: 460,
@@ -235,6 +236,7 @@ export default function LibraryScreen() {
   }, [reloadBooks, setTabBarHidden]));
 
   const finishReaderOpeningTransition = useCallback((transition: ReaderOpeningTransition) => {
+    if (__DEV__) console.log('[OPEN_TRANSITION_FINISH]', JSON.stringify({ id: transition.id, bookId: transition.book.id }));
     router.push({
       pathname: '/reader/[bookId]',
       params: {
@@ -255,6 +257,7 @@ export default function LibraryScreen() {
     // Fallback: if navigation never happens, don't leave the user stuck.
     if (transitionTeardownTimeout.current) clearTimeout(transitionTeardownTimeout.current);
     transitionTeardownTimeout.current = setTimeout(() => {
+      if (__DEV__) console.log('[OPEN_TRANSITION_FALLBACK_TIMEOUT]', JSON.stringify({ id: transition.id }));
       setReaderOpeningTransition(null);
       readerOpeningPendingRef.current = false;
     }, 2000);
@@ -263,6 +266,7 @@ export default function LibraryScreen() {
   // Tear down a completed opening transition once the reader has taken over.
   useFocusEffect(useCallback(() => {
     return () => {
+      if (__DEV__) console.log('[OPEN_TRANSITION_BLUR_CLEANUP]');
       if (transitionTeardownTimeout.current) {
         clearTimeout(transitionTeardownTimeout.current);
         transitionTeardownTimeout.current = null;
@@ -273,6 +277,7 @@ export default function LibraryScreen() {
   }, []));
 
   const openReaderWithTransition = useCallback((book: LibraryBook, frame: ReaderOpeningFrame) => {
+    if (__DEV__) console.log('[OPEN_TRANSITION_OPEN]', JSON.stringify({ bookId: book.id, pending: readerOpeningPendingRef.current, hasTransition: Boolean(readerOpeningTransition) }));
     if (readerOpeningPendingRef.current || readerOpeningTransition) return;
     readerOpeningPendingRef.current = true;
     beginReaderOpen(book.id, book.fileSize);
