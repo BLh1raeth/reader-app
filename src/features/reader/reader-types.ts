@@ -226,7 +226,7 @@ export type FootnoteAnchorRect = {
   height: number;
 };
 
-export type FootnoteSemanticType = 'noteref' | 'doc-noteref' | 'footnote-target' | 'endnote-target';
+export type FootnoteSemanticType = 'noteref' | 'doc-noteref' | 'footnote-target' | 'endnote-target' | 'heuristic';
 
 /**
  * Whitelist-based rich text tree for footnote content. Built only from an

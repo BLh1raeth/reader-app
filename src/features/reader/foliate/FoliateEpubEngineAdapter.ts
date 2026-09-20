@@ -208,6 +208,95 @@ function isFootnoteTargetElement(element: Element): boolean {
   return getFootnoteSemanticType(element) !== null;
 }
 
+// ── Heuristic footnote detection (v2) ─────────────────────────────────
+// Semantic-first stays the primary path. These heuristics only run for
+// same-document fragment links that carry NO explicit footnote semantics,
+// so real-world books with plain `<a href="#fn1">1</a>` markers also pop
+// over instead of jumping to the chapter end. Conservative by design:
+// every base condition must hold, plus at least one footnote signal.
+
+/** Marker-like labels: digits, [1], (1), superscript ¹²³, *, †, ‡. */
+const FOOTNOTE_HEURISTIC_MARKER_RE = /^[0-9¹²³⁴⁵⁶⁷⁸⁹⁰\s.[\]()\-–—*†‡]+$/;
+/** Section headings that suggest a notes area: 注/释/footnote/endnote. */
+const FOOTNOTE_NOTES_HEADING_RE = /注|释|footnote|endnote/i;
+/** id/class hints: footnote, endnote, fn1, note-2 … */
+const FOOTNOTE_ID_CLASS_HINT_RE = /footnote|endnote|^(fn|note)[-_ ]?\d*$/i;
+/** Minimum substantive text for a heuristic target (avoids empty anchors). */
+const FOOTNOTE_HEURISTIC_MIN_TEXT = 4;
+/** Tags that disqualify a heuristic target (TOC-style jumps). */
+const FOOTNOTE_HEURISTIC_BAD_TARGET_RE = /^(h1|h2|h3|h4|h5|h6|a|script|style)$/i;
+
+/** True when the anchor itself is a "back to text" link — never intercepted. */
+function isBacklinkAnchor(anchor: HTMLAnchorElement): boolean {
+  const epubType = anchor.getAttribute('epub:type');
+  const role = anchor.getAttribute('role');
+  if (epubType === 'backlink' || role === 'doc-backlink') return true;
+  return FOOTNOTE_BACKLINK_ARROWS.has((anchor.textContent ?? '').trim());
+}
+
+/** True when the target contains a back-to-text link (strong footnote signal). */
+function footnoteTargetHasBacklink(target: Element): boolean {
+  const links = target.querySelectorAll('a[href]');
+  for (const link of Array.from(links)) {
+    const href = link.getAttribute('href') ?? '';
+    if (FOOTNOTE_EXTERNAL_SCHEME_RE.test(href)) continue;
+    if (href.indexOf('#') < 0) continue;
+    if (isBacklinkAnchor(link as HTMLAnchorElement)) return true;
+  }
+  return false;
+}
+
+/**
+ * True when the target sits inside a notes-like section: an ancestor
+ * section/aside/div/ol/ul whose heading or id/class mentions
+ * 注/释/footnote/endnote, or whose own id/class carries a note hint.
+ */
+function footnoteTargetInNotesSection(target: Element): boolean {
+  let el: Element | null = target.parentElement;
+  while (el && el.tagName.toLowerCase() !== 'body') {
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'section' || tag === 'aside' || tag === 'div' || tag === 'ol' || tag === 'ul') {
+      const idClass = `${el.getAttribute('id') ?? ''} ${(el as HTMLElement).className ?? ''}`;
+      if (FOOTNOTE_ID_CLASS_HINT_RE.test(idClass)) return true;
+      const headings = el.querySelectorAll('h1,h2,h3,h4,h5,h6');
+      for (const h of Array.from(headings)) {
+        // Only headings that belong directly to this section level.
+        if ((h as Element).parentElement !== el) continue;
+        if (FOOTNOTE_NOTES_HEADING_RE.test((h.textContent ?? ''))) return true;
+      }
+    }
+    el = el.parentElement;
+  }
+  return false;
+}
+
+function footnoteTargetIdClassHint(target: Element): boolean {
+  const idClass = `${target.getAttribute('id') ?? ''} ${(target as HTMLElement).className ?? ''}`;
+  return FOOTNOTE_ID_CLASS_HINT_RE.test(idClass);
+}
+
+/**
+ * Heuristic: does this non-semantic same-document link look like a footnote
+ * reference whose target looks like a footnote body? All base conditions
+ * must hold, plus at least one footnote signal.
+ */
+function isHeuristicFootnoteReference(
+  anchor: HTMLAnchorElement,
+  target: Element,
+): boolean {
+  if (isBacklinkAnchor(anchor)) return false;
+  const label = (anchor.textContent ?? '').trim();
+  if (label === '' || label.length > 8 || !FOOTNOTE_HEURISTIC_MARKER_RE.test(label)) return false;
+  if (FOOTNOTE_HEURISTIC_BAD_TARGET_RE.test(target.tagName)) return false;
+  const text = (target.textContent ?? '').replace(/\s+/g, ' ').trim();
+  if (text.length < FOOTNOTE_HEURISTIC_MIN_TEXT) return false;
+  return (
+    footnoteTargetHasBacklink(target)
+    || footnoteTargetInNotesSection(target)
+    || footnoteTargetIdClassHint(target)
+  );
+}
+
 /**
  * Strip backlinks ("↩", epub:type="backlink", role="doc-backlink"): closing
  * the popover already returns the reader to the original position, so a
@@ -1232,6 +1321,10 @@ export class FoliateEpubEngineAdapter {
     const ref = this.classifyFootnoteAnchor(doc, anchor);
     if (!ref) {
       this.logFootnoteCandidate(doc, anchor);
+      // Backlink fallback: a "back to text" link whose fragment target does
+      // not resolve (sloppy EPUBs) must not trigger a stray page jump.
+      // Resolve it back to the citing noteref when possible, else swallow.
+      if (this.handleDeadBacklink(doc, anchor, event)) return;
       return;
     }
     const anchorLabel = anchor.textContent ?? '';
@@ -1247,6 +1340,55 @@ export class FoliateEpubEngineAdapter {
     event.stopPropagation();
     void this.openFootnotePopover(doc, anchor, ref);
   };
+
+  /**
+   * Backlink fallback for same-document "back to text" links whose fragment
+   * target does not resolve (common in real-world EPUBs). Returns true when
+   * the tap was consumed: either we redirected it to the citing noteref, or
+   * there was nowhere sensible to go and the tap is swallowed instead of
+   * letting the engine perform a stray page jump. Resolvable backlinks
+   * return false so default navigation proceeds untouched.
+   */
+  private handleDeadBacklink(doc: Document, anchor: HTMLAnchorElement, event: MouseEvent): boolean {
+    if (!isBacklinkAnchor(anchor)) return false;
+    const rawHref = anchor.getAttribute('href')?.trim() ?? '';
+    const hashIndex = rawHref.indexOf('#');
+    // Cross-document backlinks keep default behavior (can't verify cheaply).
+    if (hashIndex !== 0) return false;
+    const fragment = decodeFootnoteFragment(rawHref.slice(1));
+    if (fragment && findFragmentElement(doc, fragment)) return false;
+
+    const consume = () => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    // Smart resolve: the backlink lives inside a footnote container; find a
+    // noteref anchor elsewhere in the document that cites that container.
+    const container = anchor.closest('aside[id], li[id], p[id], div[id], section[id]');
+    const containerId = container?.getAttribute('id');
+    if (container && containerId) {
+      const cite = Array.from(doc.querySelectorAll('a[href]')).find((a) => {
+        if (container.contains(a)) return false;
+        const href = a.getAttribute('href') ?? '';
+        if (!href.startsWith('#')) return false;
+        return decodeFootnoteFragment(href.slice(1)) === containerId;
+      }) as HTMLAnchorElement | undefined;
+      if (cite) {
+        let citeId = cite.getAttribute('id');
+        if (!citeId) {
+          citeId = `__pip-backlink-${containerId}`;
+          cite.setAttribute('id', citeId);
+        }
+        if (__DEV__) console.log('[FOOTNOTE_BACKLINK_REDIRECT]', JSON.stringify({ rawHref, containerId }));
+        consume();
+        void this.view?.goTo(`#${citeId}`).catch(() => {});
+        return true;
+      }
+    }
+    if (__DEV__) console.log('[FOOTNOTE_BACKLINK_DEAD]', JSON.stringify({ rawHref }));
+    consume();
+    return true;
+  }
 
   /**
    * Synchronous classification of a tapped anchor. Returns a footnote
@@ -1299,6 +1441,14 @@ export class FoliateEpubEngineAdapter {
       }
       if (targetElement && isFootnoteTargetElement(targetElement)) {
         return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: getFootnoteSemanticType(targetElement)!, targetElement };
+      }
+      // Heuristic fallback (v2): non-semantic links that look like footnote
+      // references (plain `<a href="#fn1">1</a>` in real-world books). The
+      // empty-content guard in the click handler still applies, so a tap is
+      // never swallowed when nothing extractable exists.
+      if (targetElement && isHeuristicFootnoteReference(anchor, targetElement)) {
+        if (__DEV__) console.log('[FOOTNOTE_HEURISTIC]', JSON.stringify({ rawHref, sectionIndex }));
+        return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: 'heuristic', targetElement };
       }
       return null;
     }
