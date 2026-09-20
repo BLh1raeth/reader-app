@@ -63,6 +63,9 @@ final class ReaderPopoverPresenter: NSObject {
     popover.delegate = self
 
     let sourceView = presentingVC.view
+    guard let sourceView else {
+      throw ReaderPopoverError.presentationFailed("presentingVC.view is nil")
+    }
     var sourceRect = anchorRect
     if let window = sourceView.window {
       sourceRect = sourceView.convert(anchorRect, from: window)
