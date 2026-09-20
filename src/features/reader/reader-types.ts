@@ -209,6 +209,17 @@ export type ReaderExcerptVerificationRequest = {
 };
 
 export type FootnoteAnchorRect = {
+  /**
+   * Native window points (identical to RN `Dimensions.get('window')` points).
+   *
+   * Produced by `FoliateEpubEngineAdapter.mapIframeRectToWebView`, which maps
+   * the iframe-local `getBoundingClientRect()` into the WKWebView viewport.
+   * The Expo DOM host view is `flex: 1` inside the Reader root, which is
+   * itself `flex: 1` at window origin (0,0) with `headerShown: false`, and
+   * WKWebView CSS px map 1:1 to UIKit points — so the mapped rect is already
+   * in window points. Do NOT add safe-area / status-bar / chrome offsets and
+   * do NOT multiply by devicePixelRatio / UIScreen.main.scale here.
+   */
   x: number;
   y: number;
   width: number;

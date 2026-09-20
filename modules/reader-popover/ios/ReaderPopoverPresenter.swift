@@ -38,8 +38,9 @@ final class ReaderPopoverPresenter: NSObject {
 
   /// Presents the footnote popover anchored at `anchorRect`.
   ///
-  /// - Parameter anchorRect: Rect in **native window points** (identical to
-  ///   RN `Dimensions.get('window')` points — no scale multiplication).
+  /// - Parameter anchorRect: Rect in **native window points** (the same space
+  ///   as RN `Dimensions.get('window')`). Coordinates are UIKit window
+  ///   points. Do not pass DOM-local or Reader-local coordinates.
   ///   Converted into the source view's coordinates before being assigned
   ///   to `sourceRect`.
   func present(

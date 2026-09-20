@@ -5,7 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AccessibilityInfo, AppState, Linking, Pressable, ScrollView, StyleSheet, Text, TextStyle, useWindowDimensions, View, ViewStyle } from 'react-native';
+import { AccessibilityInfo, AppState, Dimensions, Linking, Pressable, ScrollView, StyleSheet, Text, TextStyle, useWindowDimensions, View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { AnimatedStyle, cancelAnimation, Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
@@ -483,6 +483,9 @@ export default function ReaderScreen() {
   // or when the RN fallback overlay is used). System outside-tap dismisses
   // are reported back through the native dismiss event below.
   const nativeFootnoteAnchorRef = useRef<FootnoteAnchorRect | null>(null);
+  // Reader root view; DEV-only coordinate verification measures its window
+  // origin to prove the anchor math shares the window coordinate space.
+  const readerRootRef = useRef<View>(null);
 
   const isSameFootnoteAnchor = (a: FootnoteAnchorRect, b: FootnoteAnchorRect) =>
     Math.abs(a.x - b.x) < 2 && Math.abs(a.y - b.y) < 2;
@@ -507,6 +510,26 @@ export default function ReaderScreen() {
   }, []);
 
   const handleFootnoteOpen = useCallback(async (payload: FootnotePayload) => {
+    if (__DEV__) {
+      // Empirical anchor-space check (no footnote content is logged). The
+      // Reader root is flex:1 at window origin (0,0); if readerRootWindowRect
+      // ever drifts from (0,0), the adapter's anchor math must be revisited
+      // before trusting native popover alignment.
+      readerRootRef.current?.measureInWindow((rx, ry, rw, rh) => {
+        const { width: ww, height: wh } = Dimensions.get('window');
+        console.log('[FOOTNOTE_COORD_VERIFY]', JSON.stringify({
+          mappedRect: payload.anchorRect,
+          readerRootWindowRect: {
+            x: Math.round(rx * 100) / 100,
+            y: Math.round(ry * 100) / 100,
+            width: Math.round(rw),
+            height: Math.round(rh),
+          },
+          windowSize: { width: Math.round(ww), height: Math.round(wh) },
+          finalWindowRect: payload.anchorRect,
+        }));
+      });
+    }
     if (isNativeReaderPopoverAvailable()) {
       const shown = nativeFootnoteAnchorRef.current;
       if (shown && isSameFootnoteAnchor(shown, payload.anchorRect)) {
@@ -1365,7 +1388,10 @@ export default function ReaderScreen() {
   const pageIndicatorStyle = useAnimatedStyle(() => ({ opacity: pageIndicatorOpacity.get() }));
 
   return (
-    <View style={[styles.screen, { backgroundColor: readerColors.background }]}>
+    <View
+      ref={readerRootRef}
+      style={[styles.screen, { backgroundColor: readerColors.background }]}
+    >
       <StatusBar animated hidden={!chromeVisible} style={readerAppearance === 'dark' ? 'light' : 'dark'} />
       {/* iOS native-stack interactive-pop is a separate left-edge gesture from
           the DOM reader's page swipe. Disable it only for this route so a

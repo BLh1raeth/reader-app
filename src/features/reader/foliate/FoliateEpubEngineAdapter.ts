@@ -1423,8 +1423,25 @@ export class FoliateEpubEngineAdapter {
 
   /**
    * Map an iframe-local rect (e.g. anchor.getBoundingClientRect()) into the
-   * WebView's CSS-pixel space. Same mapping the selection bubble uses, so
-   * the coordinates are directly usable as native points.
+   * WebView's CSS-pixel space. Same mapping the selection bubble uses.
+   *
+   * The returned rect is in **native window points** (== RN
+   * `Dimensions.get('window')` points), not just WebView-local:
+   * - `frameElement.getBoundingClientRect()` is relative to the host
+   *   document viewport, i.e. the WKWebView viewport origin.
+   * - The Expo DOM host view is `flex: 1` directly inside the Reader root
+   *   view, which is `flex: 1` at window origin (0,0) (`headerShown: false`,
+   *   no transform, no margin/padding) — so the WebView viewport origin
+   *   coincides with the window origin.
+   * - WKWebView maps DOM CSS px 1:1 to UIKit points (no page zoom); the
+   *   measured scale below is iframe→host-document CSS px scale for
+   *   foliate's column layout, NOT a device-pixel scale.
+   * - `getBoundingClientRect()` is already post-transform, so foliate's
+   *   pagination transforms are accounted for exactly once, here.
+   *
+   * Do not add safe-area offsets here; window conversion already includes
+   * them. Do not pass DOM-local or Reader-local coordinates to native —
+   * this rect is final.
    */
   private mapIframeRectToWebView(rect: { left: number; top: number; right: number; bottom: number }, doc: Document): FootnoteAnchorRect {
     const frame = doc.defaultView?.frameElement as HTMLElement | null;

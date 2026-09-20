@@ -15,10 +15,12 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 //
 // Coordinate contract (see FoliateEpubEngineAdapter.mapIframeRectToWebView):
 // `anchor` is in **native window points** — the same space as RN
-// `Dimensions.get('window')`. No scale multiplication: RN layout points and
-// UIKit layout points are the same unit. The DOM -> window conversion
-// (iframe rect + frame offset + pagination transform) happens in the
-// adapter, not here.
+// `Dimensions.get('window')`. Coordinates are UIKit window points. Do not
+// pass DOM-local or Reader-local coordinates. No scale multiplication: RN
+// layout points and UIKit layout points are the same unit, and the DOM ->
+// window conversion (iframe rect + frame offset + pagination transform)
+// happens in the adapter, not here. Do not add safe-area offsets here;
+// window conversion already includes them.
 
 export type FootnotePopoverAnchor = {
   /** X in native window points (= RN Dimensions.get('window') points). */
