@@ -134,10 +134,13 @@ type PendingPageTurn = {
   direction: 'next' | 'prev';
 };
 
-// ── Footnote popover (Footnote Core A) ─────────────────────────────
-// Semantic-first footnote support: only anchors/targets carrying explicit
-// EPUB footnote semantics are intercepted. Non-semantic links keep their
-// default behavior; DEV logs record candidates for future heuristics.
+// ── Footnote popover ──────────────────────────────────────────────
+// Semantic-first footnote support: explicit EPUB footnote semantics are
+// intercepted first; conservative heuristics then cover real-world
+// non-semantic patterns (v2: same-document plain links; v3: Kindle-style
+// cross-document endnotes, Duokan embedded-text markers, Calibre dl/dd,
+// vendor class names). Non-footnote links keep default behavior; rejected
+// taps always fall back to the EPUB's natural navigation, never swallowed.
 
 type FootnoteReference = {
   rawHref: string;
@@ -149,9 +152,19 @@ type FootnoteReference = {
   semanticType: FootnoteSemanticType;
   /** Same-document target, resolved synchronously during classification. */
   targetElement: Element | null;
+  /** Duokan/Zhangyue-style note text embedded in the marker itself. */
+  embeddedText: string | null;
 };
 
-const FOOTNOTE_BACKLINK_ARROWS = new Set(['↩', '↪', '↑', '↓', '⏎', '←', '→', '^', '«', '»']);
+const FOOTNOTE_BACKLINK_ARROWS = new Set(['↩', '↪', '↑', '↓', '⏎', '←', '→', '^', '«', '»', '◎']);
+/** Selector for explicit backlink markup (German publishers use `referrer`). */
+const FOOTNOTE_BACKLINK_SELECTOR = '[epub\\:type="backlink"], [epub\\:type="referrer"], [role="doc-backlink"]';
+/** Anchor classes marking a footnote reference (Pandoc/Calibre/Duokan/EPUB2-era). */
+const FOOTNOTE_MARKER_CLASSES = new Set(['footnote-ref', 'noteref', 'duokan-footnote', 'endnotelink']);
+/** Backlink classes (Pandoc `footnote-back`, EPUB2 `EndNoteBackLink`, Duokan `fnsymbol`, …). */
+const FOOTNOTE_BACKLINK_CLASS_RE = /footnote-back|endnotebacklink|fnsymbol|simpara/i;
+/** Image attributes carrying Duokan/Zhangyue-style embedded note text. */
+const FOOTNOTE_IMG_TEXT_ATTRS = ['zy-footnote', 'data-footnote', 'data-footnote-text', 'data-note-text'];
 const FOOTNOTE_LEADING_NUMBER_RE = /^[0-9\s.\[\]()\-–—]+$/;
 const FOOTNOTE_LEADING_NUMBER_PREFIX_RE = /^[0-9\s.\[\]()\-–—]+?(?=\s)/;
 const FOOTNOTE_EXTERNAL_SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
@@ -219,19 +232,63 @@ function isFootnoteTargetElement(element: Element): boolean {
 const FOOTNOTE_HEURISTIC_MARKER_RE = /^[0-9¹²³⁴⁵⁶⁷⁸⁹⁰\s.[\]()\-–—*†‡〔〕【】〈〉《》]+$/;
 /** Section headings that suggest a notes area: 注/释/footnote/endnote. */
 const FOOTNOTE_NOTES_HEADING_RE = /注|释|footnote|endnote/i;
-/** id/class hints: footnote, endnote, fn1, note-2 … */
-const FOOTNOTE_ID_CLASS_HINT_RE = /footnote|endnote|^(fn|note)[-_ ]?\d*$/i;
+/** id/class hints: footnote, endnote, fn1, note-2, ntb, references … */
+const FOOTNOTE_ID_CLASS_HINT_RE = /footnote|endnote|ntb|references|^(fn|note)[-_ ]?\d*$/i;
 /** Minimum substantive text for a heuristic target (avoids empty anchors). */
 const FOOTNOTE_HEURISTIC_MIN_TEXT = 4;
 /** Tags that disqualify a heuristic target (TOC-style jumps). */
 const FOOTNOTE_HEURISTIC_BAD_TARGET_RE = /^(h1|h2|h3|h4|h5|h6|a|script|style)$/i;
 
+/**
+ * True for backlink-ish labels: a bare arrow/dingbat ("↩", "◎"), or the
+ * glyph with a trailing number ("←1", "◎2"). Variation selectors are
+ * stripped first ("↩︎" → "↩"). Deliberately excludes "*": it doubles as a
+ * footnote marker in real books.
+ */
+function isBacklinkLabel(rawLabel: string): boolean {
+  const label = rawLabel.replace(/[\uFE0E\uFE0F]/g, '').trim();
+  if (label === '') return false;
+  if (FOOTNOTE_BACKLINK_ARROWS.has(label)) return true;
+  const glyphs = label.replace(/[0-9\s.[\]()\-–—¹²³⁴⁵⁶⁷⁸⁹⁰]/g, '');
+  return glyphs.length > 0
+    && glyphs.length < label.length
+    && [...glyphs].every((ch) => FOOTNOTE_BACKLINK_ARROWS.has(ch));
+}
+
 /** True when the anchor itself is a "back to text" link — never intercepted. */
 function isBacklinkAnchor(anchor: HTMLAnchorElement): boolean {
   const epubType = anchor.getAttribute('epub:type');
   const role = anchor.getAttribute('role');
-  if (epubType === 'backlink' || role === 'doc-backlink') return true;
-  return FOOTNOTE_BACKLINK_ARROWS.has((anchor.textContent ?? '').trim());
+  if (epubType === 'backlink' || epubType === 'referrer' || role === 'doc-backlink') return true;
+  if (FOOTNOTE_BACKLINK_CLASS_RE.test(anchor.getAttribute('class') ?? '')) return true;
+  return isBacklinkLabel(anchor.textContent ?? '');
+}
+
+/** True when the anchor carries a known footnote-marker class. */
+function hasFootnoteMarkerClass(anchor: HTMLAnchorElement): boolean {
+  const tokens = (anchor.getAttribute('class') ?? '').toLowerCase().split(/\s+/);
+  return tokens.some((token) => FOOTNOTE_MARKER_CLASSES.has(token));
+}
+
+/**
+ * Duokan/Zhangyue-style embedded note text: the note lives in an image
+ * attribute (`zy-footnote`, `data-footnote*`) inside the marker anchor,
+ * with `alt` as fallback. Returns the text or null.
+ */
+function getEmbeddedFootnoteText(anchor: HTMLAnchorElement): string | null {
+  const candidates: Element[] = [anchor, ...Array.from(anchor.querySelectorAll('img'))];
+  for (const el of candidates) {
+    for (const attr of FOOTNOTE_IMG_TEXT_ATTRS) {
+      const value = el.getAttribute(attr)?.trim();
+      if (value) return value;
+    }
+  }
+  for (const img of Array.from(anchor.querySelectorAll('img'))) {
+    const alt = img.getAttribute('alt')?.trim() ?? '';
+    // Generic alts ("note", "icon") are not note text.
+    if (alt.length >= 6) return alt;
+  }
+  return null;
 }
 
 /**
@@ -241,7 +298,14 @@ function isBacklinkAnchor(anchor: HTMLAnchorElement): boolean {
  * heuristics operate on the actual note content.
  */
 function resolveFootnoteBody(target: Element): Element {
-  if (target.tagName.toLowerCase() !== 'a') return target;
+  const tag = target.tagName.toLowerCase();
+  if (tag === 'dt') {
+    // Calibre-style `<dl class="footnote"><dt>[←1]</dt><dd>…</dd></dl>`:
+    // the definition list is the note body (dt labels are stripped later).
+    const dl = target.closest('dl');
+    if (dl) return dl;
+  }
+  if (tag !== 'a') return target;
   const label = (target.textContent ?? '').trim();
   // An anchor carrying real text is the content itself; a marker-like (or
   // empty) anchor is just a marker — delegate to the enclosing block.
@@ -249,7 +313,7 @@ function resolveFootnoteBody(target: Element): Element {
     || label.length < FOOTNOTE_HEURISTIC_MIN_TEXT
     || FOOTNOTE_HEURISTIC_MARKER_RE.test(label);
   if (!isMarker) return target;
-  const parent = target.closest('p,li,aside,div,section,blockquote,dd');
+  const parent = target.closest('p,li,aside,div,section,blockquote,dd,dl');
   return parent && parent !== target ? parent : target;
 }
 
@@ -350,6 +414,41 @@ function isHeuristicFootnoteReference(
     footnoteTargetHasBacklink(target, anchor.getAttribute('id'))
     || footnoteTargetInNotesSection(target)
     || footnoteTargetIdClassHint(target)
+    || hasFootnoteMarkerClass(anchor)
+  );
+}
+
+/**
+ * Sync gate for the cross-document heuristic (Kindle-style semantic-less
+ * endnotes: `<sup><a href="footnotes.html#fn1">[2]</a></sup>`). Cheap
+ * checks only — the target document is loaded and verified asynchronously
+ * in openFootnotePopover, which falls back to default navigation on
+ * rejection, so a tap is never swallowed.
+ */
+function isHeuristicCrossDocFootnoteReference(anchor: HTMLAnchorElement): boolean {
+  if (isBacklinkAnchor(anchor)) return false;
+  if (isInFootnoteArea(anchor)) return false;
+  const label = (anchor.textContent ?? '').trim();
+  const labelOk = label !== '' && label.length <= 8 && FOOTNOTE_HEURISTIC_MARKER_RE.test(label);
+  if (!labelOk && !getEmbeddedFootnoteText(anchor) && !hasFootnoteMarkerClass(anchor)) return false;
+  return true;
+}
+
+/**
+ * Target-side verification for the cross-document heuristic, run against
+ * the loaded target document. Mirrors the same-document signals; the
+ * backlink check also matches cross-document backlinks by fragment
+ * (`<a href="chapter01.html#r1">` ↔ marker `id="r1"`).
+ */
+function isHeuristicCrossDocFootnoteTarget(target: Element, anchor: HTMLAnchorElement): boolean {
+  if (FOOTNOTE_HEURISTIC_BAD_TARGET_RE.test(target.tagName)) return false;
+  const text = (target.textContent ?? '').replace(/\s+/g, ' ').trim();
+  if (text.length < FOOTNOTE_HEURISTIC_MIN_TEXT) return false;
+  return (
+    getFootnoteSemanticType(target) !== null
+    || footnoteTargetHasBacklink(target, anchor.getAttribute('id'))
+    || footnoteTargetInNotesSection(target)
+    || footnoteTargetIdClassHint(target)
   );
 }
 
@@ -361,40 +460,33 @@ function isHeuristicFootnoteReference(
  * same-document link pointing back at the citing anchor's own id.
  */
 function cleanFootnoteClone(clone: Element, citingAnchorId?: string | null): void {
-  for (const backlink of Array.from(clone.querySelectorAll('[epub\\:type="backlink"], [role="doc-backlink"]'))) {
-    backlink.remove();
+  // Calibre-style definition lists: the <dt> cells are just labels
+  // ("[←1]"); the <dd> cells carry the note text.
+  if (clone.tagName.toLowerCase() === 'dl') {
+    for (const dt of Array.from(clone.querySelectorAll(':scope > dt'))) dt.remove();
   }
-  for (const anchor of Array.from(clone.querySelectorAll('a'))) {
-    const href = anchor.getAttribute('href') ?? '';
-    const label = (anchor.textContent ?? '').trim();
-    if (anchor.getAttribute('epub:type') === 'backlink' || anchor.getAttribute('role') === 'doc-backlink') {
-      anchor.remove();
-    } else if (href.startsWith('#') && FOOTNOTE_BACKLINK_ARROWS.has(label)) {
-      anchor.remove();
-    } else if (citingAnchorId) {
-      const hashIndex = href.indexOf('#');
-      if (hashIndex >= 0 && decodeFootnoteFragment(href.slice(hashIndex + 1)) === citingAnchorId) {
+  const stripBacklinks = () => {
+    for (const backlink of Array.from(clone.querySelectorAll(FOOTNOTE_BACKLINK_SELECTOR))) {
+      backlink.remove();
+    }
+    for (const anchor of Array.from(clone.querySelectorAll('a'))) {
+      const href = anchor.getAttribute('href') ?? '';
+      const label = (anchor.textContent ?? '').trim();
+      const anchorEpubType = anchor.getAttribute('epub:type');
+      if (anchorEpubType === 'backlink' || anchorEpubType === 'referrer' || anchor.getAttribute('role') === 'doc-backlink') {
         anchor.remove();
+      } else if (href.startsWith('#') && isBacklinkLabel(label)) {
+        anchor.remove();
+      } else if (citingAnchorId) {
+        const hashIndex = href.indexOf('#');
+        if (hashIndex >= 0 && decodeFootnoteFragment(href.slice(hashIndex + 1)) === citingAnchorId) {
+          anchor.remove();
+        }
       }
     }
-  }
-  for (const backlink of Array.from(clone.querySelectorAll('[epub\\:type="backlink"], [role="doc-backlink"]'))) {
-    backlink.remove();
-  }
-  for (const anchor of Array.from(clone.querySelectorAll('a'))) {
-    const href = anchor.getAttribute('href') ?? '';
-    const label = (anchor.textContent ?? '').trim();
-    if (anchor.getAttribute('epub:type') === 'backlink' || anchor.getAttribute('role') === 'doc-backlink') {
-      anchor.remove();
-    } else if (href.startsWith('#') && FOOTNOTE_BACKLINK_ARROWS.has(label)) {
-      anchor.remove();
-    } else if (citingAnchorId) {
-      const hashIndex = href.indexOf('#');
-      if (hashIndex >= 0 && decodeFootnoteFragment(href.slice(hashIndex + 1)) === citingAnchorId) {
-        anchor.remove();
-      }
-    }
-  }
+  };
+  stripBacklinks();
+  stripBacklinks();
   for (const inert of Array.from(clone.querySelectorAll('script, style, template, iframe, object, embed, audio, video, form, input, button, select, textarea'))) {
     inert.remove();
   }
@@ -1394,7 +1486,16 @@ export class FoliateEpubEngineAdapter {
     this.footnoteTapSelectionGuard = false;
     if (!doc || event.defaultPrevented) return;
     const target = event.target as Element | null;
-    const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null;
+    let anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null;
+    if (!anchor) {
+      // Href-less footnote markers (Duokan/Zhangyue image markers): only
+      // intercept when the anchor carries a footnote-marker class or
+      // embedded note text — bare named anchors keep default (no-op).
+      const bareAnchor = target?.closest?.('a') as HTMLAnchorElement | null;
+      if (bareAnchor && (hasFootnoteMarkerClass(bareAnchor) || getEmbeddedFootnoteText(bareAnchor))) {
+        anchor = bareAnchor;
+      }
+    }
     if (!anchor) return;
     // Priority: text selection > footnote. A tap that began with an active
     // selection (or still has one) keeps its historical behavior: the tap
@@ -1412,9 +1513,10 @@ export class FoliateEpubEngineAdapter {
       return;
     }
     const anchorLabel = anchor.textContent ?? '';
-    if (!ref.crossDocument && ref.targetElement) {
+    if (!ref.crossDocument && ref.targetElement && !ref.embeddedText) {
       // Never swallow a tap: if the footnote has no extractable content,
       // let the EPUB's default anchor navigation proceed untouched.
+      // (With embedded marker text there is always something to show.)
       if (!extractFootnoteContent(ref.targetElement, anchorLabel, anchor.getAttribute('id')).text) {
         if (__DEV__) console.log('[FOOTNOTE_EMPTY]', JSON.stringify({ rawHref: ref.rawHref }));
         return;
@@ -1481,16 +1583,29 @@ export class FoliateEpubEngineAdapter {
    */
   private classifyFootnoteAnchor(doc: Document, anchor: HTMLAnchorElement): FootnoteReference | null {
     const rawHref = anchor.getAttribute('href')?.trim() ?? '';
-    if (!rawHref || FOOTNOTE_EXTERNAL_SCHEME_RE.test(rawHref)) return null;
+    const book = this.view?.book;
+    const sectionIndex = this.loadedDocuments.get(doc) ?? -1;
+    const section = sectionIndex >= 0 ? book?.sections?.[sectionIndex] : undefined;
+    const currentId = section?.id ?? null;
+    const embeddedText = getEmbeddedFootnoteText(anchor);
+    if (!rawHref) {
+      // Href-less marker: only Duokan-style embedded-text markers are
+      // intercepted (the note text lives in the marker itself).
+      if (embeddedText && (hasFootnoteMarkerClass(anchor) || anchor.querySelector('img'))) {
+        return {
+          rawHref: '', fragment: '', targetPath: currentId ?? '', crossDocument: false,
+          sectionIndex, isExplicitNoteref: false, semanticType: 'heuristic',
+          targetElement: null, embeddedText,
+        };
+      }
+      return null;
+    }
+    if (FOOTNOTE_EXTERNAL_SCHEME_RE.test(rawHref)) return null;
     const hashIndex = rawHref.indexOf('#');
     if (hashIndex < 0) return null;
     const fragment = decodeFootnoteFragment(rawHref.slice(hashIndex + 1));
     if (!fragment) return null;
     const rawPath = rawHref.slice(0, hashIndex);
-    const book = this.view?.book;
-    const sectionIndex = this.loadedDocuments.get(doc) ?? -1;
-    const section = sectionIndex >= 0 ? book?.sections?.[sectionIndex] : undefined;
-    const currentId = section?.id ?? null;
     let targetPath: string | null = null;
     if (!rawPath) {
       targetPath = currentId;
@@ -1514,34 +1629,53 @@ export class FoliateEpubEngineAdapter {
 
     if (!crossDocument) {
       const targetElement = findFragmentElement(doc, fragment);
-      if (isExplicitNoteref) {
-        if (!targetElement) {
+      if (!targetElement) {
+        // Duokan-style: the note text is embedded in the marker itself,
+        // so no target element is needed.
+        if (embeddedText) {
+          return {
+            rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref,
+            semanticType: isExplicitNoteref ? anchorSemanticType : 'heuristic',
+            targetElement: null, embeddedText,
+          };
+        }
+        if (isExplicitNoteref) {
           // Explicit noteref with an unresolvable target: fall back to the
           // EPUB's default navigation instead of swallowing the tap.
           if (__DEV__) console.log('[FOOTNOTE_TARGET_MISSING]', JSON.stringify({ rawHref, sectionIndex }));
-          return null;
         }
-        return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: anchorSemanticType, targetElement };
+        return null;
       }
-      if (targetElement && isFootnoteTargetElement(targetElement)) {
-        return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: getFootnoteSemanticType(targetElement)!, targetElement };
+      if (isExplicitNoteref) {
+        return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: anchorSemanticType, targetElement, embeddedText };
+      }
+      if (isFootnoteTargetElement(targetElement)) {
+        return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: getFootnoteSemanticType(targetElement)!, targetElement, embeddedText };
       }
       // Heuristic fallback (v2): non-semantic links that look like footnote
       // references (plain `<a href="#fn1">1</a>` in real-world books). The
       // empty-content guard in the click handler still applies, so a tap is
       // never swallowed when nothing extractable exists.
-      const body = targetElement ? resolveFootnoteBody(targetElement) : null;
-      if (body && isHeuristicFootnoteReference(anchor, body)) {
+      const body = resolveFootnoteBody(targetElement);
+      if (isHeuristicFootnoteReference(anchor, body)) {
         if (__DEV__) console.log('[FOOTNOTE_HEURISTIC]', JSON.stringify({ rawHref, sectionIndex }));
-        return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: 'heuristic', targetElement: body };
+        return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: 'heuristic', targetElement: body, embeddedText };
       }
       return null;
     }
 
-    // Cross-document v1: intercept only explicit noteref anchors (the stable
-    // standard path). Other cross-document links keep default behavior.
-    if (!isExplicitNoteref) return null;
-    return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: anchorSemanticType, targetElement: null };
+    // Cross-document: explicit noterefs (the stable standard path), plus the
+    // heuristic path for Kindle-style semantic-less endnotes (marker-like
+    // label; the target document is verified after loading, with default
+    // navigation as fallback).
+    if (isExplicitNoteref) {
+      return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: anchorSemanticType, targetElement: null, embeddedText };
+    }
+    if (isHeuristicCrossDocFootnoteReference(anchor)) {
+      if (__DEV__) console.log('[FOOTNOTE_HEURISTIC_XDOC]', JSON.stringify({ rawHref, sectionIndex }));
+      return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: 'heuristic', targetElement: null, embeddedText };
+    }
+    return null;
   }
 
   private async openFootnotePopover(doc: Document, anchor: HTMLAnchorElement, ref: FootnoteReference): Promise<void> {
@@ -1575,6 +1709,25 @@ export class FoliateEpubEngineAdapter {
         if (__DEV__) console.log('[FOOTNOTE_RESOLVE_FAILED]', JSON.stringify({ rawHref: ref.rawHref }));
       }
       targetElement = targetDoc ? findFragmentElement(targetDoc, ref.fragment) : null;
+      if (targetElement && !ref.isExplicitNoteref) {
+        // Cross-document heuristic: verify the loaded target actually looks
+        // like a footnote; otherwise fall through to the navigation fallback
+        // below so the tap is never swallowed.
+        const body = resolveFootnoteBody(targetElement);
+        if (isHeuristicCrossDocFootnoteTarget(body, anchor)) {
+          targetElement = body;
+        } else {
+          if (__DEV__) console.log('[FOOTNOTE_HEURISTIC_XDOC_REJECT]', JSON.stringify({ rawHref: ref.rawHref }));
+          targetElement = null;
+        }
+      }
+      if (!targetElement && ref.embeddedText) {
+        // Duokan-style embedded note text: synthesize a body element so the
+        // normal extraction pipeline (cleaning, rich text, HTML) applies.
+        const p = doc.createElement('p');
+        p.textContent = ref.embeddedText;
+        targetElement = p;
+      }
       if (!targetElement) {
         if (__DEV__) console.log('[FOOTNOTE_TARGET_MISSING]', JSON.stringify({ rawHref: ref.rawHref, crossDocument: true }));
         // Fallback: the EPUB's natural navigation to the resolved target.
@@ -1586,6 +1739,12 @@ export class FoliateEpubEngineAdapter {
         return;
       }
     }
+    if (!targetElement && ref.embeddedText) {
+      // Same-document embedded note text with no resolvable target.
+      const p = doc.createElement('p');
+      p.textContent = ref.embeddedText;
+      targetElement = p;
+    }
     if (!targetElement) return;
     // The cross-document path awaits I/O above; the reader may have paginated
     // meanwhile. Never open a popover against a detached anchor rect.
@@ -1593,7 +1752,15 @@ export class FoliateEpubEngineAdapter {
       if (__DEV__) console.log('[FOOTNOTE_ANCHOR_GONE]', JSON.stringify({ rawHref: ref.rawHref }));
       return;
     }
-    const { text, richText, html } = extractFootnoteContent(targetElement, anchor.textContent ?? '', anchor.getAttribute('id'));
+    let extracted = extractFootnoteContent(targetElement, anchor.textContent ?? '', anchor.getAttribute('id'));
+    if (!extracted.text && ref.embeddedText) {
+      // The target had no extractable content; fall back to the marker's
+      // embedded note text instead of navigating away.
+      const p = doc.createElement('p');
+      p.textContent = ref.embeddedText;
+      extracted = extractFootnoteContent(p, anchor.textContent ?? '', anchor.getAttribute('id'));
+    }
+    const { text, richText, html } = extracted;
     if (!text) {
       if (__DEV__) console.log('[FOOTNOTE_EMPTY]', JSON.stringify({ rawHref: ref.rawHref, crossDocument: ref.crossDocument }));
       // Fallback: the EPUB's natural navigation to the resolved target, so
