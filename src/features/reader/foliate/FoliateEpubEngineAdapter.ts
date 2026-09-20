@@ -221,12 +221,17 @@ function isFootnoteTargetElement(element: Element): boolean {
   return getFootnoteSemanticType(element) !== null;
 }
 
-// ── Heuristic footnote detection (v2) ─────────────────────────────────
-// Semantic-first stays the primary path. These heuristics only run for
-// same-document fragment links that carry NO explicit footnote semantics,
-// so real-world books with plain `<a href="#fn1">1</a>` markers also pop
-// over instead of jumping to the chapter end. Conservative by design:
-// every base condition must hold, plus at least one footnote signal.
+// ── Heuristic footnote detection (exclusion-based) ────────────────────
+// Semantic-first stays the primary path. For fragment links with NO
+// explicit footnote semantics, the heuristic now defaults to ACCEPT: any
+// marker-like inline link (`[1]`, `1`, `*`, `〔1〕` …) in body text whose
+// target carries substantive text pops over, unless an exclusion fires
+// (backlink label, inside a notes area / TOC / nav / heading, or a
+// heading-like target). EPUB producers invent a new footnote markup
+// variant per book; an allowlist of "footnote signals" can never keep up,
+// while the exclusions cover the shapes that are genuinely not footnotes.
+// A tap is still never swallowed: targets with no extractable content
+// fall back to default navigation in the click handler.
 
 /** Marker-like labels: digits, [1], (1), 〔1〕, superscript ¹²³, *, †, ‡. */
 const FOOTNOTE_HEURISTIC_MARKER_RE = /^[0-9¹²³⁴⁵⁶⁷⁸⁹⁰\s.[\]()\-–—*†‡〔〕【】〈〉《》]+$/;
@@ -322,8 +327,7 @@ function resolveFootnoteBody(target: Element): Element {
  * some producers put it on an empty placeholder anchor immediately before
  * the marker link instead:
  * `<a id="w1"></a><a href="part0065.xhtml#m1"><sup>[1]</sup></a>`.
- * Used both to recognize the mutual-linkage footnote pattern and to strip
- * the backlink from the extracted popover content.
+ * Used to strip the backlink from the extracted popover content.
  */
 function resolveCitingAnchorId(anchor: HTMLAnchorElement): string | null {
   const ownId = anchor.getAttribute('id');
@@ -338,26 +342,6 @@ function resolveCitingAnchorId(anchor: HTMLAnchorElement): string | null {
     return prev.getAttribute('id');
   }
   return null;
-}
-
-/**
- * True when the target contains a back-to-text link. Besides explicit
- * backlink semantics and arrow labels, recognizes mutual linkage: a link
- * whose fragment equals the citing anchor's own id (e.g. `<a class="hl"
- * href="#id0">` inside the note citing `<a id="id0">`). Sloppy real-world
- * books use this instead of any backlink markup.
- */
-function footnoteTargetHasBacklink(target: Element, anchorId: string | null): boolean {
-  const links = target.querySelectorAll('a[href]');
-  for (const link of Array.from(links)) {
-    const href = link.getAttribute('href') ?? '';
-    if (FOOTNOTE_EXTERNAL_SCHEME_RE.test(href)) continue;
-    const hashIndex = href.indexOf('#');
-    if (hashIndex < 0) continue;
-    if (isBacklinkAnchor(link as HTMLAnchorElement)) return true;
-    if (anchorId && decodeFootnoteFragment(href.slice(hashIndex + 1)) === anchorId) return true;
-  }
-  return false;
 }
 
 /**
@@ -393,6 +377,23 @@ function isInFootnoteArea(element: Element): boolean {
 }
 
 /**
+ * Exclusion for the default-accept heuristic: links inside a table of
+ * contents or navigation landmark are navigational even when their label
+ * looks marker-like (e.g. a numeric chapter link `<a href="#ch1">1</a>`).
+ */
+function isInTocOrNav(element: Element): boolean {
+  return element.closest('nav, [role="doc-toc"], [epub\\:type="toc"]') != null;
+}
+
+/**
+ * Exclusion for the default-accept heuristic: a link inside a heading
+ * (e.g. inside a chapter title) navigates, it is not a footnote reference.
+ */
+function isInsideHeading(element: Element): boolean {
+  return element.closest('h1,h2,h3,h4,h5,h6') != null;
+}
+
+/**
  * Combined id + class string for footnote-hint matching. Trimmed: the
  * anchored `^(fn|note)[-_ ]?\d*$` alternative needs exact boundaries, so an
  * untrimmed `" note"` / `"fn1 "` would never match it.
@@ -401,38 +402,17 @@ function idClassHintString(el: Element): string {
   return `${el.getAttribute('id') ?? ''} ${(el as HTMLElement).className ?? ''}`.trim();
 }
 
-/**
- * True when the target sits inside a notes-like section: an ancestor
- * section/aside/div/ol/ul whose heading or id/class mentions
- * 注/释/footnote/endnote, or whose own id/class carries a note hint.
- */
-function footnoteTargetInNotesSection(target: Element): boolean {
-  let el: Element | null = target.parentElement;
-  while (el && el.tagName.toLowerCase() !== 'body') {
-    const tag = el.tagName.toLowerCase();
-    if (tag === 'section' || tag === 'aside' || tag === 'div' || tag === 'ol' || tag === 'ul') {
-      const idClass = idClassHintString(el);
-      if (FOOTNOTE_ID_CLASS_HINT_RE.test(idClass)) return true;
-      const headings = el.querySelectorAll('h1,h2,h3,h4,h5,h6');
-      for (const h of Array.from(headings)) {
-        // Only headings that belong directly to this section level.
-        if ((h as Element).parentElement !== el) continue;
-        if (FOOTNOTE_NOTES_HEADING_RE.test((h.textContent ?? ''))) return true;
-      }
-    }
-    el = el.parentElement;
-  }
-  return false;
-}
-
 function footnoteTargetIdClassHint(target: Element): boolean {
   return FOOTNOTE_ID_CLASS_HINT_RE.test(idClassHintString(target));
 }
 
 /**
  * Heuristic: does this non-semantic same-document link look like a footnote
- * reference whose target looks like a footnote body? All base conditions
- * must hold, plus at least one footnote signal.
+ * reference? Exclusion-based (default ACCEPT): a marker-like inline label
+ * (`[1]`, `1`, `*`, `〔1〕` …) pointing at a substantive non-heading target
+ * pops over, unless the link is clearly navigational — a backlink, inside
+ * the notes area / TOC / nav / a heading. New producer markup variants are
+ * accepted without needing a dedicated signal first.
  */
 function isHeuristicFootnoteReference(
   anchor: HTMLAnchorElement,
@@ -442,17 +422,14 @@ function isHeuristicFootnoteReference(
   // A tap inside the notes area is a backlink (or nested content), never a
   // new reference — leave it on default navigation.
   if (isInFootnoteArea(anchor)) return false;
+  if (isInTocOrNav(anchor)) return false;
+  if (isInsideHeading(anchor)) return false;
   const label = (anchor.textContent ?? '').trim();
   if (label === '' || label.length > 8 || !FOOTNOTE_HEURISTIC_MARKER_RE.test(label)) return false;
   if (FOOTNOTE_HEURISTIC_BAD_TARGET_RE.test(target.tagName)) return false;
   const text = (target.textContent ?? '').replace(/\s+/g, ' ').trim();
   if (text.length < FOOTNOTE_HEURISTIC_MIN_TEXT) return false;
-  return (
-    footnoteTargetHasBacklink(target, resolveCitingAnchorId(anchor))
-    || footnoteTargetInNotesSection(target)
-    || footnoteTargetIdClassHint(target)
-    || hasFootnoteMarkerClass(anchor)
-  );
+  return true;
 }
 
 /**
@@ -465,6 +442,8 @@ function isHeuristicFootnoteReference(
 function isHeuristicCrossDocFootnoteReference(anchor: HTMLAnchorElement): boolean {
   if (isBacklinkAnchor(anchor)) return false;
   if (isInFootnoteArea(anchor)) return false;
+  if (isInTocOrNav(anchor)) return false;
+  if (isInsideHeading(anchor)) return false;
   const label = (anchor.textContent ?? '').trim();
   const labelOk = label !== '' && label.length <= 8 && FOOTNOTE_HEURISTIC_MARKER_RE.test(label);
   if (!labelOk && !getEmbeddedFootnoteText(anchor) && !hasFootnoteMarkerClass(anchor)) return false;
@@ -473,20 +452,16 @@ function isHeuristicCrossDocFootnoteReference(anchor: HTMLAnchorElement): boolea
 
 /**
  * Target-side verification for the cross-document heuristic, run against
- * the loaded target document. Mirrors the same-document signals; the
- * backlink check also matches cross-document backlinks by fragment
- * (`<a href="chapter01.html#r1">` ↔ marker `id="r1"`).
+ * the loaded target document. Default ACCEPT (mirrors the same-document
+ * exclusion-based heuristic): a substantive non-heading target outside the
+ * target document's TOC/nav pops over.
  */
 function isHeuristicCrossDocFootnoteTarget(target: Element, anchor: HTMLAnchorElement): boolean {
   if (FOOTNOTE_HEURISTIC_BAD_TARGET_RE.test(target.tagName)) return false;
   const text = (target.textContent ?? '').replace(/\s+/g, ' ').trim();
   if (text.length < FOOTNOTE_HEURISTIC_MIN_TEXT) return false;
-  return (
-    getFootnoteSemanticType(target) !== null
-    || footnoteTargetHasBacklink(target, resolveCitingAnchorId(anchor))
-    || footnoteTargetInNotesSection(target)
-    || footnoteTargetIdClassHint(target)
-  );
+  if (isInTocOrNav(target)) return false;
+  return true;
 }
 
 /**
@@ -1692,8 +1667,10 @@ export class FoliateEpubEngineAdapter {
       if (isFootnoteTargetElement(targetElement)) {
         return { rawHref, fragment, targetPath, crossDocument, sectionIndex, isExplicitNoteref, semanticType: getFootnoteSemanticType(targetElement)!, targetElement, embeddedText };
       }
-      // Heuristic fallback (v2): non-semantic links that look like footnote
-      // references (plain `<a href="#fn1">1</a>` in real-world books). The
+      // Heuristic fallback (exclusion-based): non-semantic links that look
+      // like footnote references (plain `<a href="#fn1">1</a>` in real-world
+      // books) pop over by default; only navigational shapes (TOC/nav,
+      // headings, backlinks, notes-area taps) keep default navigation. The
       // empty-content guard in the click handler still applies, so a tap is
       // never swallowed when nothing extractable exists.
       const body = resolveFootnoteBody(targetElement);
