@@ -173,6 +173,8 @@ export function ReaderTocSheet({
   const [mode, setMode] = useState<ReaderNavigationMode>('toc');
   const [modeSwitching, setModeSwitching] = useState(false);
   const [listViewportHeight, setListViewportHeight] = useState(0);
+  // 打开目录时先隐藏列表，等滚动到当前章节居中后再显示，避免用户看到"先在顶部、再跳到中间"的闪动
+  const [tocHidden, setTocHidden] = useState(true);
   const flatToc = useMemo(() => flattenToc(toc, pageByDestination), [pageByDestination, toc]);
   const currentIndex = useMemo(() => findCurrentIndex(flatToc, currentLocation), [currentLocation, flatToc]);
   const centerInset = Math.max(0, (listViewportHeight - TOC_ROW_HEIGHT) / 2);
@@ -188,6 +190,9 @@ export function ReaderTocSheet({
       didAutoScrollRef.current = false;
       return;
     }
+    didAutoScrollRef.current = false;
+    // 同步在绘制前隐藏，避免闪出未居中的初始位置
+    setTocHidden(true);
     modeProgress.stopAnimation();
     modeProgress.setValue(0);
     setMode('toc');
@@ -203,11 +208,17 @@ export function ReaderTocSheet({
     // 改为延迟到动画完成后执行，成功执行后才标记。
     const timer = setTimeout(() => {
       const list = listRef.current;
-      if (!list) return;
+      if (!list) {
+        // 极端情况：拿不到列表引用也要显示出来，不能一直空白
+        setTocHidden(false);
+        return;
+      }
       const itemOffset = listTopPadding + currentIndex * TOC_ROW_HEIGHT;
       const centeredOffset = Math.max(0, itemOffset - centerInset);
       list.scrollToOffset({ animated: false, offset: centeredOffset });
       didAutoScrollRef.current = true;
+      // 滚动是同步生效的，下一帧显示时已经是居中好的位置
+      requestAnimationFrame(() => setTocHidden(false));
     }, 400);
     return () => clearTimeout(timer);
   }, [centerInset, currentIndex, isPresented, listTopPadding, listViewportHeight, mode]);
@@ -215,7 +226,12 @@ export function ReaderTocSheet({
   useEffect(() => {
     if (!isPresented) return undefined;
     const cleanup = scrollToCurrent();
-    return cleanup;
+    // 兜底：1.2 秒后强制显示，避免任何极端情况下列表一直空白
+    const fallback = setTimeout(() => setTocHidden(false), 1200);
+    return () => {
+      cleanup?.();
+      clearTimeout(fallback);
+    };
   }, [isPresented, scrollToCurrent]);
 
   const toggleMode = useCallback(() => {
@@ -292,7 +308,7 @@ export function ReaderTocSheet({
                   removeClippedSubviews
                   renderItem={renderTocItem}
                   nestedScrollEnabled
-                  style={[styles.list, { marginBottom: -insets.bottom }]}
+                  style={[styles.list, { marginBottom: -insets.bottom, opacity: tocHidden ? 0 : 1 }]}
                   windowSize={9}
                 />
               </Animated.View>
