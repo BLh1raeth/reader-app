@@ -3140,6 +3140,10 @@ export class FoliateEpubEngineAdapter {
         font-weight: 500 !important;
         line-height: ${this.readerSettings.lineHeight} !important;
         letter-spacing: ${this.readerSettings.letterSpacing}em !important;
+        /* Default to justified text for EPUBs that don't set their own alignment.
+           No !important so book CSS like text-align: center/left/right can still
+           override the inherited value (titles, poetry, etc.). */
+        text-align: justify;
       }
       body,
       body :is(p, li, blockquote, dd, dt, td, th, h1, h2, h3, h4, h5, h6, figcaption, caption),
