@@ -41,6 +41,13 @@ const GROUP_LABELS = {
 const CELL_RADIUS = 26;
 const CONTENT_HORIZONTAL_PADDING = 20;
 const ITEM_HORIZONTAL_PADDING = 16;
+// 正文右 inset：收起态是"裸文本 + 容器硬裁"（无省略号），iOS 按像素裁剪；
+// 窄 advance 的 CJK 标点（如"、"）字形墨水会超出 advance 被拦腰切断。
+// 6pt 让断行提前，字形墨水不贴裁剪边（禁则规则会把标点带下行）。
+// 注意：inset 必须下在容器上，不能下在 <Text> 自身——RN iOS 里 Text 的
+// padding 由原生文本容器（NSTextContainer）处理，多次 layout pass 算出的
+// 容器宽度可能差一丁点，每次点击都会让中文断行重排（2026-09-21 真机复现）。
+const QUOTE_RIGHT_INSET = 6;
 // 展开动画：收起态正文固定 2 行 × lineHeight 22 = 44pt
 //（与 styles.quote.lineHeight 耦合；改字号/行高时同步改这里）。
 const COLLAPSED_QUOTE_HEIGHT = 44;
@@ -204,7 +211,7 @@ function ExcerptFeedItemRow({
           onToggleExpand={onToggleExpand}
         />
       ) : (
-        quote
+        <View style={styles.quoteStaticWrap}>{quote}</View>
       )}
       {isTruncated === undefined ? (
         // 一次性不可见测量：同款式、同宽度、无行数限制，absolute 不占布局。
@@ -403,30 +410,39 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
     lineHeight: 22,
-    // 右 inset：收起态是"裸文本 + 容器硬裁"（无省略号），iOS 按像素裁剪；
-    // 窄 advance 的 CJK 标点（如"、"）字形墨水会超出 advance 被拦腰切断。
-    // 6pt 让断行提前，字形墨水不贴裁剪边（禁则规则会把标点带下行）。
-    // 三处共用（可见正文/隐藏测量/短摘录），断行与 fullHeight 测量保持一致。
-    paddingRight: 6,
+    // 右 inset 见 QUOTE_RIGHT_INSET：下在容器（quoteClip / quoteStaticWrap /
+    // quoteMeasure）上，不下在 Text 自身，避免 iOS 原生文本容器多次 layout
+    // 算出不同宽度导致断行漂移。
   },
   /**
    * 不可见截断测量：与 quote 同款式、同宽度、无行数限制。
-   * absolute + opacity 0 不占布局、不拦截触摸；left/right 与 item padding
-   * 对齐，保证测量宽度 = 可见正文宽度（行数判定才准确）。
+   * absolute + opacity 0 不占布局、不拦截触摸；left 与 item padding 对齐，
+   * right 额外吃掉 QUOTE_RIGHT_INSET，保证测量宽度 = 可见正文宽度
+   *（行数判定和 fullHeight 才准确）。
    */
   quoteMeasure: {
     position: 'absolute',
     left: ITEM_HORIZONTAL_PADDING,
-    right: ITEM_HORIZONTAL_PADDING,
+    right: ITEM_HORIZONTAL_PADDING + QUOTE_RIGHT_INSET,
     top: 0,
     opacity: 0,
   },
   /**
    * 展开动画的裁剪容器：overflow hidden + Reanimated 高度动画，
    * 像窗帘一样揭示全文；文字本体在动画中不重排。
+   * paddingRight = QUOTE_RIGHT_INSET：文字右端离裁剪边 6pt，
+   * 窄 advance 标点墨水不被拦腰切断（原先下在 Text 上，会触发断行漂移）。
    */
   quoteClip: {
     overflow: 'hidden',
+    paddingRight: QUOTE_RIGHT_INSET,
+  },
+  /**
+   * 短摘录（不截断、不可展开）的正文容器：只吃右 inset，
+   * 与可展开卡片的正文右边界对齐；无裁剪、无动画。
+   */
+  quoteStaticWrap: {
+    paddingRight: QUOTE_RIGHT_INSET,
   },
   note: {
     color: tokens.colors.secondaryLabel,
