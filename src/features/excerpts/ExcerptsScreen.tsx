@@ -102,7 +102,8 @@ function ExcerptFeedItemRow({
       {isTruncated ? (
         <Pressable
           onPress={() => onToggleExpand(item.id)}
-          style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
+          // 无 pressed 视觉反馈：opacity 跳变会与正文切换叠在同一帧，
+          // 在真机上被感知为文字闪烁。保持视觉极简，点按即展开/收起。
           accessibilityRole="button"
           accessibilityState={{ expanded: isExpanded }}
           accessibilityHint={isExpanded ? '轻点收起摘录' : '轻点展开完整摘录'}
