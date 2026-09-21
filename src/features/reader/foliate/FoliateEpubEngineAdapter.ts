@@ -43,6 +43,10 @@ type FoliateSection = {
   linear?: string;
   createDocument?: () => Promise<Document>;
   resolveHref?: (href: string) => string;
+  // Section pre-warm support: foliate's own loader entry points. load()
+  // warms the loader's blob-URL cache; unload() releases one refcount.
+  load?: () => Promise<unknown>;
+  unload?: () => void;
 };
 
 type FoliateResolvedHref = {
@@ -117,8 +121,17 @@ const TAP_MAX_DURATION_MS = 350;
 const TAP_MAX_MOVEMENT_PX = 10;
 const SWIPE_MIN_DISTANCE_PX = 42;
 const SWIPE_DIRECTION_DOMINANCE = 1.25;
+// A fast flick commits the page turn even short of SWIPE_MIN_DISTANCE_PX.
+// Velocity is px per ms, so 0.5 == 500 px/s. The minimum distance guards
+// against committing on tap jitter.
+const SWIPE_FLICK_MIN_DISTANCE_PX = 20;
+const SWIPE_FLICK_VELOCITY_PX_PER_MS = 0.5;
 const SELECTION_SETTLE_MS = 80;
 const PAGE_COUNT_BATCH_SIZE = 12;
+// Idle delay before warming the adjacent sections' loader cache. Only fires
+// when the reader has been idle this long, so rapid page-turning never pays
+// for pre-warm work it would outrun anyway.
+const SECTION_PREWARM_IDLE_MS = 1500;
 export const READER_VERTICAL_MARGIN_PX = 80;
 export const READER_CONTENT_OFFSET_Y_PX = 32;
 export const READER_CONTENT_HEIGHT_REDUCTION_PX = 32;
@@ -882,6 +895,10 @@ export class FoliateEpubEngineAdapter {
   private pointerSession: ReaderPointerSession | null = null;
   private pageTransitionActive = false;
   private pendingPageTurn: PendingPageTurn | null = null;
+  // Adjacent-section pre-warm: indexes whose loader cache entry we warmed and
+  // still owe exactly one unload() to. Paired on arrival or when stale.
+  private prewarmedSectionIndexes = new Set<number>();
+  private sectionPrewarmTimer: number | null = null;
   private rendererTouchCleanup: (() => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private resizeTimer: number | null = null;
@@ -1735,6 +1752,9 @@ export class FoliateEpubEngineAdapter {
     this.sectionTextCache.clear();
     this.textMeasureQueue = Promise.resolve();
     this.pendingNavigationReason = null;
+    // Release any warmed section cache entries while the view (and its book)
+    // is still reachable; each warmed section owes exactly one unload().
+    this.clearAllSectionPrewarms();
     if (this.view) {
       this.view.removeEventListener('relocate', this.handleRelocate);
       this.view.removeEventListener('load', this.handleDocumentLoad as EventListener);
@@ -1833,6 +1853,10 @@ export class FoliateEpubEngineAdapter {
     // (create-overlayer), so defer highlight paint by a frame; a same-frame
     // chapter turn makes this a harmless no-op via the section filter.
     requestAnimationFrame(() => { void this.applyHighlightsForSection(index); });
+    // The section changed (cross-section turn, TOC jump, or initial open):
+    // reconcile adjacent-section pre-warm around the new index. Same-section
+    // page turns don't change the adjacent set, so they need no work here.
+    if (index >= 0) this.reconcileSectionPrewarms(index);
   };
 
   private attachReaderGestures(doc: Document, index: number) {
@@ -2459,8 +2483,17 @@ export class FoliateEpubEngineAdapter {
     const zone = ratio === null ? 'unknown' : ratio <= TAP_EDGE_RATIO ? 'left' : ratio >= 1 - TAP_EDGE_RATIO ? 'right' : 'center';
     const blockedByState = this.reflowing;
     const isTap = movement < TAP_MAX_MOVEMENT_PX && duration < TAP_MAX_DURATION_MS;
-    const isHorizontalSwipe = Math.abs(screenDeltaX) >= SWIPE_MIN_DISTANCE_PX
-      && Math.abs(screenDeltaX) > Math.abs(screenDeltaY) * SWIPE_DIRECTION_DOMINANCE;
+    const absDeltaX = Math.abs(screenDeltaX);
+    const absDeltaY = Math.abs(screenDeltaY);
+    const isHorizontal = absDeltaX > absDeltaY * SWIPE_DIRECTION_DOMINANCE;
+    // Velocity-based commit: a quick flick turns the page even if it didn't
+    // travel the full distance threshold. duration is guarded against 0 so a
+    // zero-time event can never produce an infinite velocity.
+    const velocity = duration > 0 ? absDeltaX / duration : 0;
+    const isHorizontalSwipe = isHorizontal && (
+      absDeltaX >= SWIPE_MIN_DISTANCE_PX ||
+      (absDeltaX >= SWIPE_FLICK_MIN_DISTANCE_PX && velocity >= SWIPE_FLICK_VELOCITY_PX_PER_MS)
+    );
     const requestedAction = session.selectionWasActive || selectionActive || interactiveTarget || blockedByState || !this.view || this.restoreState !== 'active'
       ? 'none'
       : isHorizontalSwipe ? screenDeltaX < 0 ? 'next' : 'prev'
@@ -2595,6 +2628,95 @@ export class FoliateEpubEngineAdapter {
     const pendingTurn: PendingPageTurn | null = this.pendingPageTurn;
     this.pendingPageTurn = null;
     return pendingTurn;
+  }
+
+  /**
+   * Pre-warm the sections adjacent to `centerIndex` through foliate's own
+   * section loader while the reader is idle. This only warms the loader's
+   * blob-URL cache (zip inflate + resource rewrite); the iframe still loads
+   * and lays out on the real turn. Each warmed section holds exactly one
+   * loader refcount, released on arrival or when proven stale.
+   */
+  private prewarmAdjacentSections(centerIndex: number): void {
+    const sections = this.view?.book?.sections;
+    if (!sections || !this.view || this.restoreState !== 'active') return;
+    for (const dir of [1, -1] as const) {
+      const index = this.adjacentLinearSectionIndex(sections, centerIndex, dir);
+      if (index === null || this.prewarmedSectionIndexes.has(index)) continue;
+      try {
+        const pending = sections[index]?.load?.();
+        // Fire-and-forget: a rejection just means this section stays cold.
+        if (pending instanceof Promise) pending.catch(() => {});
+        // Recorded even if the load later rejects: unload() on a never-cached
+        // href is a safe no-op inside foliate's loader, so the pair always
+        // balances.
+        this.prewarmedSectionIndexes.add(index);
+      } catch {
+        // A section that can't even start loading stays cold; the real turn
+        // surfaces the error through foliate's normal path.
+      }
+    }
+  }
+
+  /** Mirror foliate's own adjacency: skip non-linear spine items. */
+  private adjacentLinearSectionIndex(
+    sections: FoliateSection[],
+    from: number,
+    dir: 1 | -1,
+  ): number | null {
+    for (let i = from + dir; i >= 0 && i < sections.length; i += dir) {
+      if (sections[i]?.linear !== 'no') return i;
+    }
+    return null;
+  }
+
+  private releaseSectionPrewarm(index: number): void {
+    if (!this.prewarmedSectionIndexes.delete(index)) return;
+    try {
+      this.view?.book?.sections?.[index]?.unload?.();
+    } catch {
+      // The loader refcount already settled; nothing to release.
+    }
+  }
+
+  /**
+   * Reconcile pre-warms after landing on `currentIndex`: release the one we
+   * just arrived at (the turn's own load() reffed again) and any that are no
+   * longer adjacent (TOC jumps, etc.). Then re-arm the idle timer.
+   */
+  private reconcileSectionPrewarms(currentIndex: number): void {
+    const sections = this.view?.book?.sections;
+    const keep = new Set<number>();
+    if (sections) {
+      for (const dir of [1, -1] as const) {
+        const adjacent = this.adjacentLinearSectionIndex(sections, currentIndex, dir);
+        if (adjacent !== null) keep.add(adjacent);
+      }
+    }
+    for (const index of [...this.prewarmedSectionIndexes]) {
+      if (index === currentIndex || !keep.has(index)) this.releaseSectionPrewarm(index);
+    }
+    this.scheduleSectionPrewarm(currentIndex);
+  }
+
+  private scheduleSectionPrewarm(centerIndex: number): void {
+    this.cancelSectionPrewarm();
+    this.sectionPrewarmTimer = window.setTimeout(() => {
+      this.sectionPrewarmTimer = null;
+      this.prewarmAdjacentSections(centerIndex);
+    }, SECTION_PREWARM_IDLE_MS);
+  }
+
+  private cancelSectionPrewarm(): void {
+    if (this.sectionPrewarmTimer !== null) {
+      window.clearTimeout(this.sectionPrewarmTimer);
+      this.sectionPrewarmTimer = null;
+    }
+  }
+
+  private clearAllSectionPrewarms(): void {
+    this.cancelSectionPrewarm();
+    for (const index of [...this.prewarmedSectionIndexes]) this.releaseSectionPrewarm(index);
   }
 
   private async turnWithCrossDissolve(direction: 'next' | 'prev') {
