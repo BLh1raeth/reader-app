@@ -1,5 +1,13 @@
 import { useCallback, useState } from 'react';
-import { SectionList, StyleSheet, Text, View } from 'react-native';
+import {
+  Pressable,
+  SectionList,
+  StyleSheet,
+  Text,
+  View,
+  type NativeSyntheticEvent,
+  type TextLayoutEventData,
+} from 'react-native';
 import { SymbolView } from 'expo-symbols';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -43,28 +51,82 @@ function ExcerptFeedItemRow({
   item,
   isFirst,
   isLast,
+  isExpanded,
+  isTruncated,
+  onToggleExpand,
+  onTruncationMeasured,
 }: {
   item: ExcerptFeedItem;
   isFirst: boolean;
   isLast: boolean;
+  isExpanded: boolean;
+  /**
+   * 基于真实 Text layout 的截断判定：
+   * true = 实际超过 2 行，可点击展开；false = 短摘录，完全不可交互；
+   * undefined = 尚未完成不可见测量。
+   */
+  isTruncated: boolean | undefined;
+  onToggleExpand: (itemId: string) => void;
+  onTruncationMeasured: (itemId: string, text: string, truncated: boolean) => void;
 }) {
+  // 不可见测量的 layout 回调：无 numberOfLines 的隐藏 Text 给出完整行数。
+  const handleMeasureLayout = useCallback(
+    (event: NativeSyntheticEvent<TextLayoutEventData>) => {
+      onTruncationMeasured(item.id, item.quoteText, event.nativeEvent.lines.length > 2);
+    },
+    [item.id, item.quoteText, onTruncationMeasured],
+  );
+
+  const quote = (
+    <Text
+      style={styles.quote}
+      numberOfLines={isExpanded ? undefined : 2}
+      ellipsizeMode="tail"
+    >
+      {item.quoteText}
+    </Text>
+  );
+
   return (
     <View
-      accessible
-      accessibilityLabel={accessibilityLabelFor(item)}
+      // 可展开时容器不再整体 accessible：让 quote 的 button 语义生效，
+      // 避免 VoiceOver 把内外合并成一个元素吞掉展开状态。
+      accessible={!isTruncated}
+      accessibilityLabel={isTruncated ? undefined : accessibilityLabelFor(item)}
       style={[
         styles.item,
         isFirst && styles.itemFirst,
         isLast && styles.itemLast,
       ]}
     >
-      <Text
-        style={styles.quote}
-        numberOfLines={2}
-        ellipsizeMode="tail"
-      >
-        {item.quoteText}
-      </Text>
+      {isTruncated ? (
+        <Pressable
+          onPress={() => onToggleExpand(item.id)}
+          style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: isExpanded }}
+          accessibilityHint={isExpanded ? '轻点收起摘录' : '轻点展开完整摘录'}
+          accessibilityLabel={item.quoteText}
+        >
+          {quote}
+        </Pressable>
+      ) : (
+        quote
+      )}
+      {isTruncated === undefined ? (
+        // 一次性不可见测量：同款式、同宽度、无行数限制，absolute 不占布局。
+        // 测出结果后即卸载，不再重测（文本变化时自动失效重测）。
+        <Text
+          style={[styles.quote, styles.quoteMeasure]}
+          onTextLayout={handleMeasureLayout}
+          pointerEvents="none"
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
+          aria-hidden
+        >
+          {item.quoteText}
+        </Text>
+      ) : null}
       {item.noteText ? (
         <Text
           style={styles.note}
@@ -89,10 +151,33 @@ export default function ExcerptsScreen() {
   const insets = useSafeAreaInsets();
   // null = loading（与 empty 区分开，避免 empty → 列表一闪而过）
   const [sections, setSections] = useState<ExcerptFeedSection[] | null>(null);
+  // 全 Feed 唯一展开态：纯 UI ephemeral state，不写数据库
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
+  // itemId -> { 测量时的文本, 是否实际超过 2 行 }；文本变化自动失效重测
+  const [truncInfo, setTruncInfo] = useState<Record<string, { text: string; truncated: boolean }>>({});
+
+  const handleTruncationMeasured = useCallback(
+    (itemId: string, text: string, truncated: boolean) => {
+      setTruncInfo((prev) => {
+        const cur = prev[itemId];
+        if (cur && cur.text === text && cur.truncated === truncated) return prev;
+        return { ...prev, [itemId]: { text, truncated } };
+      });
+    },
+    [],
+  );
+
+  const toggleExpand = useCallback((itemId: string) => {
+    // 同一时间只展开 1 条：点已展开的则收起，点另一条则切换
+    setExpandedItemId((prev) => (prev === itemId ? null : itemId));
+  }, []);
 
   const loadFeed = useCallback(async () => {
     try {
       const items = await listExcerptFeedItems();
+      const ids = new Set(items.map((i) => i.id));
+      // refresh 后展开项若已不存在（删书/删 annotation），清空悬空 id
+      setExpandedItemId((prev) => (prev !== null && ids.has(prev) ? prev : null));
       setSections(groupExcerptFeedItems(items, GROUP_LABELS));
     } catch (error) {
       if (__DEV__) console.error('[EXCERPT_FEED_LOAD_FAILED]', error);
@@ -136,6 +221,13 @@ export default function ExcerptsScreen() {
             item={item}
             isFirst={index === 0}
             isLast={index === section.data.length - 1}
+            isExpanded={expandedItemId === item.id}
+            isTruncated={(() => {
+              const info = truncInfo[item.id];
+              return info && info.text === item.quoteText ? info.truncated : undefined;
+            })()}
+            onToggleExpand={toggleExpand}
+            onTruncationMeasured={handleTruncationMeasured}
           />
         )}
         ItemSeparatorComponent={() => (
@@ -213,6 +305,18 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
     lineHeight: 22,
+  },
+  /**
+   * 不可见截断测量：与 quote 同款式、同宽度、无行数限制。
+   * absolute + opacity 0 不占布局、不拦截触摸；left/right 与 item padding
+   * 对齐，保证测量宽度 = 可见正文宽度（行数判定才准确）。
+   */
+  quoteMeasure: {
+    position: 'absolute',
+    left: ITEM_HORIZONTAL_PADDING,
+    right: ITEM_HORIZONTAL_PADDING,
+    top: 0,
+    opacity: 0,
   },
   note: {
     color: tokens.colors.secondaryLabel,
