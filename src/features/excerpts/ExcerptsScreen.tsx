@@ -163,7 +163,7 @@ export default function ExcerptsScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: tokens.colors.background,
+    backgroundColor: tokens.colors.groupedBackground,
   },
   content: {
     paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
