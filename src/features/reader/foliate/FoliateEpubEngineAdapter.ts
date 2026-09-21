@@ -93,8 +93,6 @@ type ReaderInteractionState = 'idle' | 'pointerDown' | 'turning' | 'selecting';
 
 type ReaderPointerSession = {
   pointerId: number;
-  startX: number;
-  startY: number;
   startScreenX: number;
   startScreenY: number;
   startedAt: number;
@@ -115,7 +113,7 @@ type ViewTransitionDocument = Document & {
 };
 
 const TAP_EDGE_RATIO = 0.25;
-const TAP_MAX_DURATION_MS = 280;
+const TAP_MAX_DURATION_MS = 350;
 const TAP_MAX_MOVEMENT_PX = 10;
 const SWIPE_MIN_DISTANCE_PX = 42;
 const SWIPE_DIRECTION_DOMINANCE = 1.25;
@@ -2410,8 +2408,6 @@ export class FoliateEpubEngineAdapter {
     const startedWhileTurning = this.interactionState === 'turning';
     this.pointerSession = {
       pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
       startScreenX: event.screenX,
       startScreenY: event.screenY,
       startedAt: event.timeStamp,
@@ -2431,9 +2427,14 @@ export class FoliateEpubEngineAdapter {
     if (!event.isPrimary || !session || session.pointerId !== event.pointerId) return;
     const doc = event.currentTarget as Document;
     this.pointerSession = null;
-    const movement = Math.hypot(event.clientX - session.startX, event.clientY - session.startY);
     const screenDeltaX = event.screenX - session.startScreenX;
     const screenDeltaY = event.screenY - session.startScreenY;
+    // Tap slop must be measured in visible-page (screen) coordinates, NOT
+    // clientX/clientY: those live in the EPUB's scaled column canvas (e.g.
+    // 2056px on a 430px iPhone page), so 10 canvas px was effectively ~2
+    // screen px and ordinary taps were silently dropped. screenX is already
+    // what the swipe detection below relies on.
+    const movement = Math.hypot(screenDeltaX, screenDeltaY);
     const duration = event.timeStamp - session.startedAt;
     const selectionActive = this.hasActiveSelection(doc);
     // Section documents render inside iframes while this adapter runs in the
