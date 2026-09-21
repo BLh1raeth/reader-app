@@ -485,6 +485,11 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
     lineHeight: 22,
+    // 右 inset：收起态是"裸文本 + 容器硬裁"（无省略号），iOS 按像素裁剪；
+    // 窄 advance 的 CJK 标点（如"、"）字形墨水会超出 advance 被拦腰切断。
+    // 6pt 让断行提前，字形墨水不贴裁剪边（禁则规则会把标点带下行）。
+    // 三处共用（可见正文/隐藏测量/短摘录），断行与 fullHeight 测量保持一致。
+    paddingRight: 6,
   },
   /**
    * 不可见截断测量：与 quote 同款式、同宽度、无行数限制。
