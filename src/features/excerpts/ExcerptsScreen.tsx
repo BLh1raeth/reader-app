@@ -44,9 +44,7 @@ const ITEM_HORIZONTAL_PADDING = 16;
 // 正文右 inset：收起态是"裸文本 + 容器硬裁"（无省略号），iOS 按像素裁剪；
 // 窄 advance 的 CJK 标点（如"、"）字形墨水会超出 advance 被拦腰切断。
 // 6pt 让断行提前，字形墨水不贴裁剪边（禁则规则会把标点带下行）。
-// 注意：inset 必须下在容器上，不能下在 <Text> 自身——RN iOS 里 Text 的
-// padding 由原生文本容器（NSTextContainer）处理，多次 layout pass 算出的
-// 容器宽度可能差一丁点，每次点击都会让中文断行重排（2026-09-21 真机复现）。
+// 下在容器上（quoteClip / quoteStaticWrap / quoteMeasure），不下在 Text 自身。
 const QUOTE_RIGHT_INSET = 6;
 // 展开动画：收起态正文固定 2 行 × lineHeight 22 = 44pt
 //（与 styles.quote.lineHeight 耦合；改字号/行高时同步改这里）。
@@ -74,6 +72,11 @@ function accessibilityLabelFor(item: ExcerptFeedItem): string {
  * UI 线程），文字本体零变化、零重排——已显示的行像素级不动，
  * 新行像窗帘一样一行一行露出来。刻意不加渐隐罩/省略号：
  * 任何覆盖在已显示行上的东西，出现和消失时都会"改变"它们。
+ *
+ * 关键：Text 高度冻结为全文自然高度（contentHeight）。iOS 排版时会以
+ * 容器的当前高度为约束——不冻结的话，每次点击/动画帧都会触发重排，
+ * 断行随容器高度漂移（2026-09-21 真机 + onTextLayout 日志实锤）。
+ * 冻结后排版只由 (文本, 样式, 宽度) 决定，点击不再触发任何重排。
  */
 function ExpandableQuote({
   item,
@@ -418,9 +421,7 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
     lineHeight: 22,
-    // 右 inset 见 QUOTE_RIGHT_INSET：下在容器（quoteClip / quoteStaticWrap /
-    // quoteMeasure）上，不下在 Text 自身，避免 iOS 原生文本容器多次 layout
-    // 算出不同宽度导致断行漂移。
+    // 右 inset 见 QUOTE_RIGHT_INSET：下在容器上，不下在 Text 自身。
   },
   /**
    * 不可见截断测量：与 quote 同款式、同宽度、无行数限制。
@@ -437,9 +438,9 @@ const styles = StyleSheet.create({
   },
   /**
    * 展开动画的裁剪容器：overflow hidden + Reanimated 高度动画，
-   * 像窗帘一样揭示全文；文字本体在动画中不重排。
+   * 像窗帘一样揭示全文；文字本体在动画中不重排（高度冻结见 contentHeight）。
    * paddingRight = QUOTE_RIGHT_INSET：文字右端离裁剪边 6pt，
-   * 窄 advance 标点墨水不被拦腰切断（原先下在 Text 上，会触发断行漂移）。
+   * 窄 advance 标点墨水不被拦腰切断。
    */
   quoteClip: {
     overflow: 'hidden',
