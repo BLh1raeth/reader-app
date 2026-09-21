@@ -89,6 +89,12 @@ function ExpandableQuote({
 }) {
   const heightSV = useSharedValue(COLLAPSED_QUOTE_HEIGHT);
   const reduceMotionRef = useRef(false);
+  // 正文高度冻结为全文自然高度（ceil 防亚像素裁剪）：Text 的排版只由
+  // (文本, 样式, 宽度, 固定高度) 决定，与外层动画容器的高度彻底解耦。
+  // 否则 iOS 会以容器当前高度为约束重排文本——onTextLayout 日志实锤：
+  // 每次点击展开/收起都会触发 3→4→5→6（或反向）多次重排，断行随高度漂移。
+  // 2026-09-21 真机复现，修完后点击应不再触发任何重排。
+  const contentHeight = Math.ceil(fullHeight);
 
   useEffect(() => {
     AccessibilityInfo.isReduceMotionEnabled()
@@ -104,7 +110,7 @@ function ExpandableQuote({
 
   useEffect(() => {
     const targetHeight = isExpanded
-      ? Math.max(fullHeight, COLLAPSED_QUOTE_HEIGHT)
+      ? Math.max(contentHeight, COLLAPSED_QUOTE_HEIGHT)
       : COLLAPSED_QUOTE_HEIGHT;
     if (reduceMotionRef.current) {
       heightSV.value = targetHeight;
@@ -115,7 +121,7 @@ function ExpandableQuote({
         easing: Easing.inOut(Easing.ease),
       });
     }
-  }, [isExpanded, fullHeight, heightSV]);
+  }, [isExpanded, contentHeight, heightSV]);
 
   return (
     <Pressable
@@ -128,7 +134,9 @@ function ExpandableQuote({
       accessibilityLabel={item.quoteText}
     >
       <Animated.View style={[styles.quoteClip, animatedStyle]}>
-        <Text style={styles.quote}>{item.quoteText}</Text>
+        <Text style={[styles.quote, { height: contentHeight }]}>
+          {item.quoteText}
+        </Text>
       </Animated.View>
     </Pressable>
   );
