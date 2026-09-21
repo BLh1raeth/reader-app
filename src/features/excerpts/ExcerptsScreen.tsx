@@ -25,20 +25,11 @@ const GROUP_LABELS = {
 
 const CELL_RADIUS = 20;
 const CONTENT_HORIZONTAL_PADDING = 20;
+const ITEM_HORIZONTAL_PADDING = 16;
 
 function sourceLine(item: ExcerptFeedItem): string {
   const book = `《${item.bookTitle}》`;
   return item.chapterTitle ? `${book} · ${item.chapterTitle}` : book;
-}
-
-/** 备忘录风格的日期：M/d/yy，如 8/26/26。 */
-function formatNotesDate(isoString: string): string {
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) return '';
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  const year = String(date.getFullYear()).slice(-2);
-  return `${month}/${day}/${year}`;
 }
 
 function accessibilityLabelFor(item: ExcerptFeedItem): string {
@@ -69,34 +60,27 @@ function ExcerptFeedItemRow({
     >
       <Text
         style={styles.quote}
-        numberOfLines={1}
+        numberOfLines={2}
         ellipsizeMode="tail"
       >
-        {item.noteText ?? item.quoteText}
+        {item.quoteText}
       </Text>
-      <Text
-        style={styles.meta}
-        numberOfLines={1}
-        ellipsizeMode="tail"
-      >
-        {`${formatNotesDate(item.createdAt)}  《${item.bookTitle}》`}
-      </Text>
-      {item.chapterTitle ? (
-        <View style={styles.chapterRow}>
-          <SymbolView
-            name="book.closed"
-            size={14}
-            tintColor={tokens.colors.secondaryLabel}
-          />
-          <Text
-            style={[styles.meta, styles.chapterText]}
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {item.chapterTitle}
-          </Text>
-        </View>
+      {item.noteText ? (
+        <Text
+          style={styles.note}
+          numberOfLines={2}
+          ellipsizeMode="tail"
+        >
+          {item.noteText}
+        </Text>
       ) : null}
+      <Text
+        style={styles.source}
+        numberOfLines={1}
+        ellipsizeMode="tail"
+      >
+        {sourceLine(item)}
+      </Text>
     </View>
   );
 }
@@ -197,12 +181,12 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     marginTop: 28,
-    marginBottom: 8,
+    marginBottom: 12,
   },
   item: {
     backgroundColor: tokens.colors.groupedCell,
-    paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
-    paddingVertical: 14,
+    paddingHorizontal: ITEM_HORIZONTAL_PADDING,
+    paddingVertical: 12,
   },
   itemFirst: {
     borderTopLeftRadius: CELL_RADIUS,
@@ -218,8 +202,8 @@ const styles = StyleSheet.create({
   separator: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: tokens.colors.separator,
-    // 从正文内容左边界开始，不横贯全屏（备忘录风格）
-    marginLeft: CONTENT_HORIZONTAL_PADDING,
+    // 从正文内容左边界开始，不横贯 container 最左侧圆角区域
+    marginLeft: ITEM_HORIZONTAL_PADDING,
   },
   sectionGap: {
     height: 4,
@@ -230,21 +214,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     lineHeight: 22,
   },
-  meta: {
+  note: {
     color: tokens.colors.secondaryLabel,
     fontSize: 15,
     lineHeight: 20,
-    marginTop: 2,
+    marginTop: 6,
   },
-  chapterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  chapterText: {
-    marginTop: 0,
-    marginLeft: 4,
-    flex: 1,
+  source: {
+    color: tokens.colors.secondaryLabel,
+    fontSize: 15,
+    lineHeight: 20,
+    marginTop: 6,
   },
   emptyContainer: {
     alignItems: 'center',
