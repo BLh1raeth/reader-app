@@ -11,12 +11,10 @@ import {
 } from 'react-native';
 import Animated, {
   Easing,
-  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { SymbolView } from 'expo-symbols';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -48,10 +46,6 @@ const ITEM_HORIZONTAL_PADDING = 16;
 const COLLAPSED_QUOTE_HEIGHT = 44;
 // 徐徐展开：400ms + easeInOut；不用 spring，回弹不符合"徐徐"。
 const EXPAND_ANIMATION_DURATION = 400;
-// 底部渐隐罩：高 26pt（约一行多一点），钉在裁剪容器底边；
-// 展开/收起时 180ms 淡出/淡入，替代"…"作为"还有更多"的信号。
-const FADE_OVERLAY_HEIGHT = 26;
-const FADE_ANIMATION_DURATION = 180;
 
 function sourceLine(item: ExcerptFeedItem): string {
   const book = `《${item.bookTitle}》`;
@@ -66,13 +60,13 @@ function accessibilityLabelFor(item: ExcerptFeedItem): string {
 }
 
 /**
- * 可展开的正文：窗帘式高度动画 + 底部渐隐罩。
+ * 可展开的正文：纯窗帘式高度动画。
  *
- * 彻底防"行尾跳变"的关键：正文永远渲染全文（无 numberOfLines、无"…"），
- * 收起态只是被容器裁到 44 高——前两行与展开态像素级一致，动画全程文字
- * 本体零变化、零重排。唯一的动效是：高度 400ms easeInOut（UI 线程）+
- * 底部渐隐罩 180ms 淡出/淡入（"还有更多"的信号，替代省略号）。
- * 渐隐罩钉在裁剪容器底边，随高度动画"洗下去"/"升回来"。
+ * 每一行在展开前就已固定：正文永远渲染全文（无 numberOfLines、无"…"），
+ * 收起态只是容器裁到 44 高。动画全程只有容器高度在变（400ms easeInOut，
+ * UI 线程），文字本体零变化、零重排——已显示的行像素级不动，
+ * 新行像窗帘一样一行一行露出来。刻意不加渐隐罩/省略号：
+ * 任何覆盖在已显示行上的东西，出现和消失时都会"改变"它们。
  */
 function ExpandableQuote({
   item,
@@ -86,12 +80,7 @@ function ExpandableQuote({
   fullHeight: number;
   onToggleExpand: (itemId: string) => void;
 }) {
-  // 渐隐罩是否挂载：收起态（含收起动画）需要它，展开播完后卸载。
-  const [showFade, setShowFade] = useState(true);
   const heightSV = useSharedValue(COLLAPSED_QUOTE_HEIGHT);
-  // 渐隐罩透明度：1 = 收起态完全显示，0 = 展开态完全消失。
-  const fadeOpacitySV = useSharedValue(1);
-  const isExpandedRef = useRef(isExpanded);
   const reduceMotionRef = useRef(false);
 
   useEffect(() => {
@@ -105,62 +94,21 @@ function ExpandableQuote({
   const animatedStyle = useAnimatedStyle(() => ({
     height: heightSV.value,
   }));
-  const fadeOpacityStyle = useAnimatedStyle(() => ({
-    opacity: fadeOpacitySV.value,
-  }));
-
-  // 展开动画播完（runOnJS 回到 JS 线程）再卸载渐隐罩；
-  // 用 isExpandedRef 防"播完→用户又点了收起"的竞态。
-  // 收起播完无需卸载——收起态本来就要显示渐隐罩。
-  const handleExpandFinished = useCallback(() => {
-    if (isExpandedRef.current) setShowFade(false);
-  }, []);
 
   useEffect(() => {
-    isExpandedRef.current = isExpanded;
     const targetHeight = isExpanded
       ? Math.max(fullHeight, COLLAPSED_QUOTE_HEIGHT)
       : COLLAPSED_QUOTE_HEIGHT;
     if (reduceMotionRef.current) {
       heightSV.value = targetHeight;
-      fadeOpacitySV.value = isExpanded ? 0 : 1;
-      setShowFade(!isExpanded);
-      return;
-    }
-    if (isExpanded) {
-      // 展开：渐隐罩 180ms 淡出（它钉在容器底边，随高度增长"洗下去"的同时消失），
-      // 高度 44→全文 400ms 徐徐揭示；播完卸载渐隐罩。
-      // 文字本体全程零变化——收起态看到的本就是全文的前两行。
-      fadeOpacitySV.value = withTiming(0, {
-        duration: FADE_ANIMATION_DURATION,
-        easing: Easing.out(Easing.quad),
-      });
     } else {
-      // 收起：渐隐罩以透明状态挂上，180ms 淡入；
-      // 高度 全文→44 400ms 像窗帘一样盖住下面的行。
-      // （中途反向点选时 withTiming 会从当前值平滑反转，无需额外处理。）
-      setShowFade(true);
-      fadeOpacitySV.value = withTiming(1, {
-        duration: FADE_ANIMATION_DURATION,
-        easing: Easing.out(Easing.quad),
+      // 只有高度在动：withTiming 被打断时从当前值平滑反转，无需收尾处理。
+      heightSV.value = withTiming(targetHeight, {
+        duration: EXPAND_ANIMATION_DURATION,
+        easing: Easing.inOut(Easing.ease),
       });
     }
-    heightSV.value = withTiming(
-      targetHeight,
-      { duration: EXPAND_ANIMATION_DURATION, easing: Easing.inOut(Easing.ease) },
-      (finished) => {
-        // 被新动画打断（finished=false）时不卸载，交给新动画的收尾处理。
-        if (!finished) return;
-        if (isExpanded) runOnJS(handleExpandFinished)();
-      },
-    );
-  }, [
-    isExpanded,
-    fullHeight,
-    handleExpandFinished,
-    heightSV,
-    fadeOpacitySV,
-  ]);
+  }, [isExpanded, fullHeight, heightSV]);
 
   return (
     <Pressable
@@ -174,36 +122,6 @@ function ExpandableQuote({
     >
       <Animated.View style={[styles.quoteClip, animatedStyle]}>
         <Text style={styles.quote}>{item.quoteText}</Text>
-        {showFade ? (
-          <Animated.View
-            style={[styles.fadeOverlay, fadeOpacityStyle]}
-            pointerEvents="none"
-          >
-            <Svg width="100%" height="100%">
-              <Defs>
-                <LinearGradient id="quoteFade" x1="0" y1="0" x2="0" y2="1">
-                  <Stop
-                    offset="0"
-                    stopColor={tokens.colors.groupedCell}
-                    stopOpacity={0}
-                  />
-                  <Stop
-                    offset="1"
-                    stopColor={tokens.colors.groupedCell}
-                    stopOpacity={1}
-                  />
-                </LinearGradient>
-              </Defs>
-              <Rect
-                x={0}
-                y={0}
-                width="100%"
-                height="100%"
-                fill="url(#quoteFade)"
-              />
-            </Svg>
-          </Animated.View>
-        ) : null}
       </Animated.View>
     </Pressable>
   );
@@ -509,18 +427,6 @@ const styles = StyleSheet.create({
    */
   quoteClip: {
     overflow: 'hidden',
-  },
-  /**
-   * 底部渐隐罩：替代"…"作为"还有更多"的信号。钉在裁剪容器底边，
-   * 随高度动画移动；stopOpacity 做 0→1 渐变，stopColor 取 cell 背景
-   * （PlatformColor，深浅色自动跟），文字在其下方向背景色溶解。
-   */
-  fadeOverlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: FADE_OVERLAY_HEIGHT,
   },
   note: {
     color: tokens.colors.secondaryLabel,
