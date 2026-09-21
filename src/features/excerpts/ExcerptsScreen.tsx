@@ -23,7 +23,7 @@ const GROUP_LABELS = {
   monthTitle: uiText.excerpts.monthTitle,
 };
 
-const CELL_RADIUS = 20;
+const CELL_RADIUS = 26;
 const CONTENT_HORIZONTAL_PADDING = 20;
 const ITEM_HORIZONTAL_PADDING = 16;
 
