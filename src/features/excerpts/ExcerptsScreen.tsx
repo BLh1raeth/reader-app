@@ -1,5 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   Pressable,
   SectionList,
   StyleSheet,
@@ -8,6 +9,13 @@ import {
   type NativeSyntheticEvent,
   type TextLayoutEventData,
 } from 'react-native';
+import Animated, {
+  Easing,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { SymbolView } from 'expo-symbols';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -34,6 +42,11 @@ const GROUP_LABELS = {
 const CELL_RADIUS = 26;
 const CONTENT_HORIZONTAL_PADDING = 20;
 const ITEM_HORIZONTAL_PADDING = 16;
+// 展开动画：收起态正文固定 2 行 × lineHeight 22 = 44pt
+//（与 styles.quote.lineHeight 耦合；改字号/行高时同步改这里）。
+const COLLAPSED_QUOTE_HEIGHT = 44;
+// 徐徐展开：400ms + easeInOut；不用 spring，回弹不符合"徐徐"。
+const EXPAND_ANIMATION_DURATION = 400;
 
 function sourceLine(item: ExcerptFeedItem): string {
   const book = `《${item.bookTitle}》`;
@@ -47,12 +60,104 @@ function accessibilityLabelFor(item: ExcerptFeedItem): string {
   return parts.join('。');
 }
 
+/**
+ * 可展开的正文：窗帘式高度动画。
+ *
+ * 防闪关键：动画过程中文字本体永不重排——全文只排一次版（showFullText 切换），
+ * 动画只改变外层容器的裁剪高度（overflow hidden + Reanimated height，UI 线程）。
+ * 展开瞬间先换全文版（容器仍是 44 高，可见的前两行几乎无变化），再徐徐拉开；
+ * 收起动画播完、且确认没被新的展开打断，才换回省略号版。
+ */
+function ExpandableQuote({
+  item,
+  isExpanded,
+  fullHeight,
+  onToggleExpand,
+}: {
+  item: ExcerptFeedItem;
+  isExpanded: boolean;
+  /** 隐藏测量 Text 量出的全文自然高度（动画目标值）；0 表示尚未量出 */
+  fullHeight: number;
+  onToggleExpand: (itemId: string) => void;
+}) {
+  const [showFullText, setShowFullText] = useState(false);
+  const heightSV = useSharedValue(COLLAPSED_QUOTE_HEIGHT);
+  const isExpandedRef = useRef(isExpanded);
+  const reduceMotionRef = useRef(false);
+
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((v) => {
+        reduceMotionRef.current = v;
+      })
+      .catch(() => {});
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    height: heightSV.value,
+  }));
+
+  // 收起动画完成后（runOnJS 回到 JS 线程）：只有依然处于收起态才换回省略号版，
+  // 防止"收起播完→用户又点了展开"的竞态把全文版错误换掉。
+  const handleCollapseFinished = useCallback(() => {
+    if (!isExpandedRef.current) setShowFullText(false);
+  }, []);
+
+  useEffect(() => {
+    isExpandedRef.current = isExpanded;
+    if (isExpanded) {
+      // 先换全文版：此时容器高度仍是 44，前两行可见内容几乎无变化
+      //（只有第二行行尾从"…"变成续写文字），随后高度动画徐徐揭示全文。
+      setShowFullText(true);
+    }
+    const target = isExpanded
+      ? Math.max(fullHeight, COLLAPSED_QUOTE_HEIGHT)
+      : COLLAPSED_QUOTE_HEIGHT;
+    if (reduceMotionRef.current) {
+      heightSV.value = target;
+      if (!isExpanded) setShowFullText(false);
+    } else {
+      heightSV.value = withTiming(
+        target,
+        { duration: EXPAND_ANIMATION_DURATION, easing: Easing.inOut(Easing.ease) },
+        (finished) => {
+          // 被新动画打断（finished=false）时不换版，交给新动画的收尾处理。
+          if (finished && !isExpanded) runOnJS(handleCollapseFinished)();
+        },
+      );
+    }
+  }, [isExpanded, fullHeight, handleCollapseFinished, heightSV]);
+
+  return (
+    <Pressable
+      onPress={() => onToggleExpand(item.id)}
+      // 无 pressed 视觉反馈：opacity 跳变会与正文切换叠在同一帧，
+      // 在真机上被感知为文字闪烁。保持视觉极简。
+      accessibilityRole="button"
+      accessibilityState={{ expanded: isExpanded }}
+      accessibilityHint={isExpanded ? '轻点收起摘录' : '轻点展开完整摘录'}
+      accessibilityLabel={item.quoteText}
+    >
+      <Animated.View style={[styles.quoteClip, animatedStyle]}>
+        {showFullText ? (
+          <Text style={styles.quote}>{item.quoteText}</Text>
+        ) : (
+          <Text style={styles.quote} numberOfLines={2} ellipsizeMode="tail">
+            {item.quoteText}
+          </Text>
+        )}
+      </Animated.View>
+    </Pressable>
+  );
+}
+
 function ExcerptFeedItemRow({
   item,
   isFirst,
   isLast,
   isExpanded,
   isTruncated,
+  fullHeight,
   onToggleExpand,
   onTruncationMeasured,
 }: {
@@ -66,13 +171,29 @@ function ExcerptFeedItemRow({
    * undefined = 尚未完成不可见测量。
    */
   isTruncated: boolean | undefined;
+  /** 隐藏测量 Text 量出的全文自然高度；0 表示尚未量出 */
+  fullHeight: number;
   onToggleExpand: (itemId: string) => void;
-  onTruncationMeasured: (itemId: string, text: string, truncated: boolean) => void;
+  onTruncationMeasured: (
+    itemId: string,
+    text: string,
+    truncated: boolean,
+    fullHeight: number,
+  ) => void;
 }) {
-  // 不可见测量的 layout 回调：无 numberOfLines 的隐藏 Text 给出完整行数。
+  // 不可见测量的 layout 回调：无 numberOfLines 的隐藏 Text 给出完整行数，
+  // 最后一行的底边即全文自然高度（与可见全文版同款式同宽度，动画目标值精确可信）。
   const handleMeasureLayout = useCallback(
     (event: NativeSyntheticEvent<TextLayoutEventData>) => {
-      onTruncationMeasured(item.id, item.quoteText, event.nativeEvent.lines.length > 2);
+      const lines = event.nativeEvent.lines;
+      const lastLine = lines[lines.length - 1];
+      const measuredFullHeight = lastLine ? lastLine.y + lastLine.height : 0;
+      onTruncationMeasured(
+        item.id,
+        item.quoteText,
+        lines.length > 2,
+        measuredFullHeight,
+      );
     },
     [item.id, item.quoteText, onTruncationMeasured],
   );
@@ -100,17 +221,12 @@ function ExcerptFeedItemRow({
       ]}
     >
       {isTruncated ? (
-        <Pressable
-          onPress={() => onToggleExpand(item.id)}
-          // 无 pressed 视觉反馈：opacity 跳变会与正文切换叠在同一帧，
-          // 在真机上被感知为文字闪烁。保持视觉极简，点按即展开/收起。
-          accessibilityRole="button"
-          accessibilityState={{ expanded: isExpanded }}
-          accessibilityHint={isExpanded ? '轻点收起摘录' : '轻点展开完整摘录'}
-          accessibilityLabel={item.quoteText}
-        >
-          {quote}
-        </Pressable>
+        <ExpandableQuote
+          item={item}
+          isExpanded={isExpanded}
+          fullHeight={fullHeight}
+          onToggleExpand={onToggleExpand}
+        />
       ) : (
         quote
       )}
@@ -154,15 +270,18 @@ export default function ExcerptsScreen() {
   const [sections, setSections] = useState<ExcerptFeedSection[] | null>(null);
   // 全 Feed 唯一展开态：纯 UI ephemeral state，不写数据库
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
-  // itemId -> { 测量时的文本, 是否实际超过 2 行 }；文本变化自动失效重测
-  const [truncInfo, setTruncInfo] = useState<Record<string, { text: string; truncated: boolean }>>({});
+  // itemId -> { 测量时的文本, 是否实际超过 2 行, 全文自然高度 }；
+  // 文本变化自动失效重测
+  const [truncInfo, setTruncInfo] = useState<
+    Record<string, { text: string; truncated: boolean; fullHeight: number }>
+  >({});
 
   const handleTruncationMeasured = useCallback(
-    (itemId: string, text: string, truncated: boolean) => {
+    (itemId: string, text: string, truncated: boolean, fullHeight: number) => {
       setTruncInfo((prev) => {
         const cur = prev[itemId];
         if (cur && cur.text === text && cur.truncated === truncated) return prev;
-        return { ...prev, [itemId]: { text, truncated } };
+        return { ...prev, [itemId]: { text, truncated, fullHeight } };
       });
     },
     [],
@@ -217,20 +336,22 @@ export default function ExcerptsScreen() {
         renderSectionHeader={({ section }) => (
           <Text style={styles.sectionTitle}>{section.title}</Text>
         )}
-        renderItem={({ item, index, section }) => (
-          <ExcerptFeedItemRow
-            item={item}
-            isFirst={index === 0}
-            isLast={index === section.data.length - 1}
-            isExpanded={expandedItemId === item.id}
-            isTruncated={(() => {
-              const info = truncInfo[item.id];
-              return info && info.text === item.quoteText ? info.truncated : undefined;
-            })()}
-            onToggleExpand={toggleExpand}
-            onTruncationMeasured={handleTruncationMeasured}
-          />
-        )}
+        renderItem={({ item, index, section }) => {
+          const info = truncInfo[item.id];
+          const measured = info && info.text === item.quoteText ? info : undefined;
+          return (
+            <ExcerptFeedItemRow
+              item={item}
+              isFirst={index === 0}
+              isLast={index === section.data.length - 1}
+              isExpanded={expandedItemId === item.id}
+              isTruncated={measured?.truncated}
+              fullHeight={measured?.fullHeight ?? 0}
+              onToggleExpand={toggleExpand}
+              onTruncationMeasured={handleTruncationMeasured}
+            />
+          );
+        }}
         ItemSeparatorComponent={() => (
           <View style={styles.separatorWrap}>
             <View style={styles.separator} />
@@ -318,6 +439,13 @@ const styles = StyleSheet.create({
     right: ITEM_HORIZONTAL_PADDING,
     top: 0,
     opacity: 0,
+  },
+  /**
+   * 展开动画的裁剪容器：overflow hidden + Reanimated 高度动画，
+   * 像窗帘一样揭示全文；文字本体在动画中不重排。
+   */
+  quoteClip: {
+    overflow: 'hidden',
   },
   note: {
     color: tokens.colors.secondaryLabel,
