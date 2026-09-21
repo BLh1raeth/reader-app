@@ -1,7 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
-  AccessibilityInfo,
-  LayoutAnimation,
   Pressable,
   SectionList,
   StyleSheet,
@@ -169,26 +167,7 @@ export default function ExcerptsScreen() {
     [],
   );
 
-  // Reduce Motion 开启时跳过展开动画，直接切换（一次性读取，不引入订阅基础设施）
-  const reduceMotionRef = useRef(false);
-  useEffect(() => {
-    AccessibilityInfo.isReduceMotionEnabled()
-      .then((enabled) => {
-        reduceMotionRef.current = enabled;
-      })
-      .catch(() => {});
-  }, []);
-
   const toggleExpand = useCallback((itemId: string) => {
-    if (!reduceMotionRef.current) {
-      // 200ms ease-in-out，只动画 layout 更新（高度/位移），无 fade/scale/spring。
-      // 作用于下一次全局 layout pass：item 高度、separator、后续 item/section
-      // 在同一轮 transition 里自然重排（A→B 切换也是同一轮）。
-      LayoutAnimation.configureNext({
-        duration: 200,
-        update: { type: LayoutAnimation.Types.easeInEaseOut },
-      });
-    }
     // 同一时间只展开 1 条：点已展开的则收起，点另一条则切换
     setExpandedItemId((prev) => (prev === itemId ? null : itemId));
   }, []);
