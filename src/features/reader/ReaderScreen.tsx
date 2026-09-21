@@ -154,7 +154,7 @@ function ReaderControlEntry({
 }) {
   const content = (
     <>
-      <SymbolView name={icon} size={22} tintColor={tintColor} weight="semibold" />
+      <SymbolView name={icon} size={26} tintColor={tintColor} weight="semibold" />
     </>
   );
   if (onPress) {
