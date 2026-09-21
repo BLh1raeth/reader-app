@@ -137,7 +137,7 @@ export default function ExcerptsScreen() {
         stickySectionHeadersEnabled={false}
         contentContainerStyle={[
           styles.content,
-          { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 32 },
+          { paddingTop: insets.top + 2, paddingBottom: insets.bottom + 32 },
         ]}
         ListHeaderComponent={
           <Text accessibilityRole="header" style={styles.largeTitle}>

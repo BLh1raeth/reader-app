@@ -34,13 +34,15 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    paddingHorizontal: tokens.spacing.screen,
+    paddingHorizontal: 20,
+    paddingTop: 2,
   },
   title: {
     color: PlatformColor('label'),
     fontSize: tokens.typography.largeTitle,
     fontWeight: '700',
-    letterSpacing: 0.37,
+    letterSpacing: -0.6,
+    lineHeight: 40,
   },
   body: {
     marginTop: tokens.spacing.section,
