@@ -16,6 +16,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { SymbolView } from 'expo-symbols';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -47,6 +48,10 @@ const ITEM_HORIZONTAL_PADDING = 16;
 const COLLAPSED_QUOTE_HEIGHT = 44;
 // 徐徐展开：400ms + easeInOut；不用 spring，回弹不符合"徐徐"。
 const EXPAND_ANIMATION_DURATION = 400;
+// 底部渐隐罩：高 26pt（约一行多一点），钉在裁剪容器底边；
+// 展开/收起时 180ms 淡出/淡入，替代"…"作为"还有更多"的信号。
+const FADE_OVERLAY_HEIGHT = 26;
+const FADE_ANIMATION_DURATION = 180;
 
 function sourceLine(item: ExcerptFeedItem): string {
   const book = `《${item.bookTitle}》`;
@@ -61,14 +66,13 @@ function accessibilityLabelFor(item: ExcerptFeedItem): string {
 }
 
 /**
- * 可展开的正文：窗帘式高度动画 + 行尾交叉淡化。
+ * 可展开的正文：窗帘式高度动画 + 底部渐隐罩。
  *
- * 防闪关键有两层：
- * 1. 高度动画中文字本体永不重排——全文只排一次版，动画只改变外层容器的
- *    裁剪高度（overflow hidden + Reanimated height，UI 线程）。
- * 2. 省略号版↔全文版的切换不做硬切：动画期间两个版本叠放（全文版在下恒为
- *    不透明，省略号版盖在上面），用 150ms 淡入/淡出完成行尾"…"到续写文字的
- *    交叉淡化；其余相同的行在淡化中像素一致，视觉上只有行尾在溶解。
+ * 彻底防"行尾跳变"的关键：正文永远渲染全文（无 numberOfLines、无"…"），
+ * 收起态只是被容器裁到 44 高——前两行与展开态像素级一致，动画全程文字
+ * 本体零变化、零重排。唯一的动效是：高度 400ms easeInOut（UI 线程）+
+ * 底部渐隐罩 180ms 淡出/淡入（"还有更多"的信号，替代省略号）。
+ * 渐隐罩钉在裁剪容器底边，随高度动画"洗下去"/"升回来"。
  */
 function ExpandableQuote({
   item,
@@ -82,11 +86,11 @@ function ExpandableQuote({
   fullHeight: number;
   onToggleExpand: (itemId: string) => void;
 }) {
-  const [showFullText, setShowFullText] = useState(false);
-  const [showEllipsisText, setShowEllipsisText] = useState(true);
+  // 渐隐罩是否挂载：收起态（含收起动画）需要它，展开播完后卸载。
+  const [showFade, setShowFade] = useState(true);
   const heightSV = useSharedValue(COLLAPSED_QUOTE_HEIGHT);
-  // 省略号覆盖层的透明度：1 = 收起态完全盖住，0 = 展开态完全让出（底下是全文版）。
-  const ellipsisOpacitySV = useSharedValue(1);
+  // 渐隐罩透明度：1 = 收起态完全显示，0 = 展开态完全消失。
+  const fadeOpacitySV = useSharedValue(1);
   const isExpandedRef = useRef(isExpanded);
   const reduceMotionRef = useRef(false);
 
@@ -101,17 +105,15 @@ function ExpandableQuote({
   const animatedStyle = useAnimatedStyle(() => ({
     height: heightSV.value,
   }));
-  const ellipsisOpacityStyle = useAnimatedStyle(() => ({
-    opacity: ellipsisOpacitySV.value,
+  const fadeOpacityStyle = useAnimatedStyle(() => ({
+    opacity: fadeOpacitySV.value,
   }));
 
-  // 高度动画播完（runOnJS 回到 JS 线程）再卸载不再需要的版本；
-  // 用 isExpandedRef 防"播完→用户又点了反向"的竞态。
+  // 展开动画播完（runOnJS 回到 JS 线程）再卸载渐隐罩；
+  // 用 isExpandedRef 防"播完→用户又点了收起"的竞态。
+  // 收起播完无需卸载——收起态本来就要显示渐隐罩。
   const handleExpandFinished = useCallback(() => {
-    if (isExpandedRef.current) setShowEllipsisText(false);
-  }, []);
-  const handleCollapseFinished = useCallback(() => {
-    if (!isExpandedRef.current) setShowFullText(false);
+    if (isExpandedRef.current) setShowFade(false);
   }, []);
 
   useEffect(() => {
@@ -121,27 +123,25 @@ function ExpandableQuote({
       : COLLAPSED_QUOTE_HEIGHT;
     if (reduceMotionRef.current) {
       heightSV.value = targetHeight;
-      ellipsisOpacitySV.value = isExpanded ? 0 : 1;
-      setShowFullText(isExpanded);
-      setShowEllipsisText(!isExpanded);
+      fadeOpacitySV.value = isExpanded ? 0 : 1;
+      setShowFade(!isExpanded);
       return;
     }
     if (isExpanded) {
-      // 展开：全文版已挂在省略号版底下（被不透明盖住、不可见），
-      // 把省略号版 150ms 淡出——行尾"…"溶解成续写文字；
-      // 同时高度 44→全文 400ms 徐徐揭示。
-      setShowFullText(true);
-      ellipsisOpacitySV.value = withTiming(0, {
-        duration: 150,
+      // 展开：渐隐罩 180ms 淡出（它钉在容器底边，随高度增长"洗下去"的同时消失），
+      // 高度 44→全文 400ms 徐徐揭示；播完卸载渐隐罩。
+      // 文字本体全程零变化——收起态看到的本就是全文的前两行。
+      fadeOpacitySV.value = withTiming(0, {
+        duration: FADE_ANIMATION_DURATION,
         easing: Easing.out(Easing.quad),
       });
     } else {
-      // 收起：省略号版以透明状态盖到全文版上，150ms 淡入完成行尾交叉淡化；
-      // 高度 全文→44 400ms 像窗帘一样盖住下面的行；播完再卸载全文版。
+      // 收起：渐隐罩以透明状态挂上，180ms 淡入；
+      // 高度 全文→44 400ms 像窗帘一样盖住下面的行。
       // （中途反向点选时 withTiming 会从当前值平滑反转，无需额外处理。）
-      setShowEllipsisText(true);
-      ellipsisOpacitySV.value = withTiming(1, {
-        duration: 150,
+      setShowFade(true);
+      fadeOpacitySV.value = withTiming(1, {
+        duration: FADE_ANIMATION_DURATION,
         easing: Easing.out(Easing.quad),
       });
     }
@@ -152,16 +152,14 @@ function ExpandableQuote({
         // 被新动画打断（finished=false）时不卸载，交给新动画的收尾处理。
         if (!finished) return;
         if (isExpanded) runOnJS(handleExpandFinished)();
-        else runOnJS(handleCollapseFinished)();
       },
     );
   }, [
     isExpanded,
     fullHeight,
     handleExpandFinished,
-    handleCollapseFinished,
     heightSV,
-    ellipsisOpacitySV,
+    fadeOpacitySV,
   ]);
 
   return (
@@ -175,17 +173,36 @@ function ExpandableQuote({
       accessibilityLabel={item.quoteText}
     >
       <Animated.View style={[styles.quoteClip, animatedStyle]}>
-        {showFullText ? (
-          <Text style={styles.quote}>{item.quoteText}</Text>
-        ) : null}
-        {showEllipsisText ? (
-          <Animated.Text
-            style={[styles.quote, styles.ellipsisOverlay, ellipsisOpacityStyle]}
-            numberOfLines={2}
-            ellipsizeMode="tail"
+        <Text style={styles.quote}>{item.quoteText}</Text>
+        {showFade ? (
+          <Animated.View
+            style={[styles.fadeOverlay, fadeOpacityStyle]}
+            pointerEvents="none"
           >
-            {item.quoteText}
-          </Animated.Text>
+            <Svg width="100%" height="100%">
+              <Defs>
+                <LinearGradient id="quoteFade" x1="0" y1="0" x2="0" y2="1">
+                  <Stop
+                    offset="0"
+                    stopColor={tokens.colors.groupedCell}
+                    stopOpacity={0}
+                  />
+                  <Stop
+                    offset="1"
+                    stopColor={tokens.colors.groupedCell}
+                    stopOpacity={1}
+                  />
+                </LinearGradient>
+              </Defs>
+              <Rect
+                x={0}
+                y={0}
+                width="100%"
+                height="100%"
+                fill="url(#quoteFade)"
+              />
+            </Svg>
+          </Animated.View>
         ) : null}
       </Animated.View>
     </Pressable>
@@ -489,14 +506,16 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   /**
-   * 省略号覆盖层：动画期间盖在全文版之上做交叉淡化。
-   * absolute 铺满容器宽度，保证与底下全文版断行完全一致（淡化中只有行尾在变化）。
+   * 底部渐隐罩：替代"…"作为"还有更多"的信号。钉在裁剪容器底边，
+   * 随高度动画移动；stopOpacity 做 0→1 渐变，stopColor 取 cell 背景
+   * （PlatformColor，深浅色自动跟），文字在其下方向背景色溶解。
    */
-  ellipsisOverlay: {
+  fadeOverlay: {
     position: 'absolute',
-    top: 0,
     left: 0,
     right: 0,
+    bottom: 0,
+    height: FADE_OVERLAY_HEIGHT,
   },
   note: {
     color: tokens.colors.secondaryLabel,
