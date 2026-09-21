@@ -61,12 +61,14 @@ function accessibilityLabelFor(item: ExcerptFeedItem): string {
 }
 
 /**
- * 可展开的正文：窗帘式高度动画。
+ * 可展开的正文：窗帘式高度动画 + 行尾交叉淡化。
  *
- * 防闪关键：动画过程中文字本体永不重排——全文只排一次版（showFullText 切换），
- * 动画只改变外层容器的裁剪高度（overflow hidden + Reanimated height，UI 线程）。
- * 展开瞬间先换全文版（容器仍是 44 高，可见的前两行几乎无变化），再徐徐拉开；
- * 收起动画播完、且确认没被新的展开打断，才换回省略号版。
+ * 防闪关键有两层：
+ * 1. 高度动画中文字本体永不重排——全文只排一次版，动画只改变外层容器的
+ *    裁剪高度（overflow hidden + Reanimated height，UI 线程）。
+ * 2. 省略号版↔全文版的切换不做硬切：动画期间两个版本叠放（全文版在下恒为
+ *    不透明，省略号版盖在上面），用 150ms 淡入/淡出完成行尾"…"到续写文字的
+ *    交叉淡化；其余相同的行在淡化中像素一致，视觉上只有行尾在溶解。
  */
 function ExpandableQuote({
   item,
@@ -81,7 +83,10 @@ function ExpandableQuote({
   onToggleExpand: (itemId: string) => void;
 }) {
   const [showFullText, setShowFullText] = useState(false);
+  const [showEllipsisText, setShowEllipsisText] = useState(true);
   const heightSV = useSharedValue(COLLAPSED_QUOTE_HEIGHT);
+  // 省略号覆盖层的透明度：1 = 收起态完全盖住，0 = 展开态完全让出（底下是全文版）。
+  const ellipsisOpacitySV = useSharedValue(1);
   const isExpandedRef = useRef(isExpanded);
   const reduceMotionRef = useRef(false);
 
@@ -96,37 +101,68 @@ function ExpandableQuote({
   const animatedStyle = useAnimatedStyle(() => ({
     height: heightSV.value,
   }));
+  const ellipsisOpacityStyle = useAnimatedStyle(() => ({
+    opacity: ellipsisOpacitySV.value,
+  }));
 
-  // 收起动画完成后（runOnJS 回到 JS 线程）：只有依然处于收起态才换回省略号版，
-  // 防止"收起播完→用户又点了展开"的竞态把全文版错误换掉。
+  // 高度动画播完（runOnJS 回到 JS 线程）再卸载不再需要的版本；
+  // 用 isExpandedRef 防"播完→用户又点了反向"的竞态。
+  const handleExpandFinished = useCallback(() => {
+    if (isExpandedRef.current) setShowEllipsisText(false);
+  }, []);
   const handleCollapseFinished = useCallback(() => {
     if (!isExpandedRef.current) setShowFullText(false);
   }, []);
 
   useEffect(() => {
     isExpandedRef.current = isExpanded;
-    if (isExpanded) {
-      // 先换全文版：此时容器高度仍是 44，前两行可见内容几乎无变化
-      //（只有第二行行尾从"…"变成续写文字），随后高度动画徐徐揭示全文。
-      setShowFullText(true);
-    }
-    const target = isExpanded
+    const targetHeight = isExpanded
       ? Math.max(fullHeight, COLLAPSED_QUOTE_HEIGHT)
       : COLLAPSED_QUOTE_HEIGHT;
     if (reduceMotionRef.current) {
-      heightSV.value = target;
-      if (!isExpanded) setShowFullText(false);
-    } else {
-      heightSV.value = withTiming(
-        target,
-        { duration: EXPAND_ANIMATION_DURATION, easing: Easing.inOut(Easing.ease) },
-        (finished) => {
-          // 被新动画打断（finished=false）时不换版，交给新动画的收尾处理。
-          if (finished && !isExpanded) runOnJS(handleCollapseFinished)();
-        },
-      );
+      heightSV.value = targetHeight;
+      ellipsisOpacitySV.value = isExpanded ? 0 : 1;
+      setShowFullText(isExpanded);
+      setShowEllipsisText(!isExpanded);
+      return;
     }
-  }, [isExpanded, fullHeight, handleCollapseFinished, heightSV]);
+    if (isExpanded) {
+      // 展开：全文版已挂在省略号版底下（被不透明盖住、不可见），
+      // 把省略号版 150ms 淡出——行尾"…"溶解成续写文字；
+      // 同时高度 44→全文 400ms 徐徐揭示。
+      setShowFullText(true);
+      ellipsisOpacitySV.value = withTiming(0, {
+        duration: 150,
+        easing: Easing.out(Easing.quad),
+      });
+    } else {
+      // 收起：省略号版以透明状态盖到全文版上，150ms 淡入完成行尾交叉淡化；
+      // 高度 全文→44 400ms 像窗帘一样盖住下面的行；播完再卸载全文版。
+      // （中途反向点选时 withTiming 会从当前值平滑反转，无需额外处理。）
+      setShowEllipsisText(true);
+      ellipsisOpacitySV.value = withTiming(1, {
+        duration: 150,
+        easing: Easing.out(Easing.quad),
+      });
+    }
+    heightSV.value = withTiming(
+      targetHeight,
+      { duration: EXPAND_ANIMATION_DURATION, easing: Easing.inOut(Easing.ease) },
+      (finished) => {
+        // 被新动画打断（finished=false）时不卸载，交给新动画的收尾处理。
+        if (!finished) return;
+        if (isExpanded) runOnJS(handleExpandFinished)();
+        else runOnJS(handleCollapseFinished)();
+      },
+    );
+  }, [
+    isExpanded,
+    fullHeight,
+    handleExpandFinished,
+    handleCollapseFinished,
+    heightSV,
+    ellipsisOpacitySV,
+  ]);
 
   return (
     <Pressable
@@ -141,11 +177,16 @@ function ExpandableQuote({
       <Animated.View style={[styles.quoteClip, animatedStyle]}>
         {showFullText ? (
           <Text style={styles.quote}>{item.quoteText}</Text>
-        ) : (
-          <Text style={styles.quote} numberOfLines={2} ellipsizeMode="tail">
+        ) : null}
+        {showEllipsisText ? (
+          <Animated.Text
+            style={[styles.quote, styles.ellipsisOverlay, ellipsisOpacityStyle]}
+            numberOfLines={2}
+            ellipsizeMode="tail"
+          >
             {item.quoteText}
-          </Text>
-        )}
+          </Animated.Text>
+        ) : null}
       </Animated.View>
     </Pressable>
   );
@@ -446,6 +487,16 @@ const styles = StyleSheet.create({
    */
   quoteClip: {
     overflow: 'hidden',
+  },
+  /**
+   * 省略号覆盖层：动画期间盖在全文版之上做交叉淡化。
+   * absolute 铺满容器宽度，保证与底下全文版断行完全一致（淡化中只有行尾在变化）。
+   */
+  ellipsisOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
   },
   note: {
     color: tokens.colors.secondaryLabel,
