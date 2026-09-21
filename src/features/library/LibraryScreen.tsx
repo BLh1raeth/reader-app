@@ -39,6 +39,8 @@ import { readerSettingsRepository } from '../reader/reader-settings-repository';
 import { BookCoverArt } from './BookCoverArt';
 
 const LIBRARY_HEADER_SAFE_TOP_GAP = 2;
+// 书库 tab 左右边距：与摘录 tab 的 20pt 对齐（不再用 tokens.spacing.screen=28）。
+const LIBRARY_SCREEN_MARGIN = 20;
 import { bookRepository } from './book-repository';
 import { beginReaderOpen } from '../reader/reader-open-performance';
 import { preloadReaderData } from '../reader/reader-preload';
@@ -309,7 +311,7 @@ export default function LibraryScreen() {
     setReaderOpeningTransition(transition);
   }, [height, readerBackgroundColor, readerOpeningTransition, setTabBarHidden, width]);
 
-  const gridItemWidth = Math.max(0, (width - tokens.spacing.screen * 2 - tokens.spacing.grid) / 2);
+  const gridItemWidth = Math.max(0, (width - LIBRARY_SCREEN_MARGIN * 2 - tokens.spacing.grid) / 2);
   const selectedBookSet = useMemo(() => new Set(selectedBookIds), [selectedBookIds]);
   const isAllSelected = books.length > 0 && selectedBookIds.length === books.length;
   useEffect(() => () => {
@@ -1387,7 +1389,7 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: tokens.colors.background },
   screen: { flex: 1, backgroundColor: tokens.colors.background },
   libraryHeaderSpacer: { height: 44 },
-  floatingTitle: { left: tokens.spacing.screen, position: 'absolute' },
+  floatingTitle: { left: LIBRARY_SCREEN_MARGIN, position: 'absolute' },
   navigationTitle: { color: tokens.colors.label, fontSize: tokens.typography.largeTitle, fontWeight: '700', letterSpacing: -0.6, lineHeight: 40 },
   floatingMenu: { position: 'absolute', right: tokens.spacing.medium },
   menuGlass: { borderRadius: 22, height: 44, width: 44 },
@@ -1397,7 +1399,7 @@ const styles = StyleSheet.create({
   menuTriggerWrap: { height: 44, width: 44 },
   menuProgressRing: { height: 44, left: 0, position: 'absolute', top: 0, width: 44 },
   menuTriggerGlyph: { color: tokens.colors.label, fontSize: 18, fontWeight: '700', letterSpacing: 1, marginLeft: 1, marginTop: -2 },
-  scrollContent: { paddingHorizontal: tokens.spacing.screen, paddingBottom: tokens.spacing.section * 6, gap: tokens.spacing.section },
+  scrollContent: { paddingHorizontal: LIBRARY_SCREEN_MARGIN, paddingBottom: tokens.spacing.section * 6, gap: tokens.spacing.section },
   continueSection: { gap: tokens.spacing.item },
   continueBook: { flexDirection: 'row', gap: tokens.spacing.medium, minHeight: 138 },
   continueMetadata: { flex: 1, justifyContent: 'center', gap: tokens.spacing.compact },
@@ -1460,7 +1462,7 @@ const styles = StyleSheet.create({
   selectionBottomGlass: { borderRadius: 28, height: 56, width: 56 },
   selectionControlContent: { alignItems: 'center', flex: 1, justifyContent: 'center' },
   selectionAllButtonText: { color: tokens.colors.label, fontSize: 17, fontWeight: '600' },
-  selectionBottomActions: { flexDirection: 'row', justifyContent: 'space-between', left: tokens.spacing.screen, position: 'absolute', right: tokens.spacing.screen },
+  selectionBottomActions: { flexDirection: 'row', justifyContent: 'space-between', left: LIBRARY_SCREEN_MARGIN, position: 'absolute', right: LIBRARY_SCREEN_MARGIN },
   selectionBottomButtonDisabled: { opacity: 0.45 },
   emptyState: { flex: 1, minHeight: 440, justifyContent: 'center', alignItems: 'center', gap: tokens.spacing.compact, paddingBottom: 72 },
   emptySymbol: { color: tokens.colors.secondaryLabel, fontSize: 50, marginBottom: tokens.spacing.compact },
