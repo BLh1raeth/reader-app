@@ -14,7 +14,7 @@ public final class ExcerptSearchBarModule: Module {
       Prop("text") { (view: ExcerptSearchBarView, value: String?) in
         view.setText(value)
       }
-      Events("onTextChange", "onFocusChange", "onSubmitEditing")
+      Events("onTextChange", "onFocusChange", "onSearchSubmit")
     }
   }
 }

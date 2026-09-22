@@ -11,7 +11,7 @@ export type NativeExcerptSearchBarProps = ViewProps & {
   /** 焦点变化，nativeEvent.focused。 */
   onFocusChange?: (event: { nativeEvent: { focused: boolean } }) => void;
   /** 系统键盘搜索键。 */
-  onSubmitEditing?: () => void;
+  onSearchSubmit?: () => void;
 };
 
 /**

@@ -14,7 +14,7 @@ final class ExcerptSearchBarView: ExpoView, UISearchBarDelegate {
 
   let onTextChange = EventDispatcher()
   let onFocusChange = EventDispatcher()
-  let onSubmitEditing = EventDispatcher()
+  let onSearchSubmit = EventDispatcher()
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -78,6 +78,6 @@ final class ExcerptSearchBarView: ExpoView, UISearchBarDelegate {
 
   func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
     searchBar.resignFirstResponder()
-    onSubmitEditing([:])
+    onSearchSubmit([:])
   }
 }
