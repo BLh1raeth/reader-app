@@ -72,12 +72,20 @@ export type ReadingAnalyticsSessionRow = {
   endedAt: string | null;
   activeSeconds: number;
   forwardCharacters: number;
+  /**
+   * Event-time local day (YYYY-MM-DD), frozen when the session was created.
+   * The primary day-attribution source; null only for pre-v16 legacy rows
+   * that the backfill could not interpret.
+   */
+  localDayKey: string | null;
 };
 
 /** Narrow row from reader_excerpts for analytics. */
 export type ReadingAnalyticsExcerptRow = {
   id: number;
   createdAt: string;
+  /** Event-time local day (YYYY-MM-DD), frozen when the excerpt was created. */
+  createdLocalDayKey: string | null;
 };
 
 /**

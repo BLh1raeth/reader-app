@@ -14,7 +14,7 @@
  * reading-analytics.ts (pure) and local-day.ts.
  */
 
-import { isValidDayKey, todayLocalDayKey } from './local-day';
+import { isValidDayKey, todayLocalDayKey } from '../../shared/time/local-day';
 import { readingAnalyticsRepository } from './reading-analytics-repository';
 import {
   analyzeReadingData,

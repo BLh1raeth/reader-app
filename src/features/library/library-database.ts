@@ -1,7 +1,9 @@
 import * as SQLite from 'expo-sqlite';
 
+import { backfillLocalDayKeys } from './local-day-backfill';
+
 const DATABASE_NAME = 'reader-library.db';
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -281,6 +283,27 @@ async function bootstrapDatabase() {
           ON reader_reading_sessions(ended_at) WHERE ended_at IS NULL;
         PRAGMA user_version = ${SCHEMA_VERSION};
       `);
+    });
+  }
+  if (currentVersion < 16) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      // Data Core A.1: freeze the event-time local calendar day.
+      // local_day_key / created_local_day_key record which device-local
+      // calendar day (YYYY-MM-DD) the event belonged to when it happened,
+      // so history no longer shifts when the device later changes timezone.
+      // The UTC timestamps stay the source of exact time and ordering.
+      await transaction.execAsync(`
+        ALTER TABLE reader_reading_sessions ADD COLUMN local_day_key TEXT;
+        ALTER TABLE reader_excerpts ADD COLUMN created_local_day_key TEXT;
+      `);
+      // One-time legacy backfill, inside the same transaction (atomic):
+      // v15 and earlier rows did not store event-time timezone/local day,
+      // so the backfill freezes the device's current local interpretation
+      // at migration time (see local-day-backfill.ts). The original event
+      // timezone cannot be reconstructed. Only NULL-key rows are touched,
+      // so re-running never overwrites an existing key.
+      await backfillLocalDayKeys(transaction);
+      await transaction.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION};`);
     });
   }
   // Stale-session recovery runs inside bootstrap with the live `database`

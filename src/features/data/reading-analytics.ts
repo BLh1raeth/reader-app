@@ -19,9 +19,10 @@
 import {
   addLocalCalendarDays,
   compareLocalDayKeys,
+  isValidDayKey,
   localDayRange,
   toLocalDayKey,
-} from './local-day';
+} from '../../shared/time/local-day';
 import type {
   DailyReadingStats,
   NormalizedAnalyticsExcerpt,
@@ -48,6 +49,35 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+/**
+ * Day attribution for one event row.
+ *
+ * Normal path (v16+): use the persisted event-time local day key — it was
+ * frozen when the event happened and never moves with later timezone
+ * changes. The key is still format-validated; the database is not trusted
+ * blindly.
+ *
+ * Abnormal path: a missing/invalid key (pre-v16 legacy row the backfill
+ * could not interpret). Fall back to interpreting the timestamp in the
+ * CURRENT device timezone so history stats are not silently lost, and
+ * surface it in DEV. This is exception compatibility, never normal logic.
+ */
+function resolvePersistedDayKey(
+  persistedDayKey: string | null,
+  timestamp: string,
+  rowType: 'session' | 'excerpt',
+  rowId: string | number,
+): string | null {
+  if (typeof persistedDayKey === 'string' && isValidDayKey(persistedDayKey)) {
+    return persistedDayKey;
+  }
+  devWarn('[READING_ANALYTICS_LOCAL_DAY_FALLBACK]', {
+    rowType,
+    id: String(rowId),
+  });
+  return toLocalDayKey(timestamp);
+}
+
 // ---------------------------------------------------------------------------
 // Normalization: raw rows -> validated, day-keyed facts.
 // ---------------------------------------------------------------------------
@@ -62,12 +92,14 @@ function isFiniteNumber(value: unknown): value is number {
 export function normalizeAnalyticsSession(
   row: ReadingAnalyticsSessionRow,
 ): NormalizedAnalyticsSession | null {
-  const { id, startedAt, endedAt, activeSeconds, forwardCharacters } = row;
+  const { id, startedAt, endedAt, activeSeconds, forwardCharacters, localDayKey } = row;
   if (typeof id !== 'string' || id.length === 0) {
     devWarn('[READING_ANALYTICS_INVALID_ROW]', { reason: 'bad-id', id: String(id) });
     return null;
   }
-  const dayKey = toLocalDayKey(startedAt);
+  // Prefer the persisted event-time local day; fall back to interpreting
+  // startedAt in the current timezone only when the key is missing/invalid.
+  const dayKey = resolvePersistedDayKey(localDayKey, startedAt, 'session', id);
   if (dayKey === null) {
     devWarn('[READING_ANALYTICS_INVALID_ROW]', { reason: 'bad-started-at', id });
     return null;
@@ -100,12 +132,12 @@ export function normalizeAnalyticsSession(
 export function normalizeAnalyticsExcerpt(
   row: ReadingAnalyticsExcerptRow,
 ): NormalizedAnalyticsExcerpt | null {
-  const { id, createdAt } = row;
+  const { id, createdAt, createdLocalDayKey } = row;
   if (!isFiniteNumber(id)) {
     devWarn('[READING_ANALYTICS_INVALID_EXCERPT]', { reason: 'bad-id' });
     return null;
   }
-  const dayKey = toLocalDayKey(createdAt);
+  const dayKey = resolvePersistedDayKey(createdLocalDayKey, createdAt, 'excerpt', id);
   if (dayKey === null) {
     devWarn('[READING_ANALYTICS_INVALID_EXCERPT]', { reason: 'bad-created-at', id });
     return null;

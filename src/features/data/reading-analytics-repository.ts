@@ -23,11 +23,13 @@ type SessionColumns = {
   ended_at: string | null;
   active_seconds: number;
   forward_characters: number;
+  local_day_key: string | null;
 };
 
 type ExcerptColumns = {
   id: number;
   created_at: string;
+  created_local_day_key: string | null;
 };
 
 export const readingAnalyticsRepository = {
@@ -41,7 +43,8 @@ export const readingAnalyticsRepository = {
   async listSessionsForAnalytics(): Promise<ReadingAnalyticsSessionRow[]> {
     const database = await getLibraryDatabase();
     const rows = await database.getAllAsync<SessionColumns>(
-      `SELECT id, started_at, ended_at, active_seconds, forward_characters
+      `SELECT id, started_at, ended_at, active_seconds, forward_characters,
+              local_day_key
        FROM reader_reading_sessions
        ORDER BY started_at ASC;`,
     );
@@ -51,6 +54,7 @@ export const readingAnalyticsRepository = {
       endedAt: row.ended_at,
       activeSeconds: row.active_seconds,
       forwardCharacters: row.forward_characters,
+      localDayKey: row.local_day_key,
     }));
   },
 
@@ -62,8 +66,8 @@ export const readingAnalyticsRepository = {
   async listExcerptsForAnalytics(): Promise<ReadingAnalyticsExcerptRow[]> {
     const database = await getLibraryDatabase();
     const rows = await database.getAllAsync<ExcerptColumns>(
-      'SELECT id, created_at FROM reader_excerpts;',
+      'SELECT id, created_at, created_local_day_key FROM reader_excerpts;',
     );
-    return rows.map((row) => ({ id: row.id, createdAt: row.created_at }));
+    return rows.map((row) => ({ id: row.id, createdAt: row.created_at, createdLocalDayKey: row.created_local_day_key }));
   },
 };

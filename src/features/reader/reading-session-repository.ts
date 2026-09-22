@@ -1,4 +1,5 @@
 import { getLibraryDatabase } from '../library/library-database';
+import { toLocalDayKey } from '../../shared/time/local-day';
 
 /**
  * ReadingSession Core A repository.
@@ -92,6 +93,7 @@ type ReadingSessionRow = {
   close_reason: string | null;
   created_at: string;
   updated_at: string;
+  local_day_key: string | null;
 };
 
 const CLOSE_REASONS: ReadonlySet<string> = new Set([
@@ -130,13 +132,18 @@ export const readingSessionRepository = {
   async createReadingSession(session: NewReadingSession): Promise<ReadingSession> {
     const database = await getLibraryDatabase();
     const now = new Date().toISOString();
+    // Freeze the device-local calendar day at creation time. Analytics
+    // attributes this session to localDayKey forever, even if the device
+    // later changes timezone. (Midnight rollover creates a fresh session,
+    // so the new row naturally gets the new day's key.)
+    const localDayKey = toLocalDayKey(session.startedAt);
     await database.runAsync(
       `INSERT INTO reader_reading_sessions (
         id, book_id, started_at, ended_at, active_seconds,
         start_cfi, end_cfi, start_section_index, end_section_index,
         forward_characters, last_interaction_at, last_checkpoint_at,
-        close_reason, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        close_reason, created_at, updated_at, local_day_key
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       session.id,
       session.bookId,
       session.startedAt,
@@ -152,6 +159,7 @@ export const readingSessionRepository = {
       session.closeReason,
       now,
       now,
+      localDayKey,
     );
     const persisted = await readingSessionRepository.getReadingSessionById(session.id);
     if (!persisted) throw new Error('阅读会话写入后无法重新读取。');
