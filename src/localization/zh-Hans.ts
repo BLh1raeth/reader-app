@@ -72,5 +72,12 @@ export const zhHans = {
     monthTitle: (year: number, month: number) => `${year}年${month}月`,
     emptyTitle: '还没有摘录',
     emptyHint: '阅读时选中文字，即可保存摘录或添加笔记。',
+    /** Excerpts Tab Core E：books mode section header 右侧数量，如"12条"/"1条"。 */
+    bookExcerptCount: (count: number) => `${count}条`,
+    /**
+     * Excerpts Tab Core E：books mode 无 chapterTitle 时的 Source 行文本。
+     * section header 已是书名，这里只保住"返回原文"导航入口，不重复书名。
+     */
+    backToSource: '返回原文',
   },
 } as const;

@@ -25,9 +25,11 @@ import { uiText } from '../../localization';
 import { bookRepository } from '../library/book-repository';
 import { createReaderExternalNavigationRequest } from '../reader/reader-external-navigation';
 import {
+  groupExcerptFeedByBook,
   groupExcerptFeedItems,
   type ExcerptFeedSection,
 } from './excerpt-feed-grouping';
+import { useExcerptsView, type ExcerptsViewMode } from './excerpts-view-context';
 import {
   listExcerptFeedItems,
   type ExcerptFeedItem,
@@ -58,6 +60,24 @@ const EXPAND_ANIMATION_DURATION = 400;
 function sourceLine(item: ExcerptFeedItem): string {
   const book = `《${item.bookTitle}》`;
   return item.chapterTitle ? `${book} · ${item.chapterTitle}` : book;
+}
+
+/**
+ * Excerpts Tab Core E：Books mode 的 Source 行。
+ * section header 已经是书名，这里只显示章节名，不重复书名。
+ * chapterTitle 为空时显示轻量"返回原文"：保住 Source 导航入口
+ * （§14 审计：chapterTitle 可能为 null——来自 Reader 的 TOC snapshot，
+ * 无目录的 EPUB 会缺失；time mode 本来就有 null 回退，说明真实数据里存在）。
+ * 导航 payload（bookId + rangeCfi）不受显示文本影响。
+ */
+function bookModeSourceText(item: ExcerptFeedItem): string {
+  return item.chapterTitle ? item.chapterTitle : uiText.excerpts.backToSource;
+}
+
+function bookModeSourceAccessibilityLabel(item: ExcerptFeedItem): string {
+  return item.chapterTitle
+    ? `${item.chapterTitle}，返回原文`
+    : uiText.excerpts.backToSource;
 }
 
 function accessibilityLabelFor(item: ExcerptFeedItem): string {
@@ -150,6 +170,7 @@ function ExpandableQuote({
 
 function ExcerptFeedItemRow({
   item,
+  viewMode,
   isFirst,
   isLast,
   isExpanded,
@@ -160,6 +181,8 @@ function ExcerptFeedItemRow({
   onSourcePress,
 }: {
   item: ExcerptFeedItem;
+  /** Excerpts Tab Core E：books mode 下 Source 行只显示章节名（不重复书名）。 */
+  viewMode: ExcerptsViewMode;
   isFirst: boolean;
   isLast: boolean;
   isExpanded: boolean;
@@ -255,6 +278,11 @@ function ExcerptFeedItemRow({
       ) : null}
       <Pressable
         accessibilityRole="button"
+        accessibilityLabel={
+          viewMode === 'books'
+            ? bookModeSourceAccessibilityLabel(item)
+            : accessibilityLabelFor(item)
+        }
         accessibilityHint="轻点返回原文位置"
         hitSlop={{ top: 8, bottom: 8 }}
         onPress={() => onSourcePress(item)}
@@ -265,7 +293,7 @@ function ExcerptFeedItemRow({
           numberOfLines={1}
           ellipsizeMode="tail"
         >
-          {sourceLine(item)}
+          {viewMode === 'books' ? bookModeSourceText(item) : sourceLine(item)}
         </Text>
       </Pressable>
     </View>
@@ -275,7 +303,11 @@ function ExcerptFeedItemRow({
 export default function ExcerptsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  // Excerpts Tab Core E：按时间 / 按书籍浏览模式（内存态，与书库 Grid/List 对齐）。
+  const { viewMode } = useExcerptsView();
   // null = loading（与 empty 区分开，避免 empty → 列表一闪而过）
+  // 全量 Feed read model：viewMode 切换时在内存里重分组，不再查 DB。
+  const [feed, setFeed] = useState<ExcerptFeedItem[] | null>(null);
   const [sections, setSections] = useState<ExcerptFeedSection[] | null>(null);
   // 全 Feed 唯一展开态：纯 UI ephemeral state，不写数据库
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
@@ -307,12 +339,26 @@ export default function ExcerptsScreen() {
       const ids = new Set(items.map((i) => i.id));
       // refresh 后展开项若已不存在（删书/删 annotation），清空悬空 id
       setExpandedItemId((prev) => (prev !== null && ids.has(prev) ? prev : null));
-      setSections(groupExcerptFeedItems(items, GROUP_LABELS));
+      setFeed(items);
     } catch (error) {
       if (__DEV__) console.error('[EXCERPT_FEED_LOAD_FAILED]', error);
       // 加载失败时保持旧数据，不闪成 empty state
     }
   }, []);
+
+  // Excerpts Tab Core E：按 viewMode 分组。time = 现有时间分组（逻辑不动）；
+  // books = 按 bookId 分组。同一个 feed 做 presentation 层重组，不重查 DB。
+  useEffect(() => {
+    if (feed === null) {
+      setSections(null);
+      return;
+    }
+    setSections(
+      viewMode === 'books'
+        ? groupExcerptFeedByBook(feed)
+        : groupExcerptFeedItems(feed, GROUP_LABELS),
+    );
+  }, [feed, viewMode]);
 
   // Excerpts Tab Core C: Source 行是唯一的原文入口。点按时先做 stale 检查
   // （书可能在 Feed 建好后被删除），再发布 one-shot 内存导航请求并打开
@@ -377,15 +423,35 @@ export default function ExcerptsScreen() {
             {uiText.excerpts.title}
           </Text>
         }
-        renderSectionHeader={({ section }) => (
-          <Text style={styles.sectionTitle}>{section.title}</Text>
-        )}
+        renderSectionHeader={({ section }) => {
+          // Excerpts Tab Core E：books mode 的 section header = 书名（左，flex:1
+          // 单行省略）+ N条（右，secondary label，固定自然宽度不被挤掉）。
+          // 无 badge / 胶囊 / icon / 封面 / chevron，与 time header 同样克制。
+          if (section.kind === 'book') {
+            return (
+              <View style={styles.bookSectionHeader}>
+                <Text
+                  style={[styles.sectionTitle, styles.bookSectionTitle]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {section.title}
+                </Text>
+                <Text style={styles.bookCount}>
+                  {uiText.excerpts.bookExcerptCount(section.count ?? section.data.length)}
+                </Text>
+              </View>
+            );
+          }
+          return <Text style={styles.sectionTitle}>{section.title}</Text>;
+        }}
         renderItem={({ item, index, section }) => {
           const info = truncInfo[item.id];
           const measured = info && info.text === item.quoteText ? info : undefined;
           return (
             <ExcerptFeedItemRow
               item={item}
+              viewMode={viewMode}
               isFirst={index === 0}
               isLast={index === section.data.length - 1}
               isExpanded={expandedItemId === item.id}
@@ -441,6 +507,27 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginTop: 28,
     marginBottom: 12,
+  },
+  /**
+   * Excerpts Tab Core E：books mode 的 section header 行。
+   * 书名左（flex:1，单行省略，数量不被挤掉）+ N条右（secondary label）。
+   * margin 从 sectionTitle 搬到容器，避免双倍间距。
+   */
+  bookSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    marginTop: 28,
+    marginBottom: 12,
+  },
+  bookSectionTitle: {
+    flex: 1,
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  bookCount: {
+    color: tokens.colors.secondaryLabel,
+    fontSize: 15,
+    marginLeft: 8,
   },
   item: {
     backgroundColor: tokens.colors.groupedCell,

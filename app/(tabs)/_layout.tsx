@@ -3,12 +3,15 @@ import { usePathname } from 'expo-router';
 import { PlatformColor } from 'react-native';
 
 import { LibraryViewProvider, useLibraryView } from '../../src/features/library/library-view-context';
+import { ExcerptsViewProvider, useExcerptsView } from '../../src/features/excerpts/excerpts-view-context';
 import { uiText } from '../../src/localization';
 
 export default function TabLayout() {
   return (
     <LibraryViewProvider>
-      <AppTabs />
+      <ExcerptsViewProvider>
+        <AppTabs />
+      </ExcerptsViewProvider>
     </LibraryViewProvider>
   );
 }
@@ -16,6 +19,7 @@ export default function TabLayout() {
 function AppTabs() {
   const pathname = usePathname();
   const { isTabBarHidden, toggleDisplayMode } = useLibraryView();
+  const { toggleViewMode } = useExcerptsView();
   const booksTabColor = PlatformColor('label');
 
   return (
@@ -30,6 +34,13 @@ function AppTabs() {
         tabPress: () => {
           if (route.name === '(library)' && pathname === '/') {
             toggleDisplayMode();
+          }
+          // Excerpts Tab Core E：复用书库已验证的 current-tab re-tap 机制。
+          // tabPress 触发时 pathname 还没变（仍是旧路由）：从其他 Tab 第一次
+          // 进入摘录时 pathname !== '/excerpts'，不 toggle；已经在摘录页时
+          // pathname === '/excerpts'，才是 re-tap，切换 按时间/按书籍。
+          if (route.name === 'excerpts' && pathname === '/excerpts') {
+            toggleViewMode();
           }
         },
       })}
