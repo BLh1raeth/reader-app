@@ -486,9 +486,9 @@ export default function ExcerptsScreen() {
           </View>
         }
         renderSectionHeader={({ section }) => {
-          // Excerpts Tab Core E：books mode 的 section header = 书名（左，flex:1
-          // 单行省略）+ N条（右，secondary label，固定自然宽度不被挤掉）。
-          // 无 badge / 胶囊 / icon / 封面 / chevron，与 time header 同样克制。
+          // Excerpts Tab Core E：books mode 的 section header = 书名
+          // （单行省略）。无 badge / 胶囊 / icon / 封面 / chevron / 条数，
+          // 与 time header 同样克制。
           if (section.kind === 'book') {
             return (
               <View style={styles.bookSectionHeader}>
@@ -498,9 +498,6 @@ export default function ExcerptsScreen() {
                   ellipsizeMode="tail"
                 >
                   {section.title}
-                </Text>
-                <Text style={styles.bookCount}>
-                  {uiText.excerpts.bookExcerptCount(section.count ?? section.data.length)}
                 </Text>
               </View>
             );
@@ -619,11 +616,6 @@ const styles = StyleSheet.create({
     flex: 1,
     marginTop: 0,
     marginBottom: 0,
-  },
-  bookCount: {
-    color: tokens.colors.secondaryLabel,
-    fontSize: 15,
-    marginLeft: 8,
   },
   item: {
     backgroundColor: tokens.colors.groupedCell,
