@@ -16,11 +16,13 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { SymbolView } from 'expo-symbols';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { tokens } from '../../design-system/tokens';
 import { uiText } from '../../localization';
+import { bookRepository } from '../library/book-repository';
+import { createReaderExternalNavigationRequest, type ReaderExternalNavigationRequest } from '../reader/reader-external-navigation';
 import {
   groupExcerptFeedItems,
   type ExcerptFeedSection,
@@ -154,6 +156,7 @@ function ExcerptFeedItemRow({
   fullHeight,
   onToggleExpand,
   onTruncationMeasured,
+  onSourcePress,
 }: {
   item: ExcerptFeedItem;
   isFirst: boolean;
@@ -174,6 +177,8 @@ function ExcerptFeedItemRow({
     truncated: boolean,
     fullHeight: number,
   ) => void;
+  /** Excerpts Tab Core C: Source 行是唯一的原文入口。 */
+  onSourcePress: (item: ExcerptFeedItem) => void;
 }) {
   // 不可见测量的 layout 回调：无 numberOfLines 的隐藏 Text 给出完整行数，
   // 最后一行的底边即全文自然高度（与可见全文版同款式同宽度，动画目标值精确可信）。
@@ -251,7 +256,7 @@ function ExcerptFeedItemRow({
         accessibilityRole="button"
         accessibilityHint="轻点返回原文位置"
         hitSlop={{ top: 8, bottom: 8 }}
-        onPress={() => {}}
+        onPress={() => onSourcePress(item)}
         style={({ pressed }) => [styles.sourcePressable, pressed && styles.sourcePressed]}
       >
         <Text
@@ -268,6 +273,7 @@ function ExcerptFeedItemRow({
 
 export default function ExcerptsScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   // null = loading（与 empty 区分开，避免 empty → 列表一闪而过）
   const [sections, setSections] = useState<ExcerptFeedSection[] | null>(null);
   // 全 Feed 唯一展开态：纯 UI ephemeral state，不写数据库
@@ -306,6 +312,35 @@ export default function ExcerptsScreen() {
       // 加载失败时保持旧数据，不闪成 empty state
     }
   }, []);
+
+  // Excerpts Tab Core C: Source 行是唯一的原文入口。点按时先做 stale 检查
+  // （书可能在 Feed 建好后被删除），再发布 one-shot 内存导航请求并打开
+  // Reader。Quote 已展开时点 Source 直接导航，不先收起、不改 expandedItemId。
+  const handleSourcePress = useCallback(async (item: ExcerptFeedItem) => {
+    const book = await bookRepository.getBookById(item.bookId).catch(() => null);
+    if (!book) {
+      if (__DEV__) console.log('[EXCERPT_NAVIGATE]', JSON.stringify({ bookId: item.bookId, itemKind: item.kind, aborted: 'book-missing' }));
+      // 书已不存在：不进入空 Reader，刷新 Feed 让 stale item 消失。
+      void loadFeed();
+      return;
+    }
+    let request: ReaderExternalNavigationRequest;
+    try {
+      request = createReaderExternalNavigationRequest(item.bookId, item.rangeCfi);
+    } catch {
+      if (__DEV__) console.log('[READER_RANGE_NAV_FAILED]', JSON.stringify({ reason: 'malformed-target' }));
+      return;
+    }
+    if (__DEV__) {
+      console.log('[EXCERPT_NAVIGATE]', JSON.stringify({
+        bookId: item.bookId,
+        itemKind: item.kind,
+        requestId: request.id,
+        cfiLength: item.rangeCfi.length,
+      }));
+    }
+    router.push({ pathname: '/reader/[bookId]', params: { bookId: item.bookId } });
+  }, [loadFeed, router]);
 
   // Tab focus 时刷新：Reader 新增摘录后返回即能看到最新数据。
   // useFocusEffect 在初次挂载时也会执行，覆盖首屏加载。
@@ -351,6 +386,7 @@ export default function ExcerptsScreen() {
               fullHeight={measured?.fullHeight ?? 0}
               onToggleExpand={toggleExpand}
               onTruncationMeasured={handleTruncationMeasured}
+              onSourcePress={handleSourcePress}
             />
           );
         }}
