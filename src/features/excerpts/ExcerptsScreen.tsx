@@ -7,6 +7,7 @@ import {
   SectionList,
   StyleSheet,
   Text,
+  TextInput,
   TouchableWithoutFeedback,
   View,
   type NativeSyntheticEvent,
@@ -314,6 +315,19 @@ export default function ExcerptsScreen() {
   const [sections, setSections] = useState<ExcerptFeedSection[] | null>(null);
   // 搜索 query：非空时在内存里过滤 feed，扁平展示，不按 viewMode 分组。
   const [query, setQuery] = useState('');
+  // 收键盘用的隐藏 RN TextInput：原生 UISearchBar 不是 RN TextInput，
+  // Keyboard.dismiss()（只 blur TextInputState.currentlyFocusedInput()）对它无效。
+  // 先 focus 这个隐藏输入把 first responder 从原生搜索框抢过来（UIKit 同一时间只允许一个），
+  // 再 blur，键盘就能正常收起。
+  const hiddenInputRef = useRef<TextInput>(null);
+  const dismissSearchKeyboard = useCallback(() => {
+    const input = hiddenInputRef.current;
+    if (!input) return;
+    input.focus();
+    // focus() 已同步把 JS 侧 currentlyFocusedInput 指向隐藏输入，
+    // native 侧 focus/blurb 按顺序执行：先抢 first responder，再收键盘。
+    Keyboard.dismiss();
+  }, []);
   // 全 Feed 唯一展开态：纯 UI ephemeral state，不写数据库
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   // itemId -> { 测量时的文本, 是否实际超过 2 行, 全文自然高度 }；
@@ -428,8 +442,15 @@ export default function ExcerptsScreen() {
   return (
     // 点空白处收起搜索键盘：未被子元素处理的 tap 冒泡到这里 dismiss。
     // keyboardShouldPersistTaps="handled" 保证列表 item 的点按不受影响。
-    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+    <TouchableWithoutFeedback onPress={dismissSearchKeyboard} accessible={false}>
       <View style={styles.screen}>
+        {/* 收键盘中转：1x1 不可见，pointerEvents none，不拦截任何触摸 */}
+        <TextInput
+          ref={hiddenInputRef}
+          style={styles.hiddenInput}
+          pointerEvents="none"
+          editable
+        />
         <SectionList<ExcerptFeedItem, ExcerptFeedSection>
           sections={sections}
           keyExtractor={(item) => item.id}
@@ -527,6 +548,13 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: tokens.colors.groupedBackground,
+  },
+  // 收键盘中转输入框：不可见、不占布局、不拦截触摸
+  hiddenInput: {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    opacity: 0,
   },
   content: {
     paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
