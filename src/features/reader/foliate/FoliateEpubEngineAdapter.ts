@@ -980,12 +980,17 @@ export class FoliateEpubEngineAdapter {
    */
   private pendingNavigationReason: ReaderLocationChangeReason | null = null;
   /**
-   * Excerpts Tab Core C: transient reveal bookkeeping. The generation lets a
-   * newer reveal supersede an older one; the timer set lets destroy() cancel
-   * any in-flight reveal. The reveal never touches the highlight registry.
+   * Excerpts Tab Core C: transient reveal bookkeeping. The generation makes
+   * each reveal's paint key unique so concurrent reveals never clear each
+   * other's paint; the entry set lets destroy() settle any in-flight reveal
+   * instead of leaving its promise dangling. The reveal never touches the
+   * highlight registry.
    */
   private revealGeneration = 0;
-  private revealTimers = new Set<ReturnType<typeof setTimeout>>();
+  // In-flight transient reveals. Each entry carries its own resolve so
+  // destroy() can settle the waiters instead of leaving their promises
+  // dangling after clearTimeout.
+  private revealTimers = new Set<{ timer: ReturnType<typeof setTimeout>; resolve: () => void }>();
   /** Serializes measureForwardText so bursts settle in occurrence order. */
   private textMeasureQueue: Promise<void> = Promise.resolve();
   /** Lightweight per-section plain-text cache for forward measurement. */
@@ -1092,8 +1097,12 @@ export class FoliateEpubEngineAdapter {
     // navigates elsewhere. Either way the reader never fails to open here,
     // and EXTERNAL_TARGET_RESULT tells native whether the notice is needed.
     const progressCfi = input.restoreCfi?.startsWith('epubcfi(') ? input.restoreCfi : null;
-    const externalCfi = input.externalTargetCfi?.startsWith('epubcfi(') ? input.externalTargetCfi : null;
-    const externalOffered = externalCfi !== null;
+    const rawExternalCfi = input.externalTargetCfi ?? null;
+    const externalCfi = rawExternalCfi?.startsWith('epubcfi(') ? rawExternalCfi : null;
+    // offered 按"有没有给"算，不按"给的对不对"算：畸形的 target 也要走
+    // EXTERNAL_TARGET_RESULT → Reader 回退到 saved progress 并提示，
+    // 而不是在这里被静默忽略。
+    const externalOffered = rawExternalCfi !== null;
     let externalResolved = false;
     let targetCfi = progressCfi;
     this.onDiagnostic({ event: 'VIEW_INIT_START' });
@@ -1716,15 +1725,15 @@ export class FoliateEpubEngineAdapter {
       }));
     }
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        this.revealTimers.delete(timer);
+      const entry = { resolve } as { timer: ReturnType<typeof setTimeout>; resolve: () => void };
+      entry.timer = setTimeout(() => {
+        this.revealTimers.delete(entry);
         resolve();
       }, durationMs);
-      this.revealTimers.add(timer);
+      this.revealTimers.add(entry);
     });
-    // A newer reveal supersedes this one; only the latest generation may
-    // remove its own paint.
-    if (generation !== this.revealGeneration) return;
+    // 每个 reveal 只删自己 generation 唯一的 key，新旧 reveal 互不干扰，
+    // 不需要 generation 守卫；守卫反而会让被取代的旧 key 的 paint 永远残留在 overlayer 上。
     try {
       overlayer.remove(key);
     } catch (error) {
@@ -1944,8 +1953,13 @@ export class FoliateEpubEngineAdapter {
     this.dismissHighlightBubble();
     // Excerpts Tab Core C: cancel any in-flight transient reveal; its
     // overlayer is being torn down with the view, and a newer open gets a
-    // fresh generation.
-    for (const timer of this.revealTimers) clearTimeout(timer);
+    // fresh generation. Settle the waiters so their promises never dangle;
+    // the post-await paint cleanup removes only their own key and is
+    // try/caught against the torn-down overlayer.
+    for (const entry of this.revealTimers) {
+      clearTimeout(entry.timer);
+      entry.resolve();
+    }
     this.revealTimers.clear();
     this.revealGeneration += 1;
     this.highlightRanges.clear();

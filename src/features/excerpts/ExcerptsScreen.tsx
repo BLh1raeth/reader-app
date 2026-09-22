@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
+  Alert,
   Pressable,
   SectionList,
   StyleSheet,
@@ -22,7 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { tokens } from '../../design-system/tokens';
 import { uiText } from '../../localization';
 import { bookRepository } from '../library/book-repository';
-import { createReaderExternalNavigationRequest, type ReaderExternalNavigationRequest } from '../reader/reader-external-navigation';
+import { createReaderExternalNavigationRequest } from '../reader/reader-external-navigation';
 import {
   groupExcerptFeedItems,
   type ExcerptFeedSection,
@@ -316,21 +317,27 @@ export default function ExcerptsScreen() {
   // Excerpts Tab Core C: Source 行是唯一的原文入口。点按时先做 stale 检查
   // （书可能在 Feed 建好后被删除），再发布 one-shot 内存导航请求并打开
   // Reader。Quote 已展开时点 Source 直接导航，不先收起、不改 expandedItemId。
+  //
+  // 快速连点不同 Source 的 sequence 守卫：只有最后一次点击能走完导航，
+  // 旧的异步查询回来后发现过期就直接丢弃，不覆盖新点击。
+  const sourceNavSeqRef = useRef(0);
   const handleSourcePress = useCallback(async (item: ExcerptFeedItem) => {
+    const seq = ++sourceNavSeqRef.current;
     const book = await bookRepository.getBookById(item.bookId).catch(() => null);
+    if (seq !== sourceNavSeqRef.current) {
+      if (__DEV__) console.log('[EXCERPT_NAVIGATE]', JSON.stringify({ bookId: item.bookId, itemKind: item.kind, aborted: 'superseded' }));
+      return;
+    }
     if (!book) {
       if (__DEV__) console.log('[EXCERPT_NAVIGATE]', JSON.stringify({ bookId: item.bookId, itemKind: item.kind, aborted: 'book-missing' }));
-      // 书已不存在：不进入空 Reader，刷新 Feed 让 stale item 消失。
+      // 书已不存在：提示后刷新 Feed 让 stale item 消失，不进入空 Reader。
+      Alert.alert(uiText.reader.cannotOpen, '这本书可能已被删除。');
       void loadFeed();
       return;
     }
-    let request: ReaderExternalNavigationRequest;
-    try {
-      request = createReaderExternalNavigationRequest(item.bookId, item.rangeCfi);
-    } catch {
-      if (__DEV__) console.log('[READER_RANGE_NAV_FAILED]', JSON.stringify({ reason: 'malformed-target' }));
-      return;
-    }
+    // 畸形 CFI 不在 Excerpts 层拦截：照常发布请求并进 Reader，
+    // Reader 在 open 时校验、回退到 saved progress 并提示（spec）。
+    const request = createReaderExternalNavigationRequest(item.bookId, item.rangeCfi);
     if (__DEV__) {
       console.log('[EXCERPT_NAVIGATE]', JSON.stringify({
         bookId: item.bookId,

@@ -34,21 +34,18 @@ export const EXTERNAL_NAVIGATION_REQUEST_TTL_MS = 5 * 60 * 1000;
 let nextRequestId = 1;
 let pendingRequest: ReaderExternalNavigationRequest | null = null;
 
-function isCfiLike(value: string): boolean {
-  return value.startsWith('epubcfi(');
-}
-
 /**
  * Publish a new external navigation request, replacing any older pending one.
- * Throws when the range CFI is malformed so callers fail before navigating.
+ *
+ * Never throws for a malformed range CFI: the Reader validates the target
+ * during open (cold path) or in goToExcerptTarget (warm path), falls back to
+ * the saved progress, and shows the '无法定位到原摘录位置' notice. The
+ * Excerpts layer must not block navigation for a bad target (spec).
  */
 export function createReaderExternalNavigationRequest(
   bookId: string,
   rangeCfi: string,
 ): ReaderExternalNavigationRequest {
-  if (!bookId || !isCfiLike(rangeCfi)) {
-    throw new Error('无法定位到原摘录位置。');
-  }
   const request: ReaderExternalNavigationRequest = {
     id: nextRequestId++,
     bookId,
