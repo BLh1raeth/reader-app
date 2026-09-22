@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   Alert,
+  Animated as RNAnimated,
   Keyboard,
   Pressable,
   SectionList,
@@ -308,7 +309,7 @@ export default function ExcerptsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   // Excerpts Tab Core E：按时间 / 按书籍浏览模式（内存态，与书库 Grid/List 对齐）。
-  const { viewMode } = useExcerptsView();
+  const { viewMode, listOpacity } = useExcerptsView();
   // null = loading（与 empty 区分开，避免 empty → 列表一闪而过）
   // 全量 Feed read model：viewMode 切换时在内存里重分组，不再查 DB。
   const [feed, setFeed] = useState<ExcerptFeedItem[] | null>(null);
@@ -451,6 +452,9 @@ export default function ExcerptsScreen() {
           pointerEvents="none"
           editable
         />
+        {/* 模式切换淡入淡出：透明度由 excerpts-view-context 的 listOpacity 驱动。
+            只包 SectionList（含 ListHeader 的标题+搜索框），点空白收键盘的外层不动。 */}
+        <RNAnimated.View style={[styles.listFade, { opacity: listOpacity }]}>
         <SectionList<ExcerptFeedItem, ExcerptFeedSection>
           sections={sections}
           keyExtractor={(item) => item.id}
@@ -543,7 +547,8 @@ export default function ExcerptsScreen() {
             </Text>
           </View>
         }
-      />
+        ></SectionList>
+        </RNAnimated.View>
       </View>
     </TouchableWithoutFeedback>
   );
@@ -553,6 +558,11 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: tokens.colors.groupedBackground,
+  },
+  // 模式切换淡入淡出：列表外层容器。flex:1 保持和原来 SectionList 直挂时
+  // 一样的定界关系（原来 SectionList 的父级就是这个 flex:1 的 View）。
+  listFade: {
+    flex: 1,
   },
   // 收键盘中转输入框：不可见、不占布局、不拦截触摸
   hiddenInput: {
