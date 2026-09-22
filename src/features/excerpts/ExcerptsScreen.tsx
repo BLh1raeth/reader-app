@@ -16,6 +16,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { SymbolView } from 'expo-symbols';
+import { MenuView } from '@expo/ui/community/menu';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -342,16 +343,24 @@ export default function ExcerptsScreen() {
           const info = truncInfo[item.id];
           const measured = info && info.text === item.quoteText ? info : undefined;
           return (
-            <ExcerptFeedItemRow
-              item={item}
-              isFirst={index === 0}
-              isLast={index === section.data.length - 1}
-              isExpanded={expandedItemId === item.id}
-              isTruncated={measured?.truncated}
-              fullHeight={measured?.fullHeight ?? 0}
-              onToggleExpand={toggleExpand}
-              onTruncationMeasured={handleTruncationMeasured}
-            />
+            // 二分测试：MenuView 包装结构（Core D 的布局部分）。
+            // actions 先给空菜单，验证原生 matchContents 是否撑宽卡片。
+            <MenuView
+              actions={[]}
+              onPressAction={() => {}}
+              shouldOpenOnLongPress
+            >
+              <ExcerptFeedItemRow
+                item={item}
+                isFirst={index === 0}
+                isLast={index === section.data.length - 1}
+                isExpanded={expandedItemId === item.id}
+                isTruncated={measured?.truncated}
+                fullHeight={measured?.fullHeight ?? 0}
+                onToggleExpand={toggleExpand}
+                onTruncationMeasured={handleTruncationMeasured}
+              />
+            </MenuView>
           );
         }}
         ItemSeparatorComponent={() => (
