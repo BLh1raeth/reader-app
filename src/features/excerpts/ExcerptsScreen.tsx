@@ -468,13 +468,21 @@ export default function ExcerptsScreen() {
             </Text>
             {/* 真正的 UIKit UISearchBar（本地原生模块），不是 RN 模拟：
                 放大镜 / placeholder / 清空键 / 键盘 / 深浅色全部系统提供。
-                需要包含该模块的新 Development Build 才能运行（EAS）。 */}
-            <NativeExcerptSearchBar
-              style={styles.nativeSearchBar}
-              placeholder={uiText.excerpts.searchPlaceholder}
-              text={query}
-              onTextChange={(event) => setQuery(event.nativeEvent.text)}
-            />
+                需要包含该模块的新 Development Build 才能运行（EAS）。
+                外面包一层 Pressable 吃掉搜索框区域的 tap：原生 view 不参与 RN
+                responder 协商，点搜索框的 tap 会冒泡到页面最外层的
+                TouchableWithoutFeedback 触发收键盘，导致键盘刚呼出就被
+                dismissSearchKeyboard 抢走 first responder 又收回去。
+                内层先认领 responder，外层 onPress 不触发；原生搜索框的
+                UIKit 触摸不受影响（之前外层认领时它照样能工作）。 */}
+            <Pressable onPress={() => {}} accessible={false}>
+              <NativeExcerptSearchBar
+                style={styles.nativeSearchBar}
+                placeholder={uiText.excerpts.searchPlaceholder}
+                text={query}
+                onTextChange={(event) => setQuery(event.nativeEvent.text)}
+              />
+            </Pressable>
           </View>
         }
         renderSectionHeader={({ section }) => {
