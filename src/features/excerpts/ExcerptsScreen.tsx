@@ -345,10 +345,13 @@ export default function ExcerptsScreen() {
           return (
             // 二分测试：MenuView 包装结构（Core D 的布局部分）。
             // actions 先给空菜单，验证原生 matchContents 是否撑宽卡片。
+            // style width 100%：给 MenuView 确定宽度，Yoga 不再调 matchContents
+            // 的 measure（无约束量内在宽度会被长来源单行撑大），原生视图直接取确定宽。
             <MenuView
               actions={[]}
               onPressAction={() => {}}
               shouldOpenOnLongPress
+              style={{ width: '100%' }}
             >
               <ExcerptFeedItemRow
                 item={item}
