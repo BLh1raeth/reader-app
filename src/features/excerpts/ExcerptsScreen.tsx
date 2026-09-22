@@ -475,7 +475,7 @@ export default function ExcerptsScreen() {
                 dismissSearchKeyboard 抢走 first responder 又收回去。
                 内层先认领 responder，外层 onPress 不触发；原生搜索框的
                 UIKit 触摸不受影响（之前外层认领时它照样能工作）。 */}
-            <Pressable onPress={() => {}} accessible={false}>
+            <Pressable onPress={() => {}} accessible={false} style={styles.searchBarPressable}>
               <NativeExcerptSearchBar
                 style={styles.nativeSearchBar}
                 placeholder={uiText.excerpts.searchPlaceholder}
@@ -575,24 +575,27 @@ const styles = StyleSheet.create({
     lineHeight: 40,
     marginBottom: 12,
   },
-  /** 标题行：摘录（左，flex:1）+ 原生搜索框（右）。 */
+  /** 标题行：摘录（左，自然宽度）+ 原生搜索框（右，占满剩余宽度）。 */
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 12,
   },
   headerTitle: {
-    flex: 1,
     marginBottom: 0,
   },
   /**
-   * 原生 UISearchBar 容器：只给高度（系统标准 56pt）和宽度，
-   * 背景 / 圆角 / 图标全部由 iOS 系统提供，不在外面套任何东西。
+   * 搜索框外层 Pressable：占满标题右侧剩余宽度，高度系统标准 56pt。
+   * Pressable 只吃掉搜索框区域的 tap（见 JSX 注释），不做视觉反馈。
    */
-  nativeSearchBar: {
+  searchBarPressable: {
+    flex: 1,
     height: 56,
-    width: 160,
     marginLeft: 12,
+  },
+  /** 原生 UISearchBar：填满外层 Pressable，背景 / 圆角 / 图标由 iOS 系统提供。 */
+  nativeSearchBar: {
+    flex: 1,
   },
   sectionTitle: {
     color: tokens.colors.label,
