@@ -452,20 +452,9 @@ export default function ExcerptsScreen() {
           pointerEvents="none"
           editable
         />
-        {/* 模式切换淡入淡出：透明度由 excerpts-view-context 的 listOpacity 驱动。
-            只包 SectionList（含 ListHeader 的标题+搜索框），点空白收键盘的外层不动。 */}
-        <RNAnimated.View style={[styles.listFade, { opacity: listOpacity }]}>
-        <SectionList<ExcerptFeedItem, ExcerptFeedSection>
-          sections={sections}
-          keyExtractor={(item) => item.id}
-          stickySectionHeadersEnabled={false}
-          keyboardDismissMode="on-drag"
-          keyboardShouldPersistTaps="handled"
-        contentContainerStyle={[
-          styles.content,
-          { paddingTop: insets.top + 2, paddingBottom: insets.bottom + 32 },
-        ]}
-        ListHeaderComponent={
+        {/* 固定头部：标题 + 原生搜索框。模式切换时不参与淡入淡出，常驻顶部；
+            列表滚动时也不跟随滚走，搜索框随时可用。 */}
+        <View style={[styles.fixedHeader, { paddingTop: insets.top + 2 }]}>
           <View style={styles.headerRow}>
             <Text accessibilityRole="header" style={[styles.largeTitle, styles.headerTitle]}>
               {uiText.excerpts.title}
@@ -488,7 +477,23 @@ export default function ExcerptsScreen() {
               />
             </Pressable>
           </View>
-        }
+        </View>
+        {/* 模式切换淡入淡出：只包列表内容，头部常驻不参与。
+            透明度由 excerpts-view-context 的 listOpacity 驱动；
+            点空白收键盘的外层 TouchableWithoutFeedback 不动。 */}
+        <RNAnimated.View style={[styles.listFade, { opacity: listOpacity }]}>
+        <SectionList<ExcerptFeedItem, ExcerptFeedSection>
+          sections={sections}
+          keyExtractor={(item) => item.id}
+          stickySectionHeadersEnabled={false}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[
+          styles.content,
+          // 顶部内边距原来撑在 ListHeader 上方；头部移出后这里不再需要，
+          // 头部与首个 section 的间距仍由 headerRow marginBottom + section marginTop 保证，和原来像素一致。
+          { paddingBottom: insets.bottom + 32 },
+        ]}
         renderSectionHeader={({ section }) => {
           // Excerpts Tab Core E：books mode 的 section header = 书名
           // （单行省略）。无 badge / 胶囊 / icon / 封面 / chevron / 条数，
@@ -581,6 +586,11 @@ const styles = StyleSheet.create({
     letterSpacing: -0.6,
     lineHeight: 40,
     marginBottom: 12,
+  },
+  /** 固定头部：标题 + 搜索框。横向内边距和列表内容对齐（原来 ListHeader 在
+      contentContainer 里，吃的是同一份 paddingHorizontal）；顶部安全区内边距在 JSX 里拼 insets。 */
+  fixedHeader: {
+    paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
   },
   /** 标题行：摘录（左，自然宽度）+ 原生搜索框（右，占满剩余宽度）。 */
   headerRow: {

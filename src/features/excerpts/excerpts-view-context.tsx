@@ -12,6 +12,14 @@ import { Animated } from 'react-native';
  */
 export type ExcerptsViewMode = 'time' | 'books';
 
+/**
+ * 模式切换淡入淡出参数：淡出只压到 0.3（不全隐，避免"闪烁感"），
+ * 淡出 80ms 稍快、淡入 140ms 稍慢，读起来是"轻点一下"而不是"眨一下眼"。
+ */
+const FADE_MIN_OPACITY = 0.3;
+const FADE_OUT_MS = 80;
+const FADE_IN_MS = 140;
+
 type ExcerptsViewContextValue = {
   viewMode: ExcerptsViewMode;
   toggleViewMode: () => void;
@@ -35,8 +43,9 @@ export function ExcerptsViewProvider({ children }: { children: ReactNode }) {
     // 被停掉的淡出回调 finished=false，直接丢弃，不翻转，保证最终回到 1。
     listOpacity.stopAnimation();
     Animated.timing(listOpacity, {
-      toValue: 0,
-      duration: 100,
+      // 只压到 0.3 不全隐：全隐再回来读起来像"闪烁"，留个底更柔和。
+      toValue: FADE_MIN_OPACITY,
+      duration: FADE_OUT_MS,
       useNativeDriver: true,
     }).start(({ finished }) => {
       if (!finished) return;
@@ -46,7 +55,7 @@ export function ExcerptsViewProvider({ children }: { children: ReactNode }) {
         requestAnimationFrame(() => {
           Animated.timing(listOpacity, {
             toValue: 1,
-            duration: 150,
+            duration: FADE_IN_MS,
             useNativeDriver: true,
           }).start();
         });
