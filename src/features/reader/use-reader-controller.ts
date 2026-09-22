@@ -18,14 +18,15 @@ import {
 } from './reader-settings';
 import { readerSettingsRepository } from './reader-settings-repository';
 import type { ReaderEngineDiagnostic, ReaderEpubSource, ReaderLocation, ReaderResourcePayload, ReaderRestoreState } from './reader-types';
+import { takeReaderExternalNavigationRequest, type ReaderExternalNavigationRequest } from './reader-external-navigation';
 
 const READER_SETTINGS_APPLY_DEBOUNCE_MS = 120;
 const READER_SETTINGS_SAVE_DEBOUNCE_MS = 500;
 
 type ReaderControllerState =
   | { kind: 'loading'; message: string }
-  | { kind: 'opening'; book: Book; source: ReaderEpubSource; restoreCfi: string | null }
-  | { kind: 'ready'; book: Book; restoreCfi: string | null }
+  | { kind: 'opening'; book: Book; source: ReaderEpubSource; restoreCfi: string | null; externalTargetCfi: string | null }
+  | { kind: 'ready'; book: Book; restoreCfi: string | null; externalTargetCfi: string | null }
   | { kind: 'error'; message: string };
 
 function toProgress(bookId: string, location: ReaderLocation): ReadingProgress {
@@ -47,6 +48,8 @@ export function useReaderController(bookId: string | undefined) {
   const [state, setState] = useState<ReaderControllerState>({ kind: 'loading', message: '正在打开图书' });
   const [currentLocation, setCurrentLocation] = useState<ReaderLocation | null>(null);
   const [firstPageRendered, setFirstPageRendered] = useState(false);
+  /** Excerpts Tab Core C: true when the external target was unresolvable. */
+  const [externalTargetFailed, setExternalTargetFailed] = useState(false);
   const [pageCountCache, setPageCountCache] = useState<ReaderPageCountCache | null>(null);
   const [readerSettings, setReaderSettings] = useState<ReaderSettings>(DEFAULT_READER_SETTINGS);
   const [appliedReaderSettings, setAppliedReaderSettings] = useState<ReaderSettings>(DEFAULT_READER_SETTINGS);
@@ -54,6 +57,14 @@ export function useReaderController(bookId: string | undefined) {
   const currentBookRef = useRef<Book | null>(null);
   const sourceRef = useRef<ReaderEpubSource | null>(null);
   const restoreCfiRef = useRef<string | null>(null);
+  /** Excerpts Tab Core C: one-shot external navigation target for this open. */
+  const externalTargetCfiRef = useRef<string | null>(null);
+  /**
+   * Excerpts Tab Core C: the taken request, keyed by bookId so a re-run of
+   * the open effect for the same book reuses it instead of taking twice
+   * (the store itself is one-shot).
+   */
+  const externalNavigationRef = useRef<{ bookId: string; request: ReaderExternalNavigationRequest | null } | null>(null);
   const hasFallbackAttemptRef = useRef(false);
   const engineReadyRef = useRef(false);
   const restoreStateRef = useRef<ReaderRestoreState>('opening');
@@ -148,7 +159,7 @@ export function useReaderController(bookId: string | undefined) {
     // `open()` promise callback can always reach Native. Treat that event as
     // the authoritative ready boundary, but do not make it writable.
     setState((current) => current.kind === 'opening'
-      ? { kind: 'ready', book: current.book, restoreCfi: current.restoreCfi }
+      ? { kind: 'ready', book: current.book, restoreCfi: current.restoreCfi, externalTargetCfi: current.externalTargetCfi }
       : current);
     console.log('[ENGINE_ACTIVE]', JSON.stringify({ bookId: currentBookRef.current?.id ?? null, cfi: location.cfi, source }));
     if (currentBookRef.current) markReaderOpen(currentBookRef.current.id, 'READER_VISIBLE', currentBookRef.current.fileSize, { source });
@@ -283,6 +294,13 @@ export function useReaderController(bookId: string | undefined) {
           actualCurrentCfi: diagnostic.actualCurrentCfi,
         }));
         return;
+      case 'EXTERNAL_TARGET_RESULT':
+        // Excerpts Tab Core C: the engine reports whether the external
+        // target resolved. On failure the reader already fell back to the
+        // saved progress; surface the flag so the screen can show a
+        // lightweight notice.
+        if (!diagnostic.resolved) setExternalTargetFailed(true);
+        return;
     }
   }, []);
 
@@ -301,7 +319,7 @@ export function useReaderController(bookId: string | undefined) {
         const fallback = await createFullEpubSource(book);
         sourceRef.current = fallback;
         console.warn('[READER_RESOURCE]', '按需加载失败，已切换至完整 EPUB 兼容模式。', message);
-        setState({ kind: 'opening', book, source: fallback, restoreCfi: restoreCfiRef.current });
+        setState({ kind: 'opening', book, source: fallback, restoreCfi: restoreCfiRef.current, externalTargetCfi: externalTargetCfiRef.current });
         return;
       } catch (fallbackError) {
         setState({ kind: 'error', message: fallbackError instanceof Error ? fallbackError.message : message });
@@ -327,6 +345,17 @@ export function useReaderController(bookId: string | undefined) {
       setState({ kind: 'error', message: '找不到这本书。' });
       return undefined;
     }
+    // Excerpts Tab Core C: consume a pending external navigation request for
+    // this book, if any. take() is one-shot: rerenders, settings changes and
+    // background/foreground cycles can never consume it twice. The taken
+    // request is memoized per bookId so an effect re-run for the same book
+    // reuses it instead of taking from the (now empty) store again.
+    if (externalNavigationRef.current?.bookId !== bookId) {
+      externalNavigationRef.current = { bookId, request: takeReaderExternalNavigationRequest(bookId) };
+    }
+    const externalNavigationRequest = externalNavigationRef.current.request;
+    externalTargetCfiRef.current = externalNavigationRequest?.rangeCfi ?? null;
+    setExternalTargetFailed(false);
     void (async () => {
       try {
         // Picks up the preload started on tap when one exists, so the EPUB
@@ -348,7 +377,7 @@ export function useReaderController(bookId: string | undefined) {
           zipEntryCount: source.entries?.length ?? null,
           prefetchedFiles: Object.keys(source.prefetchedText ?? {}).length,
         });
-        setState({ kind: 'opening', book, source, restoreCfi: savedProgress?.cfi ?? null });
+        setState({ kind: 'opening', book, source, restoreCfi: savedProgress?.cfi ?? null, externalTargetCfi: externalTargetCfiRef.current });
       } catch (error) {
         if (!active) return;
         setState({ kind: 'error', message: error instanceof Error ? error.message : '无法打开这本书。' });
@@ -381,6 +410,8 @@ export function useReaderController(bookId: string | undefined) {
     state,
     currentLocation,
     firstPageRendered,
+    /** Excerpts Tab Core C: true when the external target was unresolvable. */
+    externalTargetFailed,
     pageCountCache,
     readerSettings,
     appliedReaderSettings,

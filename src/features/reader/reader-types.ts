@@ -69,7 +69,14 @@ export type ReaderEngineDiagnostic =
   | { event: 'RESTORE_REQUEST'; targetCfi: string | null }
   | { event: 'RESTORE_RESULT'; targetCfi: string | null; actualCurrentCfi: string | null }
   | { event: 'FIRST_PAGE_RENDERED' }
-  | { event: 'ENGINE_DESTROY' };
+  | { event: 'ENGINE_DESTROY' }
+  /**
+   * Excerpts Tab Core C: verdict for an external (excerpt Source) navigation
+   * target offered at open time. `resolved: true` means the reader landed on
+   * the target as an annotation-style jump; `resolved: false` means the
+   * target was unresolvable and the reader fell back to the saved progress.
+   */
+  | { event: 'EXTERNAL_TARGET_RESULT'; resolved: boolean };
 
 export type ReaderZipEntry = {
   name: string;
