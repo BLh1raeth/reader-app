@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   Alert,
+  Keyboard,
   Pressable,
   SectionList,
   StyleSheet,
   Text,
+  TouchableWithoutFeedback,
   View,
   type NativeSyntheticEvent,
   type TextLayoutEventData,
@@ -424,11 +426,16 @@ export default function ExcerptsScreen() {
   }
 
   return (
-    <View style={styles.screen}>
-      <SectionList<ExcerptFeedItem, ExcerptFeedSection>
-        sections={sections}
-        keyExtractor={(item) => item.id}
-        stickySectionHeadersEnabled={false}
+    // 点空白处收起搜索键盘：未被子元素处理的 tap 冒泡到这里 dismiss。
+    // keyboardShouldPersistTaps="handled" 保证列表 item 的点按不受影响。
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <View style={styles.screen}>
+        <SectionList<ExcerptFeedItem, ExcerptFeedSection>
+          sections={sections}
+          keyExtractor={(item) => item.id}
+          stickySectionHeadersEnabled={false}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
         contentContainerStyle={[
           styles.content,
           { paddingTop: insets.top + 2, paddingBottom: insets.bottom + 32 },
@@ -511,7 +518,8 @@ export default function ExcerptsScreen() {
           </View>
         }
       />
-    </View>
+      </View>
+    </TouchableWithoutFeedback>
   );
 }
 
