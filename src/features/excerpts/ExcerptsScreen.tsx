@@ -247,13 +247,21 @@ function ExcerptFeedItemRow({
           {item.noteText}
         </Text>
       ) : null}
-      <Text
-        style={styles.source}
-        numberOfLines={1}
-        ellipsizeMode="tail"
+      <Pressable
+        accessibilityRole="button"
+        accessibilityHint="轻点返回原文位置"
+        hitSlop={{ top: 8, bottom: 8 }}
+        onPress={() => {}}
+        style={({ pressed }) => [styles.sourcePressable, pressed && styles.sourcePressed]}
       >
-        {sourceLine(item)}
-      </Text>
+        <Text
+          style={styles.source}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {sourceLine(item)}
+        </Text>
+      </Pressable>
     </View>
   );
 }
@@ -463,7 +471,15 @@ const styles = StyleSheet.create({
     color: tokens.colors.secondaryLabel,
     fontSize: 15,
     lineHeight: 20,
+  },
+  // Source 按压容器：alignSelf 让热区贴着文字，不扩成整个 item。
+  sourcePressable: {
+    alignSelf: 'flex-start',
     marginTop: 6,
+    maxWidth: '100%',
+  },
+  sourcePressed: {
+    opacity: 0.65,
   },
   emptyContainer: {
     alignItems: 'center',
