@@ -6,6 +6,7 @@ import {
   SectionList,
   StyleSheet,
   Text,
+  TextInput,
   View,
   type NativeSyntheticEvent,
   type TextLayoutEventData,
@@ -309,6 +310,8 @@ export default function ExcerptsScreen() {
   // 全量 Feed read model：viewMode 切换时在内存里重分组，不再查 DB。
   const [feed, setFeed] = useState<ExcerptFeedItem[] | null>(null);
   const [sections, setSections] = useState<ExcerptFeedSection[] | null>(null);
+  // 搜索 query：非空时在内存里过滤 feed，扁平展示，不按 viewMode 分组。
+  const [query, setQuery] = useState('');
   // 全 Feed 唯一展开态：纯 UI ephemeral state，不写数据库
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   // itemId -> { 测量时的文本, 是否实际超过 2 行, 全文自然高度 }；
@@ -346,11 +349,23 @@ export default function ExcerptsScreen() {
     }
   }, []);
 
-  // Excerpts Tab Core E：按 viewMode 分组。time = 现有时间分组（逻辑不动）；
+  // Excerpts Tab 搜索：按 viewMode 分组。time = 现有时间分组（逻辑不动）；
   // books = 按 bookId 分组。同一个 feed 做 presentation 层重组，不重查 DB。
+  // query 非空时：在内存里过滤，扁平展示（不分组），两种 viewMode 下一致。
   useEffect(() => {
     if (feed === null) {
       setSections(null);
+      return;
+    }
+    const trimmed = query.trim().toLowerCase();
+    if (trimmed.length > 0) {
+      const filtered = feed.filter((item) =>
+        item.quoteText.toLowerCase().includes(trimmed) ||
+        (item.noteText?.toLowerCase().includes(trimmed) ?? false) ||
+        item.bookTitle.toLowerCase().includes(trimmed) ||
+        (item.chapterTitle?.toLowerCase().includes(trimmed) ?? false),
+      );
+      setSections(filtered.length > 0 ? [{ key: 'search', title: '', data: filtered }] : []);
       return;
     }
     setSections(
@@ -358,7 +373,7 @@ export default function ExcerptsScreen() {
         ? groupExcerptFeedByBook(feed)
         : groupExcerptFeedItems(feed, GROUP_LABELS),
     );
-  }, [feed, viewMode]);
+  }, [feed, viewMode, query]);
 
   // Excerpts Tab Core C: Source 行是唯一的原文入口。点按时先做 stale 检查
   // （书可能在 Feed 建好后被删除），再发布 one-shot 内存导航请求并打开
@@ -419,9 +434,23 @@ export default function ExcerptsScreen() {
           { paddingTop: insets.top + 2, paddingBottom: insets.bottom + 32 },
         ]}
         ListHeaderComponent={
-          <Text accessibilityRole="header" style={styles.largeTitle}>
-            {uiText.excerpts.title}
-          </Text>
+          <View style={styles.headerRow}>
+            <Text accessibilityRole="header" style={[styles.largeTitle, styles.headerTitle]}>
+              {uiText.excerpts.title}
+            </Text>
+            <View style={styles.searchBox}>
+              <Text style={styles.searchIcon}>􀊫</Text>
+              <TextInput
+                style={styles.searchInput}
+                value={query}
+                onChangeText={setQuery}
+                placeholder={uiText.excerpts.searchPlaceholder}
+                placeholderTextColor={tokens.colors.tertiaryLabel}
+                returnKeyType="search"
+                clearButtonMode="while-editing"
+              />
+            </View>
+          </View>
         }
         renderSectionHeader={({ section }) => {
           // Excerpts Tab Core E：books mode 的 section header = 书名（左，flex:1
@@ -476,8 +505,12 @@ export default function ExcerptsScreen() {
               size={48}
               tintColor={tokens.colors.tertiaryLabel}
             />
-            <Text style={styles.emptyTitle}>{uiText.excerpts.emptyTitle}</Text>
-            <Text style={styles.emptyHint}>{uiText.excerpts.emptyHint}</Text>
+            <Text style={styles.emptyTitle}>
+              {query.trim() ? uiText.excerpts.searchEmptyTitle : uiText.excerpts.emptyTitle}
+            </Text>
+            <Text style={styles.emptyHint}>
+              {query.trim() ? uiText.excerpts.searchEmptyHint : uiText.excerpts.emptyHint}
+            </Text>
           </View>
         }
       />
@@ -500,6 +533,38 @@ const styles = StyleSheet.create({
     letterSpacing: -0.6,
     lineHeight: 40,
     marginBottom: 12,
+  },
+  /** 标题行：摘录（左，flex:1）+ 搜索框（右）。 */
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  headerTitle: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  /** iOS 风格搜索框：圆角 + 系统填充灰背景，紧凑宽度放标题右侧。 */
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: tokens.colors.fill,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    height: 32,
+    width: 150,
+    marginLeft: 12,
+  },
+  searchIcon: {
+    color: tokens.colors.secondaryLabel,
+    fontSize: 15,
+    marginRight: 4,
+  },
+  searchInput: {
+    flex: 1,
+    color: tokens.colors.label,
+    fontSize: 15,
+    paddingVertical: 0,
   },
   sectionTitle: {
     color: tokens.colors.label,
