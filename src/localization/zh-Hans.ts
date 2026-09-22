@@ -79,7 +79,7 @@ export const zhHans = {
      * section header 已是书名，这里只保住"返回原文"导航入口，不重复书名。
      */
     backToSource: '返回原文',
-    /** Excerpts Tab 搜索框占位文案。 */
+    /** 原生搜索框占位文案。 */
     searchPlaceholder: '搜索',
     /** 搜索无结果时的标题。 */
     searchEmptyTitle: '没有找到相关摘录',

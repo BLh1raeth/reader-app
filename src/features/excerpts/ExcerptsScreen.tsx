@@ -6,7 +6,6 @@ import {
   SectionList,
   StyleSheet,
   Text,
-  TextInput,
   View,
   type NativeSyntheticEvent,
   type TextLayoutEventData,
@@ -35,6 +34,7 @@ import {
   listExcerptFeedItems,
   type ExcerptFeedItem,
 } from './excerpt-feed-repository';
+import { NativeExcerptSearchBar } from '../../../modules/excerpt-search-bar';
 
 const GROUP_LABELS = {
   today: uiText.excerpts.today,
@@ -349,7 +349,7 @@ export default function ExcerptsScreen() {
     }
   }, []);
 
-  // Excerpts Tab 搜索：按 viewMode 分组。time = 现有时间分组（逻辑不动）；
+  // Excerpts Tab Core E：按 viewMode 分组。time = 现有时间分组（逻辑不动）；
   // books = 按 bookId 分组。同一个 feed 做 presentation 层重组，不重查 DB。
   // query 非空时：在内存里过滤，扁平展示（不分组），两种 viewMode 下一致。
   useEffect(() => {
@@ -438,18 +438,15 @@ export default function ExcerptsScreen() {
             <Text accessibilityRole="header" style={[styles.largeTitle, styles.headerTitle]}>
               {uiText.excerpts.title}
             </Text>
-            <View style={styles.searchBox}>
-              <Text style={styles.searchIcon}>􀊫</Text>
-              <TextInput
-                style={styles.searchInput}
-                value={query}
-                onChangeText={setQuery}
-                placeholder={uiText.excerpts.searchPlaceholder}
-                placeholderTextColor={tokens.colors.tertiaryLabel}
-                returnKeyType="search"
-                clearButtonMode="while-editing"
-              />
-            </View>
+            {/* 真正的 UIKit UISearchBar（本地原生模块），不是 RN 模拟：
+                放大镜 / placeholder / 清空键 / 键盘 / 深浅色全部系统提供。
+                需要包含该模块的新 Development Build 才能运行（EAS）。 */}
+            <NativeExcerptSearchBar
+              style={styles.nativeSearchBar}
+              placeholder={uiText.excerpts.searchPlaceholder}
+              text={query}
+              onTextChange={(event) => setQuery(event.nativeEvent.text)}
+            />
           </View>
         }
         renderSectionHeader={({ section }) => {
@@ -534,7 +531,7 @@ const styles = StyleSheet.create({
     lineHeight: 40,
     marginBottom: 12,
   },
-  /** 标题行：摘录（左，flex:1）+ 搜索框（右）。 */
+  /** 标题行：摘录（左，flex:1）+ 原生搜索框（右）。 */
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -544,27 +541,14 @@ const styles = StyleSheet.create({
     flex: 1,
     marginBottom: 0,
   },
-  /** iOS 风格搜索框：圆角 + 系统填充灰背景，紧凑宽度放标题右侧。 */
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: tokens.colors.fill,
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    height: 32,
-    width: 150,
+  /**
+   * 原生 UISearchBar 容器：只给高度（系统标准 56pt）和宽度，
+   * 背景 / 圆角 / 图标全部由 iOS 系统提供，不在外面套任何东西。
+   */
+  nativeSearchBar: {
+    height: 56,
+    width: 160,
     marginLeft: 12,
-  },
-  searchIcon: {
-    color: tokens.colors.secondaryLabel,
-    fontSize: 15,
-    marginRight: 4,
-  },
-  searchInput: {
-    flex: 1,
-    color: tokens.colors.label,
-    fontSize: 15,
-    paddingVertical: 0,
   },
   sectionTitle: {
     color: tokens.colors.label,
