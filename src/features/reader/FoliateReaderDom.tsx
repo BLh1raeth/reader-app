@@ -4,11 +4,13 @@ import { useEffect, useRef } from 'react';
 
 import {
   FoliateEpubEngineAdapter,
+  EXCERPT_REVEAL_DURATION_MS,
   READER_CONTENT_HEIGHT_REDUCTION_PX,
   READER_CONTENT_OFFSET_Y_PX,
   READER_PAGE_DISSOLVE_DELAY_MS,
   READER_PAGE_DISSOLVE_MS,
 } from './foliate/FoliateEpubEngineAdapter';
+import type { ReaderExternalNavigationRequest } from './reader-external-navigation';
 import type { ReaderPageCountCache } from './reader-page-cache-repository';
 import type { ReaderHighlightSnapshotItem } from './highlight-repository';
 import type { ReaderSettings } from './reader-settings';
@@ -45,6 +47,19 @@ type ReaderDomProps = import('expo/dom').DOMProps & {
 type Props = {
   source: ReaderEpubSource | null;
   restoreCfi: string | null;
+  /**
+   * Excerpts Tab Core C: external navigation target for the *initial* open.
+   * When set and resolvable the engine lands on it as the initial intent
+   * (annotation-style) instead of the saved progress.
+   */
+  externalTargetCfi: string | null;
+  /**
+   * Excerpts Tab Core C (warm path): the book is already open and visible.
+   * Navigates to the excerpt target as an annotation-style jump, then
+   * applies the transient reveal.
+   */
+  excerptNavigationRequest: ReaderExternalNavigationRequest | null;
+  onExcerptNavigationResult: (requestId: number, succeeded: boolean, message: string | null) => Promise<void>;
   pageCountCache: ReaderPageCountCache | null;
   readerSettings: ReaderSettings;
   settingsSessionActive: boolean;
@@ -85,7 +100,7 @@ type Props = {
   dom?: ReaderDomProps;
 };
 
-export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, readerSettings, settingsSessionActive, tocNavigationRequest, bookmarkSnapshotRequest, bookmarkNavigationRequest, pageLocationRequest, searchRequest, searchNavigationRequest, selectionCommand, excerptVerificationRequest, highlightSnapshot, textMeasureRequest, onTextMeasureResult, onHighlightDeleteRequest, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen }: Props) {
+export default function FoliateReaderDom({ source, restoreCfi, externalTargetCfi, excerptNavigationRequest, onExcerptNavigationResult, pageCountCache, readerSettings, settingsSessionActive, tocNavigationRequest, bookmarkSnapshotRequest, bookmarkNavigationRequest, pageLocationRequest, searchRequest, searchNavigationRequest, selectionCommand, excerptVerificationRequest, highlightSnapshot, textMeasureRequest, onTextMeasureResult, onHighlightDeleteRequest, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<FoliateEpubEngineAdapter | null>(null);
   const loadedSessionRef = useRef<string | null>(null);
@@ -94,8 +109,8 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
   const highlightSnapshotRef = useRef(highlightSnapshot);
   highlightSnapshotRef.current = highlightSnapshot;
   const settingsApplicationRef = useRef<Promise<void>>(Promise.resolve());
-  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest });
-  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest };
+  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest, onExcerptNavigationResult });
+  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest, onExcerptNavigationResult };
 
   useEffect(() => {
     document.documentElement.lang = 'zh-CN';
@@ -199,6 +214,9 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
       onResourceRequest: (name) => callbacksRef.current.onResourceRequest(name),
       prefetchedText: nextSource.prefetchedText,
       restoreCfi,
+      // Excerpts Tab Core C: external initial navigation intent (validated
+      // inside open(); unresolvable targets fall back to restoreCfi).
+      externalTargetCfi,
       sourceKind: nextSource.sourceKind,
       pageCountCache,
       readerSettings,
@@ -214,7 +232,7 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
       void callbacksRef.current.onError(message);
     });
     return () => { active = false; };
-  }, [pageCountCache, restoreCfi, source]);
+  }, [pageCountCache, restoreCfi, externalTargetCfi, source]);
 
   useEffect(() => {
     const adapter = adapterRef.current;
@@ -333,6 +351,32 @@ export default function FoliateReaderDom({ source, restoreCfi, pageCountCache, r
     });
     return () => { active = false; };
   }, [searchNavigationRequest?.id]);
+
+  // Excerpts Tab Core C (warm path): the book is already open and visible, so
+  // an excerpt Source tap navigates as an annotation-style jump and then
+  // applies the transient reveal. A request id is the stable ownership
+  // boundary, matching the other navigation request effects.
+  useEffect(() => {
+    const request = excerptNavigationRequest;
+    const adapter = adapterRef.current;
+    if (!request || !adapter) return;
+    let active = true;
+    void adapter.goToExcerptTarget(request.rangeCfi).then(() => {
+      if (request.reveal) {
+        void adapter.revealRange(request.rangeCfi, EXCERPT_REVEAL_DURATION_MS).catch((error: unknown) => {
+          if (__DEV__) console.warn('[READER_RANGE_REVEAL]', 'warm reveal failed', error);
+        });
+      }
+      if (active) return callbacksRef.current.onExcerptNavigationResult(request.id, true, null);
+      return undefined;
+    }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : '无法定位到原摘录位置。';
+      if (__DEV__) console.warn('[READER_RANGE_NAV_FAILED]', JSON.stringify({ requestId: request.id, message }));
+      if (active) return callbacksRef.current.onExcerptNavigationResult(request.id, false, message);
+      return undefined;
+    });
+    return () => { active = false; };
+  }, [excerptNavigationRequest?.id]);
 
   // ReadingSession Core A: forward-text measurement. The adapter owns all
   // EPUB DOM / CFI work; the result crosses the bridge with the request id

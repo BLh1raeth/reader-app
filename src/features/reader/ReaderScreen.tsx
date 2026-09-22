@@ -24,6 +24,7 @@ import { bookmarkRepository, type ReaderBookmark } from './bookmark-repository';
 import { bookSearchHistoryRepository, type BookSearchHistoryItem } from './book-search-history-repository';
 import { excerptRepository } from './excerpt-repository';
 import { highlightRepository } from './highlight-repository';
+import { takeReaderExternalNavigationRequest, type ReaderExternalNavigationRequest } from './reader-external-navigation';
 import type { ReaderHighlightSnapshotItem } from './highlight-repository';
 import type {
   FootnoteAnchorRect,
@@ -484,6 +485,14 @@ export default function ReaderScreen() {
   const [pageByDestination, setPageByDestination] = useState<Record<string, number>>({});
   const [searchNavigationRequest, setSearchNavigationRequest] = useState<ReaderSearchNavigationRequest | null>(null);
   const [searchRequest, setSearchRequest] = useState<ReaderSearchRequest | null>(null);
+  // Excerpts Tab Core C (warm path): a pending excerpt navigation request is
+  // consumed when this reader instance is focused and ready.
+  const [excerptNavigationRequest, setExcerptNavigationRequest] = useState<ReaderExternalNavigationRequest | null>(null);
+  // Excerpts Tab Core C: lightweight transient notice for navigation
+  // failures (e.g. an unresolvable excerpt target). There is no app-wide
+  // toast system; this is a local, self-dismissing pill.
+  const [externalNavMessage, setExternalNavMessage] = useState<string | null>(null);
+  const externalNavMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [searchResults, setSearchResults] = useState<ReaderSearchResult[]>([]);
   const [recentSearches, setRecentSearches] = useState<BookSearchHistoryItem[]>([]);
   const [searching, setSearching] = useState(false);
@@ -1303,6 +1312,41 @@ export default function ReaderScreen() {
     if (!succeeded) console.warn('[SEARCH_NAVIGATION_FAILED]', JSON.stringify({ requestId, message }));
   }, []);
 
+  // Excerpts Tab Core C: self-dismissing transient notice. There is no
+  // app-wide toast system, so this stays local to the Reader screen.
+  const showExternalNavMessage = useCallback((message: string) => {
+    if (externalNavMessageTimerRef.current) clearTimeout(externalNavMessageTimerRef.current);
+    setExternalNavMessage(message);
+    externalNavMessageTimerRef.current = setTimeout(() => {
+      externalNavMessageTimerRef.current = null;
+      setExternalNavMessage(null);
+    }, 2500);
+  }, []);
+
+  const handleExcerptNavigationResult = useCallback(async (requestId: number, succeeded: boolean, message: string | null) => {
+    setExcerptNavigationRequest((request) => request?.id === requestId ? null : request);
+    if (!succeeded) showExternalNavMessage(message ?? '无法定位到原摘录位置');
+  }, [showExternalNavMessage]);
+
+  // Excerpts Tab Core C (cold path): the engine validated the external target
+  // during open and fell back to the saved progress when it was unresolvable.
+  // Wait for the ready state so the notice is visible, not hidden behind the
+  // opening overlay.
+  const externalTargetFailed = controller.externalTargetFailed;
+  const readerReady = controller.state.kind === 'ready';
+  useEffect(() => {
+    if (externalTargetFailed && readerReady) showExternalNavMessage('无法定位到原摘录位置');
+  }, [externalTargetFailed, readerReady, showExternalNavMessage]);
+
+  // Excerpts Tab Core C (warm path): the book is already open and this reader
+  // instance is focused. A pending request that arrived after the initial
+  // open is consumed here; the store is one-shot so it can never replay.
+  useEffect(() => {
+    if (!isFocused || !readerReady || !bookId) return;
+    const request = takeReaderExternalNavigationRequest(bookId);
+    if (request) setExcerptNavigationRequest(request);
+  }, [isFocused, readerReady, bookId]);
+
   const handleSettingsSheetDismissed = useCallback(() => {
     void controller.commitReaderSettings().catch(() => undefined);
   }, [controller.commitReaderSettings]);
@@ -1595,6 +1639,9 @@ export default function ReaderScreen() {
         <FoliateReaderDom
           source={controller.state.kind === 'opening' ? controller.state.source : null}
           restoreCfi={controller.state.restoreCfi}
+          externalTargetCfi={controller.state.externalTargetCfi}
+          excerptNavigationRequest={excerptNavigationRequest}
+          onExcerptNavigationResult={handleExcerptNavigationResult}
           pageCountCache={controller.pageCountCache}
           readerSettings={controller.appliedReaderSettings}
           settingsSessionActive={settingsSheetPresented}
@@ -1733,6 +1780,17 @@ export default function ReaderScreen() {
         />
       ) : null}
 
+      {/* Excerpts Tab Core C: lightweight transient notice for external
+          navigation failures. Local to the Reader screen; no app-wide toast
+          system is introduced for this. */}
+      {externalNavMessage ? (
+        <View pointerEvents="none" style={styles.externalNavMessageWrap}>
+          <View style={[styles.externalNavMessagePill, { backgroundColor: readerColors.primary }]}>
+            <Text style={[styles.externalNavMessageText, { color: readerColors.background }]}>{externalNavMessage}</Text>
+          </View>
+        </View>
+      ) : null}
+
       {readerInput ? (
         <ReaderTocSheet
           bookmarks={bookmarks}
@@ -1826,6 +1884,19 @@ const styles = StyleSheet.create({
   },
   errorTitle: { color: '#1c1c1e', fontSize: 20, fontWeight: '700' },
   errorMessage: { color: '#767680', fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  // Excerpts Tab Core C: transient failure notice. Inverted pill (primary on
+  // background) so it reads in both appearances; pointer-events are disabled
+  // at the render site so it never blocks reader gestures.
+  externalNavMessageWrap: {
+    alignItems: 'center',
+    bottom: 120,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    zIndex: 30,
+  },
+  externalNavMessagePill: { borderRadius: 20, opacity: 0.92, paddingHorizontal: 16, paddingVertical: 10 },
+  externalNavMessageText: { fontSize: 14, fontWeight: '600' },
   returnButton: { alignItems: 'center', borderRadius: 20, justifyContent: 'center', minHeight: 40, paddingHorizontal: 18 },
   returnButtonText: { color: '#1c1c1e', fontSize: 16, fontWeight: '600' },
   bookTitleContainer: { alignItems: 'flex-start', position: 'absolute', right: 76 },

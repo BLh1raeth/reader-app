@@ -67,6 +67,26 @@ type FoliateRenderer = HTMLElement & {
   atEnd?: boolean;
   page?: number;
   pages?: number;
+  getContents?: () => Array<{
+    index: number;
+    overlayer?: FoliateOverlayer | null;
+    doc?: Document;
+  }>;
+};
+
+/**
+ * foliate-js Overlayer: per-section SVG paint layer. Entries are keyed by an
+ * opaque string, so a transient reveal can share a section with permanent
+ * highlights under its own key without disturbing them.
+ */
+type FoliateOverlayer = {
+  add: (
+    key: string,
+    range: Range | ((doc: Document) => Range),
+    draw: (rects: Array<{ left: number; top: number; width: number; height: number }>) => Element,
+    options?: unknown,
+  ) => void;
+  remove: (key: string) => void;
 };
 
 type FoliateBook = {
@@ -735,6 +755,13 @@ export type FoliateOpenInput = {
   /** Metadata texts prefetched natively; checked before any bridge request. */
   prefetchedText?: Record<string, string>;
   restoreCfi: string | null;
+  /**
+   * Excerpts Tab Core C: external navigation target (e.g. an excerpt's range
+   * CFI from its Source row). When set and resolvable it becomes the initial
+   * navigation intent, winning over restoreCfi; when unresolvable the reader
+   * falls back to restoreCfi and reports EXTERNAL_TARGET_RESULT.
+   */
+  externalTargetCfi?: string | null;
   sourceKind: 'zip-resource-loader' | 'full-base64-fallback';
   pageCountCache: ReaderPageCountCache | null;
   readerSettings: ReaderSettings;
@@ -849,6 +876,32 @@ function drawSearchResultHighlight(rects: Array<{ left: number; top: number; wid
 const HIGHLIGHT_FILL = '#0A84FF';
 const HIGHLIGHT_OPACITY = '0.28';
 
+// Excerpts Tab Core C: transient reveal emphasis for an excerpt jump target.
+// Deliberately distinct from the permanent highlight blue: a light system-
+// yellow wash at low opacity, drawn under its own overlayer key so the
+// permanent highlight paint underneath is never touched.
+const REVEAL_FILL = '#FFD60A';
+const REVEAL_OPACITY = '0.25';
+export const EXCERPT_REVEAL_DURATION_MS = 1500;
+
+function drawRevealRects(rects: Array<{ left: number; top: number; width: number; height: number }>) {
+  const namespace = 'http://www.w3.org/2000/svg';
+  const group = document.createElementNS(namespace, 'g');
+  group.setAttribute('fill', REVEAL_FILL);
+  group.setAttribute('opacity', REVEAL_OPACITY);
+  for (const rect of rects) {
+    const reveal = document.createElementNS(namespace, 'rect');
+    reveal.setAttribute('x', String(rect.left - 1));
+    reveal.setAttribute('y', String(rect.top));
+    reveal.setAttribute('width', String(rect.width + 2));
+    reveal.setAttribute('height', String(rect.height));
+    reveal.setAttribute('rx', '3');
+    reveal.setAttribute('ry', '3');
+    group.append(reveal);
+  }
+  return group;
+}
+
 function drawHighlightRects(rects: Array<{ left: number; top: number; width: number; height: number }>) {
   const namespace = 'http://www.w3.org/2000/svg';
   const group = document.createElementNS(namespace, 'g');
@@ -926,6 +979,13 @@ export class FoliateEpubEngineAdapter {
    * are treated conservatively as a segment rebase by the session tracker.
    */
   private pendingNavigationReason: ReaderLocationChangeReason | null = null;
+  /**
+   * Excerpts Tab Core C: transient reveal bookkeeping. The generation lets a
+   * newer reveal supersede an older one; the timer set lets destroy() cancel
+   * any in-flight reveal. The reveal never touches the highlight registry.
+   */
+  private revealGeneration = 0;
+  private revealTimers = new Set<ReturnType<typeof setTimeout>>();
   /** Serializes measureForwardText so bursts settle in occurrence order. */
   private textMeasureQueue: Promise<void> = Promise.resolve();
   /** Lightweight per-section plain-text cache for forward measurement. */
@@ -1021,17 +1081,63 @@ export class FoliateEpubEngineAdapter {
     // resolves the CFI while it builds the paginator, rather than first
     // laying out the book start and then performing a second `goTo()` layout.
     this.restoreState = 'restoring';
-    const targetCfi = input.restoreCfi?.startsWith('epubcfi(') ? input.restoreCfi : null;
-    this.onDiagnostic({ event: 'RESTORE_REQUEST', targetCfi });
+    // Excerpts Tab Core C: an external navigation target (tapping an excerpt
+    // Source row) becomes the *initial* navigation intent, not a second
+    // goTo() after restore. The target is pre-checked while the view is still
+    // hidden; a target whose anchor throws against the live section document
+    // (e.g. a stale CFI from an older book version) is caught and the same
+    // view re-inits at the saved progress instead. That retry is safe: the
+    // paginator already holds a fully loaded section view at that point
+    // (#display attaches it before the anchor runs), so the second init just
+    // navigates elsewhere. Either way the reader never fails to open here,
+    // and EXTERNAL_TARGET_RESULT tells native whether the notice is needed.
+    const progressCfi = input.restoreCfi?.startsWith('epubcfi(') ? input.restoreCfi : null;
+    const externalCfi = input.externalTargetCfi?.startsWith('epubcfi(') ? input.externalTargetCfi : null;
+    const externalOffered = externalCfi !== null;
+    let externalResolved = false;
+    let targetCfi = progressCfi;
     this.onDiagnostic({ event: 'VIEW_INIT_START' });
     this.onDiagnostic({ event: 'PAGINATION_START' });
     // The initial restore is an explicit non-reading relocation for the
     // session tracker: it establishes the segment baseline, not progress.
+    // An external target is an annotation-style jump (rebase, not reading).
     this.pendingNavigationReason = 'restore';
-    try {
-      await view.init({ lastLocation: targetCfi, showTextStart: true });
-    } finally {
+    if (externalCfi !== null && this.isRangeCfiResolvable(externalCfi)) {
+      if (__DEV__) {
+        console.log('[READER_EXTERNAL_NAV]', JSON.stringify({
+          bookId: input.bookId,
+          reason: 'annotation',
+          cfiLength: externalCfi.length,
+        }));
+      }
+      this.onDiagnostic({ event: 'RESTORE_REQUEST', targetCfi: externalCfi });
+      this.pendingNavigationReason = 'annotation';
+      try {
+        await view.init({ lastLocation: externalCfi, showTextStart: true });
+        externalResolved = true;
+        targetCfi = externalCfi;
+      } catch {
+        // The anchor failed against the live section document. Fall through
+        // to the saved progress below.
+        this.pendingNavigationReason = 'restore';
+        if (__DEV__) console.warn('[READER_RANGE_NAV_FAILED]', JSON.stringify({ reason: 'init-anchor-failed' }));
+      }
+    }
+    if (!externalResolved) {
+      this.onDiagnostic({ event: 'RESTORE_REQUEST', targetCfi });
+      try {
+        await view.init({ lastLocation: targetCfi, showTextStart: true });
+      } finally {
+        this.pendingNavigationReason = null;
+      }
+    } else {
       this.pendingNavigationReason = null;
+    }
+    if (externalOffered) {
+      this.onDiagnostic({ event: 'EXTERNAL_TARGET_RESULT', resolved: externalResolved });
+      if (!externalResolved && __DEV__) {
+        console.log('[READER_RANGE_NAV_FAILED]', JSON.stringify({ reason: 'unresolvable-target' }));
+      }
     }
     this.onDiagnostic({ event: 'PAGINATION_END' });
     this.onDiagnostic({ event: 'VIEW_INIT_END' });
@@ -1046,6 +1152,15 @@ export class FoliateEpubEngineAdapter {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     this.onDiagnostic({ event: 'FIRST_PAGE_RENDERED' });
     this.onLocation(location, this.restoreState);
+    if (externalResolved && externalCfi) {
+      // The transient reveal is engine-owned: it paints on the live section
+      // overlayer under a unique key, so a permanent highlight on the same
+      // range is never disturbed. Fire-and-forget: open() must not wait out
+      // the reveal duration before resolving.
+      void this.revealRange(externalCfi, EXCERPT_REVEAL_DURATION_MS).catch((error) => {
+        if (__DEV__) console.warn('[READER_RANGE_REVEAL]', 'reveal failed', error);
+      });
+    }
     this.scheduleBackgroundPageCount(input);
     return location;
   }
@@ -1548,6 +1663,88 @@ export class FoliateEpubEngineAdapter {
     return { document, range, sectionIndex };
   }
 
+  /**
+   * Excerpts Tab Core C: true when foliate can synchronously resolve a range
+   * CFI to a section anchor. Never throws; foliate's own resolveNavigation
+   * already swallows resolution errors and returns undefined.
+   */
+  private isRangeCfiResolvable(rangeCfi: string): boolean {
+    try {
+      const resolved = this.view?.resolveNavigation?.(rangeCfi);
+      return typeof resolved?.index === 'number'
+        && resolved.index >= 0
+        && typeof resolved.anchor === 'function';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Excerpts Tab Core C: transient emphasis for an excerpt jump target.
+   *
+   * Paints directly on the *live* section overlayer under a unique
+   * `reader-reveal:<generation>` key — never through foliate's
+   * addAnnotation, which keys by CFI value and would first erase a permanent
+   * highlight painted on the same range. The reveal Range is intentionally
+   * NOT cached in highlightRanges, so tapping it never opens the highlight
+   * menu. Removes only its own key after `durationMs`; writes nothing to the
+   * database. Throws when the target cannot be resolved or the section has
+   * no live overlayer.
+   */
+  async revealRange(rangeCfi: string, durationMs = EXCERPT_REVEAL_DURATION_MS): Promise<void> {
+    const view = this.view;
+    if (!view) throw new Error('无法定位到原摘录位置。');
+    const resolved = view.resolveNavigation?.(rangeCfi);
+    const sectionIndex = resolved?.index;
+    if (typeof sectionIndex !== 'number' || sectionIndex < 0 || typeof resolved?.anchor !== 'function') {
+      throw new Error('无法定位到原摘录位置。');
+    }
+    const content = view.renderer?.getContents?.().find((item) => item.index === sectionIndex);
+    const overlayer = content?.overlayer;
+    const doc = content?.doc;
+    if (!overlayer || !doc) throw new Error('无法定位到原摘录位置。');
+    const anchorResult = resolved.anchor(doc);
+    if (!this.isRangeLike(anchorResult)) throw new Error('无法定位到原摘录位置。');
+    const generation = ++this.revealGeneration;
+    const key = `reader-reveal:${generation}`;
+    overlayer.add(key, anchorResult, drawRevealRects);
+    if (__DEV__) {
+      console.log('[READER_RANGE_REVEAL]', JSON.stringify({
+        success: true,
+        durationMs,
+        cfiLength: rangeCfi.length,
+      }));
+    }
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        this.revealTimers.delete(timer);
+        resolve();
+      }, durationMs);
+      this.revealTimers.add(timer);
+    });
+    // A newer reveal supersedes this one; only the latest generation may
+    // remove its own paint.
+    if (generation !== this.revealGeneration) return;
+    try {
+      overlayer.remove(key);
+    } catch (error) {
+      if (__DEV__) console.warn('[READER_REVEAL_CLEAR_FAILED]', error);
+    }
+  }
+
+  /**
+   * Excerpts Tab Core C (warm path): the book is already open and visible,
+   * so navigate to the excerpt target as an annotation-style jump. Throws
+   * when the target cannot be resolved; the reader stays where it is.
+   */
+  async goToExcerptTarget(rangeCfi: string): Promise<void> {
+    if (!this.isRangeCfiResolvable(rangeCfi)) {
+      if (__DEV__) console.log('[READER_RANGE_NAV_FAILED]', JSON.stringify({ reason: 'unresolvable-target' }));
+      throw new Error('无法定位到原摘录位置。');
+    }
+    await this.goTo(rangeCfi, 'annotation');
+  }
+
   async verifyExcerptAnchors(items: ReaderExcerptVerificationItem[]) {
     if (!__DEV__ || items.length === 0) return;
     if (!this.view?.resolveNavigation) return;
@@ -1745,6 +1942,12 @@ export class FoliateEpubEngineAdapter {
     this.bookId = null;
     this.loadedDocuments.clear();
     this.dismissHighlightBubble();
+    // Excerpts Tab Core C: cancel any in-flight transient reveal; its
+    // overlayer is being torn down with the view, and a newer open gets a
+    // fresh generation.
+    for (const timer of this.revealTimers) clearTimeout(timer);
+    this.revealTimers.clear();
+    this.revealGeneration += 1;
     this.highlightRanges.clear();
     this.highlightRegistry.clear();
     // ReadingSession measurement state is per-book: never let one book's
