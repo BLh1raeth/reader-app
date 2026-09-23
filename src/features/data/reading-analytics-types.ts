@@ -56,6 +56,13 @@ export type ReadingAnalyticsSummary = {
   allTimeReadingSpeedCharsPerMinute: number | null;
   /** reader_excerpts created today (local day). */
   todayExcerptCount: number;
+  /**
+   * SUM(forward_characters) of today's valid sessions.
+   * Read-only UI aggregation added for Data Tab Core B.3 ("今日阅读字数").
+   * Same normalization and day attribution as todayActiveSeconds; no
+   * runtime-tracking, session-recording, or schema changes.
+   */
+  todayForwardCharacters: number;
   /** All reader_excerpts rows (source of truth; deletions reflect here). */
   totalExcerptCount: number;
 };

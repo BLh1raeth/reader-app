@@ -6,10 +6,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { tokens } from '../../design-system/tokens';
 import { uiText } from '../../localization';
 import { addLocalCalendarDays, todayLocalDayKey } from '../../shared/time/local-day';
-import { OverviewCard } from './cards/OverviewCard';
+import { TodayReadingCard } from './cards/TodayReadingCard';
 import { ReadingTimeCard } from './cards/ReadingTimeCard';
 import { ReadingSpeedCard } from './cards/ReadingSpeedCard';
-import { ReadingRhythmCard } from './cards/ReadingRhythmCard';
 import { AccumulationCard } from './cards/AccumulationCard';
 import {
   getDailyReadingStats,
@@ -30,12 +29,11 @@ const CARD_GAP = 12;
 const SECTION_SPACING = 18;
 
 /**
- * Data Tab Core B.2：Health-style 信息层级。
+ * Data Tab Core B.3：今日优先的信息层级。
  *
  * 页面顺序固定：
- *   阅读概览（全宽主卡，视觉中心）
- *   → 阅读时长 / 阅读速度（两张半宽核心可视化卡）
- *   → 摘要 section → 阅读节奏（全宽 insight 卡）
+ *   今日阅读（全宽主卡，视觉中心：今日时长 / 今日字数 / 今日摘录）
+ *   → 最近 7 天 section → 阅读时长 / 阅读速度（两张半宽周趋势卡）
  *   → 阅读积累 section → 紧凑累计卡（最低权重）
  *
  * 只消费 Reading Analytics public API（getReadingAnalyticsSummary /
@@ -97,11 +95,11 @@ export default function DataScreen() {
           {uiText.data.title}
         </Text>
 
-        <View style={styles.overviewBlock}>
-          <OverviewCard
-            totalActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
-            days={last7Days}
-            excerptCount={summary?.totalExcerptCount ?? null}
+        <View style={styles.heroBlock}>
+          <TodayReadingCard
+            activeSeconds={summary?.todayActiveSeconds ?? null}
+            forwardCharacters={summary?.todayForwardCharacters ?? null}
+            excerptCount={summary?.todayExcerptCount ?? null}
           />
         </View>
 
@@ -111,6 +109,7 @@ export default function DataScreen() {
           </View>
         ) : null}
 
+        <Text style={styles.sectionTitle}>{uiText.data.last7Days}</Text>
         <View style={styles.cardRow}>
           <View style={styles.cardCell}>
             <ReadingTimeCard
@@ -125,15 +124,6 @@ export default function DataScreen() {
               days={last7Days}
             />
           </View>
-        </View>
-
-        <Text style={styles.sectionTitle}>{uiText.data.summarySection}</Text>
-        <View style={styles.insightBlock}>
-          <ReadingRhythmCard
-            days={last7Days}
-            todayKey={todayKey}
-            totalActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
-          />
         </View>
 
         <Text style={styles.sectionTitle}>{uiText.data.readingAccumulation}</Text>
@@ -163,7 +153,7 @@ const styles = StyleSheet.create({
     lineHeight: 40,
     marginBottom: 16,
   },
-  overviewBlock: {
+  heroBlock: {
     marginBottom: SECTION_SPACING,
   },
   errorBox: {
@@ -188,8 +178,5 @@ const styles = StyleSheet.create({
   },
   cardCell: {
     flex: 1,
-  },
-  insightBlock: {
-    marginBottom: SECTION_SPACING,
   },
 });

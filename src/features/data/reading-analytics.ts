@@ -318,6 +318,28 @@ function sumActiveSeconds(
 }
 
 /**
+ * SUM(forward_characters) over [fromDay, toDay] (both inclusive).
+ * Same day-range convention as sumActiveSeconds; read-only aggregation
+ * for the Data Tab "今日阅读字数" hero card (Core B.3).
+ */
+function sumForwardCharacters(
+  sessions: ReadonlyArray<NormalizedAnalyticsSession>,
+  fromDay: string,
+  toDay: string,
+): number {
+  let total = 0;
+  for (const session of sessions) {
+    if (
+      compareLocalDayKeys(session.dayKey, fromDay) >= 0 &&
+      compareLocalDayKeys(session.dayKey, toDay) <= 0
+    ) {
+      total += session.forwardCharacters;
+    }
+  }
+  return total;
+}
+
+/**
  * Headline analytics over normalized sessions + excerpts.
  * `todayKey` is the device-local day; every window below derives from it.
  */
@@ -331,6 +353,7 @@ export function analyzeReadingData(
   const previous7End = addLocalCalendarDays(todayKey, -1);
 
   const todayActiveSeconds = sumActiveSeconds(sessions, todayKey, todayKey);
+  const todayForwardCharacters = sumForwardCharacters(sessions, todayKey, todayKey);
   const last7DaysActiveSeconds = sumActiveSeconds(sessions, last7Start, todayKey);
   const previous7CompletedDaysAverageActiveSeconds =
     sumActiveSeconds(sessions, previous7Start, previous7End) / 7;
@@ -353,6 +376,7 @@ export function analyzeReadingData(
 
   return {
     todayActiveSeconds,
+    todayForwardCharacters,
     last7DaysActiveSeconds,
     previous7CompletedDaysAverageActiveSeconds,
     totalActiveSeconds,

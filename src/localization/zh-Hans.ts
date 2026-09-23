@@ -63,6 +63,14 @@ export const zhHans = {
   data: {
     title: '数据',
     todayReading: '今天阅读',
+    /** Data Tab Core B.3：今日阅读主卡标题与文案。 */
+    todayReadingTitle: '今日阅读',
+    todayCharsLabel: '阅读字数',
+    characterUnit: '字',
+    todaySummaryChars: (chars: number) => `今天你已经阅读了 ${chars} 字。`,
+    todaySummaryExcerpts: (count: number) => `今天你记录了 ${count} 条摘录。`,
+    todaySummaryDuration: (duration: string) => `今天你已阅读${duration}。`,
+    todaySummaryZero: '开始阅读后，这里会显示你今天的阅读数据。',
     last7Days: '最近 7 天',
     totalReadingTime: '阅读时长',
     readingSpeed: '阅读速度',
