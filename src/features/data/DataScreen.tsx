@@ -6,9 +6,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { tokens } from '../../design-system/tokens';
 import { uiText } from '../../localization';
 import { addLocalCalendarDays, todayLocalDayKey } from '../../shared/time/local-day';
-import { AnalyticsSummarySection } from './AnalyticsSummarySection';
-import { ReadingTimeHero } from './ReadingTimeHero';
-import { SevenDayReadingChart } from './SevenDayReadingChart';
+import { TodayReadingCard } from './cards/TodayReadingCard';
+import { Last7DaysCard } from './cards/Last7DaysCard';
+import { ReadingActivityCard } from './cards/ReadingActivityCard';
+import { ReadingSpeedCard } from './cards/ReadingSpeedCard';
+import {
+  ExcerptCountCard,
+  ReadingDaysCard,
+  ReadingStreakCard,
+} from './cards/NumberCards';
 import {
   getDailyReadingStats,
   getReadingAnalyticsSummary,
@@ -24,12 +30,15 @@ type DataLoadResult = {
   todayKey: string;
 };
 
+const CARD_GAP = 14;
+const SECTION_SPACING = 24;
+
 /**
- * Data Tab Core B：数据首页。
+ * Data Tab Core B.1：Apple Health 式 Card Dashboard。
  *
  * 只消费 Reading Analytics public API（getReadingAnalyticsSummary /
  * getDailyReadingStats），不直接读取 reader_reading_sessions / reader_excerpts，
- * 不写 SQL。最近 7 天 = 今天 + 前 6 个 local calendar day。
+ * 不写 SQL，不重算统计口径。最近 7 天 = 今天 + 前 6 个 local calendar day。
  *
  * Tab focus 时重新加载（Reader 新 session / 新增或删除摘录后返回即刷新）。
  * useFocusEffect 在初次挂载时也会执行，覆盖首屏加载，不与 mount 重复请求。
@@ -69,10 +78,9 @@ export default function DataScreen() {
     }, [loadData]),
   );
 
-  if (data === null && !loadFailed) {
-    // 本地 SQLite 查询通常几十毫秒：宁可短暂空白，不闪 spinner（与 Excerpts 一致）。
-    return <View style={styles.screen} />;
-  }
+  const summary = data?.summary ?? null;
+  const last7Days = data?.last7Days ?? null;
+  const todayKey = data?.todayKey ?? '';
 
   return (
     <View style={styles.screen}>
@@ -87,32 +95,57 @@ export default function DataScreen() {
           {uiText.data.title}
         </Text>
 
-        {loadFailed && data === null ? (
+        <View style={styles.heroBlock}>
+          <TodayReadingCard
+            todayActiveSeconds={summary?.todayActiveSeconds ?? null}
+            baselineActiveSeconds={
+              summary?.previous7CompletedDaysAverageActiveSeconds ?? null
+            }
+          />
+        </View>
+
+        {loadFailed ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{uiText.data.loadFailed}</Text>
           </View>
-        ) : (
-          data && (
-            <>
-              <View style={styles.heroBlock}>
-                <ReadingTimeHero
-                  todayActiveSeconds={data.summary.todayActiveSeconds}
-                  baselineActiveSeconds={
-                    data.summary.previous7CompletedDaysAverageActiveSeconds
-                  }
-                />
-              </View>
-              <View style={styles.card}>
-                <SevenDayReadingChart
-                  days={data.last7Days}
-                  todayKey={data.todayKey}
-                  last7DaysActiveSeconds={data.summary.last7DaysActiveSeconds}
-                />
-              </View>
-              <AnalyticsSummarySection summary={data.summary} />
-            </>
-          )
-        )}
+        ) : null}
+
+        <Text style={styles.sectionTitle}>{uiText.data.recentReading}</Text>
+        <View style={styles.cardRow}>
+          <View style={styles.cardCell}>
+            <Last7DaysCard
+              days={last7Days}
+              todayKey={todayKey}
+              last7DaysActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
+            />
+          </View>
+          <View style={styles.cardCell}>
+            <ReadingActivityCard days={last7Days} />
+          </View>
+        </View>
+
+        <Text style={styles.sectionTitle}>{uiText.data.readingHabits}</Text>
+        <View style={styles.cardRow}>
+          <View style={styles.cardCell}>
+            <ReadingStreakCard streakDays={summary?.currentStreakDays ?? null} />
+          </View>
+          <View style={styles.cardCell}>
+            <ReadingSpeedCard
+              speed={summary?.last7DaysReadingSpeedCharsPerMinute ?? null}
+              days={last7Days}
+            />
+          </View>
+        </View>
+
+        <Text style={styles.sectionTitle}>{uiText.data.readingAccumulation}</Text>
+        <View style={styles.cardRow}>
+          <View style={styles.cardCell}>
+            <ReadingDaysCard totalDays={summary?.totalReadingDays ?? null} />
+          </View>
+          <View style={styles.cardCell}>
+            <ExcerptCountCard excerptCount={summary?.totalExcerptCount ?? null} />
+          </View>
+        </View>
       </ScrollView>
     </View>
   );
@@ -135,21 +168,29 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   heroBlock: {
-    marginBottom: 24,
-  },
-  /** 趋势容器：普通圆角实体卡片，非 Liquid Glass。 */
-  card: {
-    backgroundColor: tokens.colors.groupedCell,
-    borderRadius: 26,
-    padding: 16,
-    marginBottom: 24,
+    marginBottom: SECTION_SPACING,
   },
   errorBox: {
-    paddingVertical: 24,
+    marginBottom: SECTION_SPACING,
   },
   errorText: {
     color: tokens.colors.secondaryLabel,
     fontSize: 14,
     textAlign: 'center',
+  },
+  sectionTitle: {
+    color: tokens.colors.label,
+    fontSize: 20,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  /** 两列等宽 grid：同一 row 卡片 stretch 等高；minHeight 在各卡内部按需。 */
+  cardRow: {
+    flexDirection: 'row',
+    gap: CARD_GAP,
+    marginBottom: SECTION_SPACING,
+  },
+  cardCell: {
+    flex: 1,
   },
 });
