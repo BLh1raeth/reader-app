@@ -1,0 +1,124 @@
+import { PlatformColor, StyleSheet, Text, View } from 'react-native';
+
+import { tokens } from '../../../design-system/tokens';
+import { uiText } from '../../../localization';
+import type { DailyReadingStats } from '../reading-analytics-types';
+import { DataCard } from '../DataCard';
+import { formatDuration } from '../analytics-format';
+import { cardColors } from './cardColors';
+
+type ReadingTimeCardProps = {
+  /** 最近 7 个 local calendar day（含今天），最旧 → 今天；null = 未加载。 */
+  days: DailyReadingStats[] | null;
+  /** 今天的 local day key，用于强调当天的柱子。 */
+  todayKey: string;
+  /** 7 日总量：summary.last7DaysActiveSeconds；null = 未加载。 */
+  totalActiveSeconds: number | null;
+};
+
+const CHART_HEIGHT = 80;
+const BAR_WIDTH = 8;
+/** 0 秒的日子：极浅短 baseline，位置可见但不伪装成有数据。 */
+const ZERO_BAR_HEIGHT = 6;
+/** 非零值最小可见高度；0 秒保持 baseline，明确区分“没读”和“读了几秒”。 */
+const MIN_VISIBLE_BAR_HEIGHT = 10;
+
+/** 无障碍短标签：9月17日，不带年份噪音。 */
+function shortDateLabel(dayKey: string): string {
+  const [y, m, d] = dayKey.split('-').map(Number);
+  return `${m}月${d}日`;
+}
+
+/**
+ * Data Tab Core B.2：“阅读时长”半宽核心卡。
+ *
+ * 极简 7 日 spark bars + 底部总量。即使只有一天有数据，
+ * 7 根位置也完整可见（0 秒 = 极浅短 baseline）。
+ * 今天用实色强调，其他非零日用同色系浅色。
+ */
+export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingTimeCardProps) {
+  const list = days ?? [];
+  const maxSeconds = Math.max(0, ...list.map((d) => d.activeSeconds));
+  const total = totalActiveSeconds === null ? '—' : formatDuration(totalActiveSeconds);
+
+  const accessibilityParts = list
+    .map((d) => `${shortDateLabel(d.dayKey)}${formatDuration(d.activeSeconds)}`)
+    .join('，');
+
+  return (
+    <DataCard
+      accessible
+      accessibilityLabel={`${uiText.data.totalReadingTime}，过去 7 天总计${total}。${accessibilityParts}`}
+    >
+      <Text style={styles.title}>{uiText.data.totalReadingTime}</Text>
+      <View style={styles.barsRow} accessible={false}>
+        {list.map((day) => {
+          const isToday = day.dayKey === todayKey;
+          let barHeight = ZERO_BAR_HEIGHT;
+          let barStyle = styles.barZero;
+          if (day.activeSeconds > 0 && maxSeconds > 0) {
+            barHeight = Math.max(
+              MIN_VISIBLE_BAR_HEIGHT,
+              Math.round((day.activeSeconds / maxSeconds) * CHART_HEIGHT),
+            );
+            barStyle = isToday ? styles.barToday : styles.barPast;
+          }
+          return (
+            <View key={day.dayKey} style={styles.barColumn}>
+              <View style={[styles.barFill, barStyle, { height: barHeight }]} />
+            </View>
+          );
+        })}
+      </View>
+      <Text
+        style={styles.total}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.7}
+      >
+        {total}
+      </Text>
+    </DataCard>
+  );
+}
+
+const styles = StyleSheet.create({
+  title: {
+    color: cardColors.primary,
+    fontSize: 17,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  barsRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 6,
+    height: CHART_HEIGHT,
+  },
+  barColumn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  barFill: {
+    width: BAR_WIDTH,
+    borderRadius: BAR_WIDTH / 2,
+  },
+  barToday: {
+    backgroundColor: cardColors.primary,
+  },
+  barPast: {
+    backgroundColor: cardColors.primary,
+    opacity: 0.45,
+  },
+  barZero: {
+    backgroundColor: PlatformColor('tertiarySystemFill'),
+  },
+  total: {
+    color: cardColors.primary,
+    fontSize: 24,
+    fontWeight: '600',
+    letterSpacing: -0.4,
+    marginTop: 12,
+  },
+});

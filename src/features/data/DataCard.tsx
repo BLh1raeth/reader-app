@@ -4,21 +4,19 @@ import { StyleSheet, View, type ViewStyle } from 'react-native';
 import { tokens } from '../../design-system/tokens';
 
 /**
- * Data Tab Core B.1：轻量 dashboard 卡片容器。
+ * Data Tab Core B.2：轻量 dashboard 卡片容器。
  *
- * 只负责 background / radius / padding / minHeight，不感知任何指标。
+ * 只负责 background / radius / padding，不感知任何指标。
+ * 全站卡片统一圆角（B.2 收敛，不再分 hero / 小卡两档）。
  * 卡片暂时全部不可点击（详情页未实现）：这里不包 Pressable、不加 chevron。
  */
 export function DataCard({
   children,
-  minHeight,
   style,
   accessible = false,
   accessibilityLabel,
 }: {
   children: ReactNode;
-  /** 同一 row 的卡片用 stretch 等高；不同 section 可给不同 minHeight 形成层级。 */
-  minHeight?: number;
   style?: ViewStyle;
   accessible?: boolean;
   accessibilityLabel?: string;
@@ -27,7 +25,7 @@ export function DataCard({
     <View
       accessible={accessible}
       accessibilityLabel={accessibilityLabel}
-      style={[styles.card, minHeight !== undefined ? { minHeight } : null, style]}
+      style={[styles.card, style]}
     >
       {children}
     </View>
@@ -36,8 +34,6 @@ export function DataCard({
 
 /** Dashboard 统一卡片圆角（与 Excerpts grouped card 同一视觉级别）。 */
 export const DATA_CARD_RADIUS = 26;
-/** Hero 略大，但不与小卡差异巨大。 */
-export const DATA_HERO_RADIUS = 28;
 
 const styles = StyleSheet.create({
   card: {

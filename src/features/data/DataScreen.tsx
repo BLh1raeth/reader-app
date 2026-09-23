@@ -6,15 +6,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { tokens } from '../../design-system/tokens';
 import { uiText } from '../../localization';
 import { addLocalCalendarDays, todayLocalDayKey } from '../../shared/time/local-day';
-import { TodayReadingCard } from './cards/TodayReadingCard';
-import { Last7DaysCard } from './cards/Last7DaysCard';
-import { ReadingActivityCard } from './cards/ReadingActivityCard';
+import { OverviewCard } from './cards/OverviewCard';
+import { ReadingTimeCard } from './cards/ReadingTimeCard';
 import { ReadingSpeedCard } from './cards/ReadingSpeedCard';
-import {
-  ExcerptCountCard,
-  ReadingDaysCard,
-  ReadingStreakCard,
-} from './cards/NumberCards';
+import { ReadingRhythmCard } from './cards/ReadingRhythmCard';
+import { AccumulationCard } from './cards/AccumulationCard';
 import {
   getDailyReadingStats,
   getReadingAnalyticsSummary,
@@ -30,11 +26,17 @@ type DataLoadResult = {
   todayKey: string;
 };
 
-const CARD_GAP = 14;
-const SECTION_SPACING = 24;
+const CARD_GAP = 12;
+const SECTION_SPACING = 18;
 
 /**
- * Data Tab Core B.1：Apple Health 式 Card Dashboard。
+ * Data Tab Core B.2：Health-style 信息层级。
+ *
+ * 页面顺序固定：
+ *   阅读概览（全宽主卡，视觉中心）
+ *   → 阅读时长 / 阅读速度（两张半宽核心可视化卡）
+ *   → 摘要 section → 阅读节奏（全宽 insight 卡）
+ *   → 阅读积累 section → 紧凑累计卡（最低权重）
  *
  * 只消费 Reading Analytics public API（getReadingAnalyticsSummary /
  * getDailyReadingStats），不直接读取 reader_reading_sessions / reader_excerpts，
@@ -95,12 +97,11 @@ export default function DataScreen() {
           {uiText.data.title}
         </Text>
 
-        <View style={styles.heroBlock}>
-          <TodayReadingCard
-            todayActiveSeconds={summary?.todayActiveSeconds ?? null}
-            baselineActiveSeconds={
-              summary?.previous7CompletedDaysAverageActiveSeconds ?? null
-            }
+        <View style={styles.overviewBlock}>
+          <OverviewCard
+            totalActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
+            days={last7Days}
+            excerptCount={summary?.totalExcerptCount ?? null}
           />
         </View>
 
@@ -110,24 +111,13 @@ export default function DataScreen() {
           </View>
         ) : null}
 
-        <Text style={styles.sectionTitle}>{uiText.data.recentReading}</Text>
         <View style={styles.cardRow}>
           <View style={styles.cardCell}>
-            <Last7DaysCard
+            <ReadingTimeCard
               days={last7Days}
               todayKey={todayKey}
-              last7DaysActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
+              totalActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
             />
-          </View>
-          <View style={styles.cardCell}>
-            <ReadingActivityCard days={last7Days} />
-          </View>
-        </View>
-
-        <Text style={styles.sectionTitle}>{uiText.data.readingHabits}</Text>
-        <View style={styles.cardRow}>
-          <View style={styles.cardCell}>
-            <ReadingStreakCard streakDays={summary?.currentStreakDays ?? null} />
           </View>
           <View style={styles.cardCell}>
             <ReadingSpeedCard
@@ -137,15 +127,21 @@ export default function DataScreen() {
           </View>
         </View>
 
-        <Text style={styles.sectionTitle}>{uiText.data.readingAccumulation}</Text>
-        <View style={styles.cardRow}>
-          <View style={styles.cardCell}>
-            <ReadingDaysCard totalDays={summary?.totalReadingDays ?? null} />
-          </View>
-          <View style={styles.cardCell}>
-            <ExcerptCountCard excerptCount={summary?.totalExcerptCount ?? null} />
-          </View>
+        <Text style={styles.sectionTitle}>{uiText.data.summarySection}</Text>
+        <View style={styles.insightBlock}>
+          <ReadingRhythmCard
+            days={last7Days}
+            todayKey={todayKey}
+            totalActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
+          />
         </View>
+
+        <Text style={styles.sectionTitle}>{uiText.data.readingAccumulation}</Text>
+        <AccumulationCard
+          streakDays={summary?.currentStreakDays ?? null}
+          totalDays={summary?.totalReadingDays ?? null}
+          excerptCount={summary?.totalExcerptCount ?? null}
+        />
       </ScrollView>
     </View>
   );
@@ -165,9 +161,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: -0.6,
     lineHeight: 40,
-    marginBottom: 20,
+    marginBottom: 16,
   },
-  heroBlock: {
+  overviewBlock: {
     marginBottom: SECTION_SPACING,
   },
   errorBox: {
@@ -182,9 +178,9 @@ const styles = StyleSheet.create({
     color: tokens.colors.label,
     fontSize: 20,
     fontWeight: '600',
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  /** 两列等宽 grid：同一 row 卡片 stretch 等高；minHeight 在各卡内部按需。 */
+  /** 两列等宽：同一 row 卡片 stretch 等高。 */
   cardRow: {
     flexDirection: 'row',
     gap: CARD_GAP,
@@ -192,5 +188,8 @@ const styles = StyleSheet.create({
   },
   cardCell: {
     flex: 1,
+  },
+  insightBlock: {
+    marginBottom: SECTION_SPACING,
   },
 });
