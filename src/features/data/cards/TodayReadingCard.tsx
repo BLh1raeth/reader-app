@@ -4,6 +4,7 @@ import { tokens } from '../../../design-system/tokens';
 import { uiText } from '../../../localization';
 import { DataCard, DATA_HERO_RADIUS } from '../DataCard';
 import { formatDuration } from '../analytics-format';
+import { cardColors } from './cardColors';
 
 type TodayReadingCardProps = {
   /** 今日有效阅读秒数；null = 尚未加载完成，显示占位。 */
@@ -54,13 +55,13 @@ const styles = StyleSheet.create({
     padding: 22,
   },
   kicker: {
-    color: tokens.colors.secondaryLabel,
+    color: cardColors.today,
     fontSize: 13,
     fontWeight: '600',
     marginBottom: 8,
   },
   value: {
-    color: tokens.colors.label,
+    color: cardColors.today,
     fontSize: 34,
     fontWeight: '700',
     letterSpacing: -0.6,

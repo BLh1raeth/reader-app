@@ -1,10 +1,11 @@
-import { PlatformColor, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { tokens } from '../../../design-system/tokens';
 import { uiText } from '../../../localization';
 import type { DailyReadingStats } from '../reading-analytics-types';
 import { DataCard } from '../DataCard';
 import { formatDuration } from '../analytics-format';
+import { cardColors } from './cardColors';
 
 type Last7DaysCardProps = {
   /** 最近 7 个 local calendar day（含今天），顺序：最旧 → 今天；null = 未加载。 */
@@ -78,7 +79,7 @@ export function Last7DaysCard({ days, todayKey, last7DaysActiveSeconds }: Last7D
 
 const styles = StyleSheet.create({
   title: {
-    color: tokens.colors.label,
+    color: cardColors.last7Days,
     fontSize: 15,
     fontWeight: '600',
     marginBottom: 12,
@@ -100,13 +101,15 @@ const styles = StyleSheet.create({
   },
   barFill: {
     width: 12,
-    borderRadius: 4,
+    borderRadius: 6,
   },
+  /** 今天：鲜艳实色；过去：同色系浅色（健康 App 式强调最新一天）。 */
   barFillToday: {
-    backgroundColor: PlatformColor('systemBlue'),
+    backgroundColor: cardColors.last7Days,
   },
   barFillPast: {
-    backgroundColor: PlatformColor('tertiarySystemFill'),
+    backgroundColor: cardColors.last7Days,
+    opacity: 0.35,
   },
   total: {
     color: tokens.colors.secondaryLabel,

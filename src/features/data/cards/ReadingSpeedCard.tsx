@@ -4,6 +4,7 @@ import { tokens } from '../../../design-system/tokens';
 import { uiText } from '../../../localization';
 import type { DailyReadingStats } from '../reading-analytics-types';
 import { DataCard } from '../DataCard';
+import { cardColors } from './cardColors';
 
 type ReadingSpeedCardProps = {
   /** summary.last7DaysReadingSpeedCharsPerMinute；null = 未加载或无有效数据。 */
@@ -80,7 +81,7 @@ export function ReadingSpeedCard({ speed, days }: ReadingSpeedCardProps) {
 
 const styles = StyleSheet.create({
   title: {
-    color: tokens.colors.label,
+    color: cardColors.speed,
     fontSize: 15,
     fontWeight: '600',
     marginBottom: 8,
@@ -91,7 +92,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   value: {
-    color: tokens.colors.label,
+    color: cardColors.speed,
     fontSize: 28,
     fontWeight: '700',
     letterSpacing: -0.4,
@@ -118,10 +119,10 @@ const styles = StyleSheet.create({
   },
   barFill: {
     width: 12,
-    borderRadius: 4,
+    borderRadius: 6,
   },
   barFillValid: {
-    backgroundColor: PlatformColor('systemBlue'),
+    backgroundColor: cardColors.speed,
   },
   /** null day：不画有效柱，用极浅占位表示“无数据”，不伪造 0。 */
   barFillNull: {

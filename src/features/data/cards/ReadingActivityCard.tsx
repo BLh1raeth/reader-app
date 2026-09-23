@@ -5,6 +5,7 @@ import { tokens } from '../../../design-system/tokens';
 import { uiText } from '../../../localization';
 import type { DailyReadingStats } from '../reading-analytics-types';
 import { DataCard } from '../DataCard';
+import { activityRingPalette } from './cardColors';
 
 type ReadingActivityCardProps = {
   /** 最近 7 个 local calendar day（含今天）；null = 未加载。 */
@@ -15,6 +16,10 @@ const RING_SIZE = 96;
 const RING_STROKE = 10;
 const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+/** 每段占 1/7 圆周；相邻色段之间留小间隙（模仿健康 App 多色环）。 */
+const SEGMENT_ARC = RING_CIRCUMFERENCE / 7;
+const SEGMENT_GAP = RING_CIRCUMFERENCE * 0.03;
+const SEGMENT_LENGTH = Math.max(0, SEGMENT_ARC - SEGMENT_GAP);
 
 /**
  * Data Tab Core B.1：“阅读活跃”环形卡。
@@ -22,13 +27,22 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
  * 语义：最近 7 个自然日中有几天 activeSeconds > 0（真实 part-to-whole 指标，
  * 从已有 DailyReadingStats 派生，不新增数据库统计口径）。不是评分/专注度。
  *
+ * 视觉：模仿健康 App 睡眠评分的多色分段环——有阅读的每一天占一段 1/7 弧，
+ * 按天顺序（最旧 → 今天）顺时针从顶部排起，颜色循环取自调色板；
+ * 下面一层是完整的浅色底环。0/7 时只有底环（不消失）；7/7 七段全满。
+ *
  * 实现：react-native-svg（项目已安装、当前 Development Build 已包含，
- * LibraryScreen 的导入进度环在用同一能力），简单 donut + 中央 4/7。
- * 0/7 时环全部 inactive（不消失）；7/7 全部 active。
+ * LibraryScreen 的导入进度环在用同一能力），中央 N / 7。
  */
 export function ReadingActivityCard({ days }: ReadingActivityCardProps) {
-  const activeDays = days === null ? null : days.filter((d) => d.activeSeconds > 0).length;
-  const progress = activeDays === null ? 0 : activeDays / 7;
+  /** 有阅读的天在 7 天列表里的下标（最旧 → 今天），null = 未加载。 */
+  const activeIndexes =
+    days === null
+      ? null
+      : days
+          .map((day, index) => (day.activeSeconds > 0 ? index : -1))
+          .filter((index) => index >= 0);
+  const activeDays = activeIndexes === null ? null : activeIndexes.length;
 
   const centerText = activeDays === null ? '—' : `${activeDays}`;
 
@@ -52,19 +66,23 @@ export function ReadingActivityCard({ days }: ReadingActivityCardProps) {
             strokeWidth={RING_STROKE}
             fill="none"
           />
-          {progress > 0 ? (
-            <Circle
-              cx={RING_SIZE / 2}
-              cy={RING_SIZE / 2}
-              r={RING_RADIUS}
-              stroke={PlatformColor('systemBlue')}
-              strokeWidth={RING_STROKE}
-              strokeLinecap="round"
-              fill="none"
-              strokeDasharray={`${RING_CIRCUMFERENCE * progress} ${RING_CIRCUMFERENCE}`}
-              transform={`rotate(-90 ${RING_SIZE / 2} ${RING_SIZE / 2})`}
-            />
-          ) : null}
+          {activeIndexes === null || SEGMENT_LENGTH <= 0
+            ? null
+            : activeIndexes.map((index) => (
+                <Circle
+                  key={index}
+                  cx={RING_SIZE / 2}
+                  cy={RING_SIZE / 2}
+                  r={RING_RADIUS}
+                  stroke={activityRingPalette[index % activityRingPalette.length]}
+                  strokeWidth={RING_STROKE}
+                  strokeLinecap="round"
+                  fill="none"
+                  strokeDasharray={`${SEGMENT_LENGTH} ${RING_CIRCUMFERENCE}`}
+                  strokeDashoffset={-(index * SEGMENT_ARC)}
+                  transform={`rotate(-90 ${RING_SIZE / 2} ${RING_SIZE / 2})`}
+                />
+              ))}
         </Svg>
         <View style={styles.centerLabel}>
           <Text style={styles.centerValue}>{centerText}</Text>

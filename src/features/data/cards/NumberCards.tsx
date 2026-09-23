@@ -1,8 +1,9 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, type ColorValue } from 'react-native';
 
 import { tokens } from '../../../design-system/tokens';
 import { uiText } from '../../../localization';
 import { DataCard } from '../DataCard';
+import { cardColors } from './cardColors';
 
 type NumberCardProps = {
   title: string;
@@ -11,15 +12,17 @@ type NumberCardProps = {
   unit: string;
   hint: string;
   accessibilityLabel: string;
+  /** 本卡主题色：标题 + 大数字用它着色（模仿健康 App 每类指标一个颜色）。 */
+  accent: ColorValue;
 };
 
-function NumberCard({ title, value, unit, hint, accessibilityLabel }: NumberCardProps) {
+function NumberCard({ title, value, unit, hint, accessibilityLabel, accent }: NumberCardProps) {
   return (
     <DataCard accessible accessibilityLabel={accessibilityLabel}>
-      <Text style={styles.title}>{title}</Text>
+      <Text style={[styles.title, { color: accent }]}>{title}</Text>
       <View style={styles.valueRow}>
         <Text
-          style={styles.value}
+          style={[styles.value, { color: accent }]}
           numberOfLines={1}
           adjustsFontSizeToFit
           minimumFontScale={0.6}
@@ -41,6 +44,7 @@ export function ReadingStreakCard({ streakDays }: { streakDays: number | null })
       value={streakDays}
       unit={uiText.data.dayUnit}
       hint={uiText.data.currentStreakHint}
+      accent={cardColors.streak}
       accessibilityLabel={
         streakDays === null
           ? `${uiText.data.currentStreak}`
@@ -58,6 +62,7 @@ export function ReadingDaysCard({ totalDays }: { totalDays: number | null }) {
       value={totalDays}
       unit={uiText.data.dayUnit}
       hint={uiText.data.totalHint}
+      accent={cardColors.days}
       accessibilityLabel={
         totalDays === null ? `${uiText.data.totalReadingDays}` : `累计阅读${totalDays}天`
       }
@@ -73,6 +78,7 @@ export function ExcerptCountCard({ excerptCount }: { excerptCount: number | null
       value={excerptCount}
       unit={uiText.data.excerptUnit}
       hint={uiText.data.totalHint}
+      accent={cardColors.excerpts}
       accessibilityLabel={
         excerptCount === null ? `${uiText.data.excerpts}` : `累计摘录${excerptCount}条`
       }
