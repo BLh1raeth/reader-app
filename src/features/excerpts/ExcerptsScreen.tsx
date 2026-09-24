@@ -598,12 +598,14 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   /**
-   * 搜索框外层 Pressable：占满标题右侧剩余宽度，高度系统标准 56pt。
+   * 搜索框外层 Pressable：占满标题右侧剩余宽度。
+   * 高度取 40pt，与标题行高（40）一致并顶对齐，
+   * 搜索框和"摘录"标题处在同一高度。
    * Pressable 只吃掉搜索框区域的 tap（见 JSX 注释），不做视觉反馈。
    */
   searchBarPressable: {
     flex: 1,
-    height: 56,
+    height: 40,
     marginLeft: 12,
   },
   /** 原生 UISearchBar：填满外层 Pressable，背景 / 圆角 / 图标由 iOS 系统提供。 */
