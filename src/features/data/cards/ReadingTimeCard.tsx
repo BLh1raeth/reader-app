@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
 import { uiText } from '../../../localization';
 import type { DailyReadingStats } from '../reading-analytics-types';
@@ -13,13 +13,16 @@ type ReadingTimeCardProps = {
   todayKey: string;
   /** 7 日总量：summary.last7DaysActiveSeconds；null = 未加载。 */
   totalActiveSeconds: number | null;
+  /** 外层可覆盖 DataCard 样式（如半宽卡内边距）。 */
+  style?: ViewStyle;
 };
 
 const CHART_HEIGHT = 88;
 const BAR_WIDTH = 8;
-/** 非零值最小可见高度；0 秒不画柱子（只留下方圆点），明确区分“没读”。 */
+/** 非零值最小可见高度。 */
 const MIN_VISIBLE_BAR_HEIGHT = 10;
-const AXIS_DOT_SIZE = 5;
+/** 0 秒日的极浅短柱高度：保留 7 个日期位置，不画成圆点。 */
+const EMPTY_BAR_HEIGHT = 6;
 
 /** 无障碍短标签：9月17日，不带年份噪音。 */
 function shortDateLabel(dayKey: string): string {
@@ -28,13 +31,13 @@ function shortDateLabel(dayKey: string): string {
 }
 
 /**
- * “阅读时长”半宽卡（2026-09-24 视觉规范）。
+ * “阅读时长”半宽卡（B.6 黑白极简）。
  *
- * 极简 7 日 spark bars：今天深蓝（#4A8CFF）强调，其他非零日浅蓝（#8EC5FF），
- * 0 秒不画柱子、只留下方浅灰圆点作 x 轴刻度；底部 7 日总量大号蓝色数字。
+ * 7 日圆角柱：今天 #242424，其他有数据的日期 #8E8E93，
+ * 0 秒日显示 #E5E5EA 极浅短柱（保留 7 个日期位置）；底部 7 日总量黑色大数字。
  * 所有柱子高度来自真实 activeSeconds，不写死。
  */
-export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingTimeCardProps) {
+export function ReadingTimeCard({ days, todayKey, totalActiveSeconds, style }: ReadingTimeCardProps) {
   const theme = useDataTheme();
   const list = days ?? [];
   const maxSeconds = Math.max(0, ...list.map((d) => d.activeSeconds));
@@ -48,8 +51,9 @@ export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingT
     <DataCard
       accessible
       accessibilityLabel={`${uiText.data.totalReadingTime}，过去 7 天总计${total}。${accessibilityParts}`}
+      style={style}
     >
-      <Text style={[styles.title, { color: theme.blue }]}>{uiText.data.totalReadingTime}</Text>
+      <Text style={[styles.title, { color: theme.primaryText }]}>{uiText.data.totalReadingTime}</Text>
       <View style={styles.chart} accessible={false}>
         <View style={styles.barsRow}>
           {list.map((day) => {
@@ -60,28 +64,30 @@ export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingT
                   MIN_VISIBLE_BAR_HEIGHT,
                   Math.round((day.activeSeconds / maxSeconds) * CHART_HEIGHT),
                 )
-              : 0;
+              : EMPTY_BAR_HEIGHT;
+            const barColor = !hasData
+              ? theme.chartEmpty
+              : isToday
+                ? theme.chartPrimary
+                : theme.tertiaryText;
             return (
               <View key={day.dayKey} style={styles.barColumn}>
-                {hasData ? (
-                  <View
-                    style={[
-                      styles.barFill,
-                      {
-                        height: barHeight,
-                        backgroundColor: isToday ? theme.blue : theme.barLightBlue,
-                      },
-                    ]}
-                  />
-                ) : null}
-                <View style={[styles.axisDot, { backgroundColor: theme.rail }]} />
+                <View
+                  style={[
+                    styles.barFill,
+                    {
+                      height: barHeight,
+                      backgroundColor: barColor,
+                    },
+                  ]}
+                />
               </View>
             );
           })}
         </View>
       </View>
       <Text
-        style={[styles.total, { color: theme.blue }]}
+        style={[styles.total, { color: theme.primaryText }]}
         numberOfLines={1}
         adjustsFontSizeToFit
         minimumFontScale={0.6}
@@ -94,12 +100,12 @@ export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingT
 
 const styles = StyleSheet.create({
   title: {
-    fontSize: 17,
-    fontWeight: '800',
+    fontSize: 18,
+    fontWeight: '700',
     marginBottom: 14,
   },
   chart: {
-    height: CHART_HEIGHT + AXIS_DOT_SIZE + 8,
+    height: CHART_HEIGHT,
   },
   barsRow: {
     flexDirection: 'row',
@@ -116,16 +122,9 @@ const styles = StyleSheet.create({
     width: BAR_WIDTH,
     borderRadius: BAR_WIDTH / 2,
   },
-  /** 每根柱子下方的 x 轴小圆点。 */
-  axisDot: {
-    width: AXIS_DOT_SIZE,
-    height: AXIS_DOT_SIZE,
-    borderRadius: AXIS_DOT_SIZE / 2,
-    marginTop: 8,
-  },
   total: {
     fontSize: 28,
-    fontWeight: '900',
+    fontWeight: '800',
     letterSpacing: -0.4,
     marginTop: 12,
   },

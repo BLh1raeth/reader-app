@@ -18,12 +18,13 @@ type RhythmCardProps = {
 };
 
 /**
- * 阅读节奏卡（2026-09-24 视觉规范，页面底部大总结卡）。
+ * 阅读节奏卡（B.6 黑白极简，页面底部大总结卡）。
  *
- * 顶部：书本图标 + 蓝色“阅读节奏”标题，右上蓝色“全部显示”（纯装饰）；
- * 加粗结论“最近 7 天，你有 X 天进行了阅读。”（X = 7 天内 activeSeconds > 0 的天数）；
+ * 顶部：书本图标（#636366）+ “阅读节奏”标题（#111111），
+ * 右上“全部显示”（#636366，纯装饰）；
+ * 结论“最近 7 天，你有 X 天进行了阅读。”（X = 7 天内 activeSeconds > 0 的天数）；
  * 分割线；
- * 三列摘要：连续阅读（蓝，当前）/ 阅读天数（青，累计）/ 累计摘录（紫，累计），
+ * 三列摘要：连续阅读 / 阅读天数 / 累计摘录，数字统一 #111111，
  * 列之间很淡的竖分隔线。
  *
  * 所有数字来自 Analytics 实时数据，不写死。
@@ -45,19 +46,16 @@ export function AccumulationCard({ days, streakDays, totalDays, excerptCount }: 
       label: uiText.data.currentStreak,
       value: streakText,
       hint: uiText.data.currentHint,
-      color: theme.blue,
     },
     {
       label: uiText.data.totalReadingDays,
       value: daysText,
       hint: uiText.data.totalHint,
-      color: theme.teal,
     },
     {
       label: uiText.data.totalExcerptLabel,
       value: excerptText,
       hint: uiText.data.totalHint,
-      color: theme.purple,
     },
   ];
 
@@ -69,10 +67,10 @@ export function AccumulationCard({ days, streakDays, totalDays, excerptCount }: 
     >
       <View style={styles.headerRow}>
         <View style={styles.titleLeft}>
-          <SymbolView name="book" size={22} tintColor={theme.blue} weight="medium" />
-          <Text style={[styles.title, { color: theme.blue }]}>{uiText.data.readingRhythm}</Text>
+          <SymbolView name="book" size={22} tintColor={theme.secondaryText} weight="medium" />
+          <Text style={[styles.title, { color: theme.primaryText }]}>{uiText.data.readingRhythm}</Text>
         </View>
-        <Text style={[styles.showAll, { color: theme.blue }]}>{uiText.data.showAll}</Text>
+        <Text style={[styles.showAll, { color: theme.secondaryText }]}>{uiText.data.showAll}</Text>
       </View>
 
       <Text style={[styles.statement, { color: theme.primaryText }]}>{statement}</Text>
@@ -86,18 +84,18 @@ export function AccumulationCard({ days, streakDays, totalDays, excerptCount }: 
               <View style={[styles.vDivider, { backgroundColor: theme.divider }]} />
             ) : null}
             <View style={styles.statBody}>
-              <Text style={[styles.statLabel, { color: theme.secondaryText }]}>
+              <Text style={[styles.statLabel, { color: theme.tertiaryText }]}>
                 {col.label}
               </Text>
               <Text
-                style={[styles.statValue, { color: col.color }]}
+                style={[styles.statValue, { color: theme.primaryText }]}
                 numberOfLines={1}
                 adjustsFontSizeToFit
                 minimumFontScale={0.6}
               >
                 {col.value}
               </Text>
-              <Text style={[styles.statHint, { color: theme.secondaryText }]}>{col.hint}</Text>
+              <Text style={[styles.statHint, { color: theme.tertiaryText }]}>{col.hint}</Text>
             </View>
           </View>
         ))}
@@ -118,8 +116,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: {
-    fontSize: 17,
-    fontWeight: '800',
+    fontSize: 18,
+    fontWeight: '700',
     marginLeft: 8,
   },
   /** 纯装饰（详情页未实现，不可点）。 */
@@ -127,12 +125,12 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
   },
-  /** 加粗结论句。 */
+  /** 结论句：17pt / 700，不抢页面大标题。 */
   statement: {
-    fontSize: 19,
-    fontWeight: '800',
+    fontSize: 17,
+    fontWeight: '700',
     letterSpacing: -0.4,
-    lineHeight: 27,
+    lineHeight: 25,
   },
   divider: {
     height: StyleSheet.hairlineWidth,
@@ -161,8 +159,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   statValue: {
-    fontSize: 30,
-    fontWeight: '900',
+    fontSize: 28,
+    fontWeight: '800',
     letterSpacing: -0.5,
   },
   statHint: {

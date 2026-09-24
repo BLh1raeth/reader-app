@@ -1,69 +1,73 @@
 import { useColorScheme } from 'react-native';
 
 /**
- * Data 页视觉主题（用户 2026-09-24 视觉规范 + 深色模式映射）。
+ * Data 页视觉主题（Data Core B.6：黑白极简视觉统一）。
  *
- * 浅色 = 规范里的精确 hex（#F3F2F7 底 / #FFFFFF 卡 / #111111 主文字 / #4A8CFF 蓝 /
- * #57C7D4 青 / #F39A3E 橙 / #C554F2 紫）；
- * 深色 = 我映射的等效体系：纯黑底 / #1C1C1E 卡 / 白字主文字，
- * 强调色保持高饱和、只在深色下把蓝色略提亮以保证对比度。
+ * 浅色 = B.6 规范固定值：#FAFAFC 页面底 / #FFFFFF 卡片 / #111111 主文字 /
+ * #636366 次要 / #8E8E93 辅助 / #AEAEB2 弱化 /
+ * #242424 主图表 / #626262 次图表 / #A1A1A6 浅图表 / #E5E5EA 无数据 /
+ * #E9E9EC 分割线。整页只出现白、黑、灰。
+ *
+ * 深色模式本轮不重构：仅保留可用的灰阶映射（不崩、能看），
+ * 等 B.6 浅色视觉稳定后再单独处理。
  *
  * 纯展示层：只提供颜色，不碰任何统计口径。
+ * 仅 Data 页面使用；不覆盖书库 / 摘录 / Tab Bar 的系统颜色。
  */
 export type DataTheme = {
   pageBackground: string;
   cardBackground: string;
+  /** 主文字 #111111 */
   primaryText: string;
+  /** 次要文字 #636366 */
   secondaryText: string;
+  /** 辅助文字 #8E8E93 */
+  tertiaryText: string;
+  /** 弱化文字 #AEAEB2 */
+  faintText: string;
+  /** 主图表 #242424 */
+  chartPrimary: string;
+  /** 次图表 #626262 */
+  chartSecondary: string;
+  /** 浅图表 #A1A1A6 */
+  chartLight: string;
+  /** 无数据图表 #E5E5EA */
+  chartEmpty: string;
+  /** 分割线 #E9E9EC */
   divider: string;
-  /** 圆环底环 / 图表轨道底色 */
+  /** 三同心圆环轨道底色（圆环实现禁止改动，token 保留原值） */
   ringTrack: string;
-  /** 浅灰圆点 / 辅助线 */
-  rail: string;
-  /** 主蓝：标题、今日阅读、时长 */
-  blue: string;
-  /** 时长指标点 / 圆环时长弧段 */
-  durationBlue: string;
-  /** 非今天柱子的浅蓝 */
-  barLightBlue: string;
-  /** 青：速度、字数 */
-  teal: string;
-  /** 橙：摘录 */
-  orange: string;
-  /** 紫：累计摘录 */
-  purple: string;
 };
 
 const lightTheme: DataTheme = {
-  pageBackground: '#F3F2F7',
+  pageBackground: '#FAFAFC',
   cardBackground: '#FFFFFF',
   primaryText: '#111111',
-  secondaryText: '#8E8E93',
-  divider: '#E9E9EE',
+  secondaryText: '#636366',
+  tertiaryText: '#8E8E93',
+  faintText: '#AEAEB2',
+  chartPrimary: '#242424',
+  chartSecondary: '#626262',
+  chartLight: '#A1A1A6',
+  chartEmpty: '#E5E5EA',
+  divider: '#E9E9EC',
   ringTrack: '#EAEAEA',
-  rail: '#E5E5EA',
-  blue: '#4A8CFF',
-  durationBlue: '#3F83F8',
-  barLightBlue: '#8EC5FF',
-  teal: '#57C7D4',
-  orange: '#F39A3E',
-  purple: '#C554F2',
 };
 
+/** 深色：本轮不重构，仅保证可用（灰阶映射）。 */
 const darkTheme: DataTheme = {
   pageBackground: '#000000',
   cardBackground: '#1C1C1E',
   primaryText: '#FFFFFF',
   secondaryText: '#8E8E93',
+  tertiaryText: '#8E8E93',
+  faintText: '#636366',
+  chartPrimary: '#E5E5EA',
+  chartSecondary: '#A1A1A6',
+  chartLight: '#636366',
+  chartEmpty: '#2E2E33',
   divider: '#2E2E33',
   ringTrack: '#2E2E33',
-  rail: '#48484A',
-  blue: '#5E9BFF',
-  durationBlue: '#5E9BFF',
-  barLightBlue: '#8EC5FF',
-  teal: '#57C7D4',
-  orange: '#F39A3E',
-  purple: '#C554F2',
 };
 
 export function useDataTheme(): DataTheme {

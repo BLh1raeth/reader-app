@@ -26,16 +26,16 @@ type DataLoadResult = {
   todayKey: string;
 };
 
-const CARD_GAP = 16;
-const SECTION_SPACING = 20;
+const CARD_GAP = 12;
+const SECTION_SPACING = 24;
 
 /**
- * Data Tab（2026-09-24 视觉规范：Apple Health 式信息卡片仪表盘）。
+ * Data Tab（B.6 黑白极简视觉：#FAFAFC 底 / 白圆角卡 / 黑灰文字与图表）。
  *
  *   数据（大标题）
- *   → 今日阅读主卡（状态词 + 三色指标行 + 7 天活跃圆环 + 摘要句）
+ *   → 今日阅读主卡（状态词 + 灰阶指标行 + 三同心圆环 + 摘要句）
  *   → “最近 7 天” section → 阅读时长 / 阅读速度（两张半宽卡）
- *   → 阅读节奏卡（结论 + 三色累计；“全部显示”在卡片内部右上，纯装饰）
+ *   → 阅读节奏卡（结论 + 灰阶累计；“全部显示”在卡片内部右上，纯装饰）
  *
  * 只消费 Reading Analytics public API（getReadingAnalyticsSummary /
  * getDailyReadingStats），不直接读取 reader_reading_sessions / reader_excerpts，
@@ -124,12 +124,14 @@ export default function DataScreen() {
               days={last7Days}
               todayKey={todayKey}
               totalActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
+              style={styles.halfCard}
             />
           </View>
           <View style={styles.cardCell}>
             <ReadingSpeedCard
               speed={summary?.last7DaysReadingSpeedCharsPerMinute ?? null}
               days={last7Days}
+              style={styles.halfCard}
             />
           </View>
         </View>
@@ -152,12 +154,12 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 20,
   },
-  /** 视觉规范：32pt / 900 黑体。位置（insets.top + 2 / 左 20）与其他两页统一，不动。 */
+  /** B.6：34pt / 800。位置（insets.top + 2 / 左 20）与其他两页统一，不动。 */
   largeTitle: {
-    fontSize: 32,
-    fontWeight: '900',
+    fontSize: 34,
+    fontWeight: '800',
     letterSpacing: -0.6,
-    lineHeight: 38,
+    lineHeight: 40,
     marginBottom: 16,
   },
   heroBlock: {
@@ -186,5 +188,9 @@ const styles = StyleSheet.create({
   },
   cardCell: {
     flex: 1,
+  },
+  /** B.6：半宽卡内边距 20（规范 18–20）。 */
+  halfCard: {
+    padding: 20,
   },
 });

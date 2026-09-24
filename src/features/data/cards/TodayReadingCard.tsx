@@ -34,8 +34,9 @@ const DEMO_RINGS = [
 /**
  * 今日阅读主卡（2026-09-24 视觉规范）。
  *
- * 左：蓝色小标题“今日阅读”（+ 装饰 chevron）→ 900 状态大字 →
- * 三行实心色点指标（时长蓝 #3F83F8 / 字数青 #57C7D4 / 摘录橙 #F39A3E）；
+ * 左：小标题“今日阅读”（#111111 18pt / 700）→ 状态大字（34pt / 800）→
+ * 三行灰阶指标点（时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73，与三环灰度对应）；
+ * 右：三同心圆环（B.6 完整保留，不动）；
  * 右：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
  * 内环摘录数量（#6E6E73）；本轮固定演示比例 65% / 40% / 80%，中心文字暂空；
  * 真实数据与每日目标完成率下一轮 UI 稳定后再接入；
@@ -95,7 +96,7 @@ export function TodayReadingCard({
   return (
     <DataCard accessible accessibilityLabel={a11y}>
       <View style={styles.headerRow}>
-        <Text style={[styles.title, { color: theme.blue }]}>{uiText.data.todayReadingTitle}</Text>
+        <Text style={[styles.title, { color: theme.primaryText }]}>{uiText.data.todayReadingTitle}</Text>
         <SymbolView
           name="chevron.right"
           size={15}
@@ -116,21 +117,30 @@ export function TodayReadingCard({
           </Text>
 
           <View style={styles.metricRow} accessible={false}>
-            <View style={[styles.dot, { backgroundColor: theme.durationBlue }]} />
-            <Text style={[styles.metricText, { color: theme.primaryText }]}>
-              {uiText.data.todayMetricDuration}：{durationText}
+            <View style={[styles.dot, { backgroundColor: '#111111' }]} />
+            <Text style={[styles.metricName, { color: theme.secondaryText }]}>
+              {uiText.data.todayMetricDuration}：
+              <Text style={[styles.metricValue, { color: theme.primaryText }]}>
+                {durationText}
+              </Text>
             </Text>
           </View>
           <View style={styles.metricRow} accessible={false}>
-            <View style={[styles.dot, { backgroundColor: theme.teal }]} />
-            <Text style={[styles.metricText, { color: theme.primaryText }]}>
-              {uiText.data.todayMetricChars}：{charsText}
+            <View style={[styles.dot, { backgroundColor: '#3A3A3C' }]} />
+            <Text style={[styles.metricName, { color: theme.secondaryText }]}>
+              {uiText.data.todayMetricChars}：
+              <Text style={[styles.metricValue, { color: theme.primaryText }]}>
+                {charsText}
+              </Text>
             </Text>
           </View>
           <View style={styles.metricRow} accessible={false}>
-            <View style={[styles.dot, { backgroundColor: theme.orange }]} />
-            <Text style={[styles.metricText, { color: theme.primaryText }]}>
-              {uiText.data.todayMetricExcerpts}：{excerptText}
+            <View style={[styles.dot, { backgroundColor: '#6E6E73' }]} />
+            <Text style={[styles.metricName, { color: theme.secondaryText }]}>
+              {uiText.data.todayMetricExcerpts}：
+              <Text style={[styles.metricValue, { color: theme.primaryText }]}>
+                {excerptText}
+              </Text>
             </Text>
           </View>
         </View>
@@ -188,8 +198,8 @@ const styles = StyleSheet.create({
   },
   title: {
     flex: 1,
-    fontSize: 17,
-    fontWeight: '800',
+    fontSize: 18,
+    fontWeight: '700',
   },
   bodyRow: {
     flexDirection: 'row',
@@ -199,11 +209,11 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingRight: 8,
   },
-  /** 状态大字：卡内最大字，900 黑体。 */
+  /** 状态大字：卡内最大字，34pt / 800。 */
   status: {
-    fontSize: 36,
-    fontWeight: '900',
-    letterSpacing: -0.8,
+    fontSize: 34,
+    fontWeight: '800',
+    letterSpacing: -0.7,
     marginBottom: 14,
   },
   metricRow: {
@@ -218,7 +228,12 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     marginRight: 10,
   },
-  metricText: {
+  /** 指标名称（#636366）与数值（#111111）分开着色。 */
+  metricName: {
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  metricValue: {
     fontSize: 17,
     fontWeight: '700',
   },
@@ -247,9 +262,10 @@ const styles = StyleSheet.create({
     marginTop: 18,
     marginBottom: 14,
   },
+  /** 底部摘要：真正的 secondary summary，15pt / 500。 */
   summary: {
-    fontSize: 17,
-    lineHeight: 24,
-    fontWeight: '700',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '500',
   },
 });
