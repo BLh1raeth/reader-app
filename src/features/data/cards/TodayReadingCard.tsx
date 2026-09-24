@@ -20,18 +20,25 @@ type TodayReadingCardProps = {
 
 const RING_SIZE = 140;
 const RING_STROKE = 18;
-const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
-/** 三段弧之间的间隙（px），模仿参考图圆环色段的断开感。 */
-const ARC_GAP = 6;
+/**
+ * 三同心圆环（本轮为固定演示比例，不接真实数据；UI 稳定后接入每日目标完成率）。
+ * 外环阅读时长 #111111 / 中环阅读字数 #3A3A3C / 内环摘录数量 #6E6E73。
+ * 半径按线宽 18、环间距 2px 排布：61 / 41 / 21。
+ */
+const DEMO_RINGS = [
+  { radius: 61, color: '#111111', fraction: 0.65 },
+  { radius: 41, color: '#3A3A3C', fraction: 0.4 },
+  { radius: 21, color: '#6E6E73', fraction: 0.8 },
+];
 
 /**
  * 今日阅读主卡（2026-09-24 视觉规范）。
  *
  * 左：蓝色小标题“今日阅读”（+ 装饰 chevron）→ 900 状态大字 →
  * 三行实心色点指标（时长蓝 #3F83F8 / 字数青 #57C7D4 / 摘录橙 #F39A3E）；
- * 右：7 天活跃度圆环——填充比例 = activeDays7 / 7，
- * 三色弧段（青 / 橙 / 蓝）均分填充部分，中心显示 “X/7 天”；
+ * 右：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
+ * 内环摘录数量（#6E6E73）；本轮固定演示比例 65% / 40% / 80%，中心文字暂空；
+ * 真实数据与每日目标完成率下一轮 UI 稳定后再接入；
  * 底部分割线 + deterministic 事实型摘要句。
  *
  * 所有数字来自 Analytics 实时数据，不写死。
@@ -79,10 +86,6 @@ export function TodayReadingCard({
           : excerptCount > 0
             ? uiText.data.todaySummaryExcerpts(excerptCount)
             : uiText.data.todaySummaryDuration(durationText);
-
-  const fraction = activeDays7 === null ? 0 : Math.min(1, Math.max(0, activeDays7 / 7));
-  /** 弧段颜色与左侧三行色点对应：字数青 / 摘录橙 / 时长蓝。 */
-  const arcColors = [theme.teal, theme.orange, theme.blue];
 
   const a11y =
     `今日阅读：${statusText}，时长${durationText}，字数${charsText}，摘录${excerptText}。` +
@@ -134,47 +137,39 @@ export function TodayReadingCard({
 
         <View style={styles.ringWrap} accessible={false}>
           <Svg width={RING_SIZE} height={RING_SIZE}>
-            <Circle
-              cx={RING_SIZE / 2}
-              cy={RING_SIZE / 2}
-              r={RING_RADIUS}
-              stroke={theme.ringTrack}
-              strokeWidth={RING_STROKE}
-              fill="none"
-            />
-            <G rotation={-90} origin={`${RING_SIZE / 2}, ${RING_SIZE / 2}`}>
-              {arcColors.map((color, i) => {
-                const start = (i * fraction) / arcColors.length;
-                const length = Math.max(
-                  0,
-                  (fraction / arcColors.length) * RING_CIRCUMFERENCE - ARC_GAP,
-                );
-                if (length <= 0) return null;
-                return (
+            {DEMO_RINGS.map((ring) => {
+              const circumference = 2 * Math.PI * ring.radius;
+              const arcLength = Math.max(0, ring.fraction * circumference);
+              return (
+                <G
+                  key={ring.color}
+                  rotation={-90}
+                  origin={`${RING_SIZE / 2}, ${RING_SIZE / 2}`}
+                >
                   <Circle
-                    key={i}
                     cx={RING_SIZE / 2}
                     cy={RING_SIZE / 2}
-                    r={RING_RADIUS}
-                    stroke={color}
+                    r={ring.radius}
+                    stroke={theme.ringTrack}
                     strokeWidth={RING_STROKE}
-                    strokeLinecap="round"
                     fill="none"
-                    strokeDasharray={`${length} ${RING_CIRCUMFERENCE - length}`}
-                    strokeDashoffset={-start * RING_CIRCUMFERENCE}
                   />
-                );
-              })}
-            </G>
+                  {arcLength > 0 && (
+                    <Circle
+                      cx={RING_SIZE / 2}
+                      cy={RING_SIZE / 2}
+                      r={ring.radius}
+                      stroke={ring.color}
+                      strokeWidth={RING_STROKE}
+                      strokeLinecap="round"
+                      fill="none"
+                      strokeDasharray={`${arcLength} ${circumference - arcLength}`}
+                    />
+                  )}
+                </G>
+              );
+            })}
           </Svg>
-          <View style={styles.ringCenter}>
-            <Text style={[styles.ringFraction, { color: theme.primaryText }]}>
-              {activeDays7 === null ? '—' : `${activeDays7}/7`}
-            </Text>
-            <Text style={[styles.ringUnit, { color: theme.primaryText }]}>
-              {uiText.data.dayUnit}
-            </Text>
-          </View>
         </View>
       </View>
 
