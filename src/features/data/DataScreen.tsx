@@ -90,7 +90,8 @@ export default function DataScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingTop: insets.top + 2, paddingBottom: insets.bottom + 32 },
+          // 底部留出悬浮 Tab Bar 的高度，保证阅读节奏卡能完整滚到可视区。
+          { paddingTop: insets.top + 2, paddingBottom: insets.bottom + 110 },
         ]}
         showsVerticalScrollIndicator={false}
       >

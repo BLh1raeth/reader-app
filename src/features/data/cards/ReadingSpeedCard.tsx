@@ -18,6 +18,8 @@ const CHART_HEIGHT = 84;
 const DOT_SIZE = 14;
 const DOT_BORDER = 3;
 const RAIL_HEIGHT = 10;
+/** 点在绘图区内的上下留白：点悬空、不贴边、不被裁。 */
+const DOT_INSET = 10;
 
 /**
  * “阅读速度”半宽卡（视觉稿还原版）。
@@ -62,12 +64,14 @@ export function ReadingSpeedCard({ speed, days }: ReadingSpeedCardProps) {
           {list.map((day) => {
             const daySpeed = day.readingSpeedCharsPerMinute;
             // 归一化到 [0,1]：最大速度在顶部；全部相等时居中；null 不画点。
+            // 点在上下留白 DOT_INSET 之间游走，悬空不贴边。
             const norm =
               daySpeed === null ? null : spread > 0 ? (daySpeed - minSpeed) / spread : 0.5;
             const marginTop =
               norm === null
                 ? 0
-                : Math.round((1 - norm) * (CHART_HEIGHT - DOT_SIZE));
+                : DOT_INSET +
+                  Math.round((1 - norm) * (CHART_HEIGHT - DOT_SIZE - DOT_INSET * 2));
             return (
               <View key={day.dayKey} style={styles.dotColumn}>
                 {norm === null ? null : (

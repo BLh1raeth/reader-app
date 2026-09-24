@@ -19,9 +19,7 @@ type ReadingTimeCardProps = {
 
 const CHART_HEIGHT = 88;
 const BAR_WIDTH = 8;
-/** 0 秒的日子：极浅短 baseline，位置可见但不伪装成有数据。 */
-const ZERO_BAR_HEIGHT = 6;
-/** 非零值最小可见高度；0 秒保持 baseline，明确区分“没读”和“读了几秒”。 */
+/** 非零值最小可见高度；0 秒不画柱子（只留下方圆点），明确区分“没读”。 */
 const MIN_VISIBLE_BAR_HEIGHT = 10;
 const AXIS_DOT_SIZE = 5;
 
@@ -65,18 +63,20 @@ export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingT
         <View style={styles.barsRow}>
           {list.map((day) => {
             const isToday = day.dayKey === todayKey;
-            let barHeight = ZERO_BAR_HEIGHT;
-            let barStyle = styles.barZero;
-            if (day.activeSeconds > 0 && maxSeconds > 0) {
-              barHeight = Math.max(
-                MIN_VISIBLE_BAR_HEIGHT,
-                Math.round((day.activeSeconds / maxSeconds) * CHART_HEIGHT),
-              );
-              barStyle = isToday ? styles.barToday : styles.barPast;
-            }
+            const hasData = day.activeSeconds > 0 && maxSeconds > 0;
+            const barHeight = hasData
+              ? Math.max(
+                  MIN_VISIBLE_BAR_HEIGHT,
+                  Math.round((day.activeSeconds / maxSeconds) * CHART_HEIGHT),
+                )
+              : 0;
+            const barStyle = isToday ? styles.barToday : styles.barPast;
             return (
               <View key={day.dayKey} style={styles.barColumn}>
-                <View style={[styles.barFill, barStyle, { height: barHeight }]} />
+                {/* 0 秒的天不画柱子，只留下方圆点作位置刻度（视觉稿即如此）。 */}
+                {hasData ? (
+                  <View style={[styles.barFill, barStyle, { height: barHeight }]} />
+                ) : null}
                 <View style={styles.axisDot} />
               </View>
             );
@@ -131,9 +131,6 @@ const styles = StyleSheet.create({
   barPast: {
     backgroundColor: cardColors.primary,
     opacity: 0.45,
-  },
-  barZero: {
-    backgroundColor: PlatformColor('tertiarySystemFill'),
   },
   /** 每根柱子下方的 x 轴小圆点。 */
   axisDot: {
