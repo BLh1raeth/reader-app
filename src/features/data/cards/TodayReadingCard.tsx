@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
 import { Circle, G, Svg } from 'react-native-svg';
 
@@ -31,14 +32,84 @@ const DEMO_RINGS = [
   { radius: 21, color: '#6E6E73', fraction: 0.8 },
 ];
 
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+type AnimatedRingProps = {
+  size: number;
+  radius: number;
+  strokeWidth: number;
+  color: string;
+  /** 目标进度 0–1（本轮为 DEMO_RINGS 的固定演示比例）。 */
+  fraction: number;
+  trackColor: string;
+  /** 入场延迟 ms：三环错峰 0 / 150 / 300。 */
+  delay: number;
+};
+
+/**
+ * 单环入场动画：挂载时从起点（offset = 整周长，弧不可见）扫到目标进度，
+ * 模仿 Apple 健康 / 健身记录圆环的开场效果。
+ * 用 Animated 驱动 strokeDashoffset；SVG 属性不支持 native driver，走 JS 线程，
+ * 三环体量很小，真机足够流畅。
+ */
+function AnimatedRing({
+  size,
+  radius,
+  strokeWidth,
+  color,
+  fraction,
+  trackColor,
+  delay,
+}: AnimatedRingProps) {
+  const center = size / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = useRef(new Animated.Value(circumference)).current;
+
+  useEffect(() => {
+    const animation = Animated.timing(offset, {
+      toValue: circumference * (1 - fraction),
+      duration: 900,
+      delay,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [circumference, fraction, delay, offset]);
+
+  return (
+    <G rotation={-90} origin={`${center}, ${center}`}>
+      <Circle
+        cx={center}
+        cy={center}
+        r={radius}
+        stroke={trackColor}
+        strokeWidth={strokeWidth}
+        fill="none"
+      />
+      <AnimatedCircle
+        cx={center}
+        cy={center}
+        r={radius}
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        fill="none"
+        strokeDasharray={`${circumference}`}
+        strokeDashoffset={offset}
+      />
+    </G>
+  );
+}
+
 /**
  * 今日阅读主卡（2026-09-24 视觉规范）。
  *
  * 左：小标题“今日阅读”（#111111 18pt / 700）→ 状态大字（34pt / 800）→
  * 三行灰阶指标点（时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73，与三环灰度对应）；
- * 右：三同心圆环（B.6 完整保留，不动）；
  * 右：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
  * 内环摘录数量（#6E6E73）；本轮固定演示比例 65% / 40% / 80%，中心文字暂空；
+ * 挂载时三环从起点扫到目标进度（Apple 健康式入场动画，错峰 150ms）；
  * 真实数据与每日目标完成率下一轮 UI 稳定后再接入。
  *
  * 所有数字来自 Analytics 实时数据，不写死。
@@ -127,38 +198,18 @@ export function TodayReadingCard({
 
         <View style={styles.ringWrap} accessible={false}>
           <Svg width={RING_SIZE} height={RING_SIZE}>
-            {DEMO_RINGS.map((ring) => {
-              const circumference = 2 * Math.PI * ring.radius;
-              const arcLength = Math.max(0, ring.fraction * circumference);
-              return (
-                <G
-                  key={ring.color}
-                  rotation={-90}
-                  origin={`${RING_SIZE / 2}, ${RING_SIZE / 2}`}
-                >
-                  <Circle
-                    cx={RING_SIZE / 2}
-                    cy={RING_SIZE / 2}
-                    r={ring.radius}
-                    stroke={theme.ringTrack}
-                    strokeWidth={RING_STROKE}
-                    fill="none"
-                  />
-                  {arcLength > 0 && (
-                    <Circle
-                      cx={RING_SIZE / 2}
-                      cy={RING_SIZE / 2}
-                      r={ring.radius}
-                      stroke={ring.color}
-                      strokeWidth={RING_STROKE}
-                      strokeLinecap="round"
-                      fill="none"
-                      strokeDasharray={`${arcLength} ${circumference - arcLength}`}
-                    />
-                  )}
-                </G>
-              );
-            })}
+            {DEMO_RINGS.map((ring, index) => (
+              <AnimatedRing
+                key={ring.color}
+                size={RING_SIZE}
+                radius={ring.radius}
+                strokeWidth={RING_STROKE}
+                color={ring.color}
+                fraction={ring.fraction}
+                trackColor={theme.ringTrack}
+                delay={index * 150}
+              />
+            ))}
           </Svg>
         </View>
       </View>
