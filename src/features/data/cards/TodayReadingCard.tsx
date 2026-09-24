@@ -1,12 +1,11 @@
-import { PlatformColor, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
 import { Circle, G, Svg } from 'react-native-svg';
 
-import { tokens } from '../../../design-system/tokens';
 import { uiText } from '../../../localization';
 import { DataCard } from '../DataCard';
+import { useDataTheme } from '../dataTheme';
 import { formatDuration } from '../analytics-format';
-import { cardColors } from './cardColors';
 
 type TodayReadingCardProps = {
   /** summary.todayActiveSeconds；null = 未加载，显示占位。 */
@@ -19,26 +18,24 @@ type TodayReadingCardProps = {
   activeDays7: number | null;
 };
 
-const RING_SIZE = 148;
+const RING_SIZE = 140;
 const RING_STROKE = 18;
 const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
-/** 三段弧之间的间隙（px），模仿视觉稿圆环色段的断开感。 */
+/** 三段弧之间的间隙（px），模仿参考图圆环色段的断开感。 */
 const ARC_GAP = 6;
-/** 弧段颜色与左侧三行色点一一对应：时长蓝 / 字数青 / 摘录橙。 */
-const ARC_COLORS = [cardColors.secondary, cardColors.tertiary, cardColors.primary];
 
 /**
- * 今日阅读主卡（视觉稿还原版）。
+ * 今日阅读主卡（2026-09-24 视觉规范）。
  *
- * 左：状态词（纯时长档位）+ 三行色点指标（时长蓝 / 字数青 / 摘录橙）；
- * 右：7 天活跃度圆环——填充比例 = 最近 7 天有阅读的天数 / 7，
- * 三色弧段均分填充部分（与左侧三行颜色对应），中心显示 “X/7 天”。
- * 底部一句 deterministic 事实型摘要：
- * - 字数 > 0 且摘录 > 0 → “今天你已经阅读了 X 字，并记录了 Y 条摘录。”
- * - 其余沿用 B.3 四条规则（0 秒 / 有字 / 有摘录 / 只有时长）。
+ * 左：蓝色小标题“今日阅读”（+ 装饰 chevron）→ 900 状态大字 →
+ * 三行实心色点指标（时长蓝 #3F83F8 / 字数青 #57C7D4 / 摘录橙 #F39A3E）；
+ * 右：7 天活跃度圆环——填充比例 = activeDays7 / 7，
+ * 三色弧段（青 / 橙 / 蓝）均分填充部分，中心显示 “X/7 天”；
+ * 底部分割线 + deterministic 事实型摘要句。
  *
- * chevron 为纯装饰（详情页未实现，卡片不可点），与 DataCard 注释一致。
+ * 所有数字来自 Analytics 实时数据，不写死。
+ * chevron 为纯装饰（详情页未实现，卡片不可点）。
  * zero state 完整显示 0 分钟 / 0 字 / 0 条；圆环全灰、中心 0/7 天。
  */
 export function TodayReadingCard({
@@ -47,6 +44,8 @@ export function TodayReadingCard({
   excerptCount,
   activeDays7,
 }: TodayReadingCardProps) {
+  const theme = useDataTheme();
+
   const loaded =
     activeSeconds !== null &&
     forwardCharacters !== null &&
@@ -82,6 +81,8 @@ export function TodayReadingCard({
             : uiText.data.todaySummaryDuration(durationText);
 
   const fraction = activeDays7 === null ? 0 : Math.min(1, Math.max(0, activeDays7 / 7));
+  /** 弧段颜色与左侧三行色点对应：字数青 / 摘录橙 / 时长蓝。 */
+  const arcColors = [theme.teal, theme.orange, theme.blue];
 
   const a11y =
     `今日阅读：${statusText}，时长${durationText}，字数${charsText}，摘录${excerptText}。` +
@@ -89,13 +90,13 @@ export function TodayReadingCard({
     summaryText;
 
   return (
-    <DataCard accessible accessibilityLabel={a11y} style={styles.card}>
+    <DataCard accessible accessibilityLabel={a11y}>
       <View style={styles.headerRow}>
-        <Text style={styles.title}>{uiText.data.todayReadingTitle}</Text>
+        <Text style={[styles.title, { color: theme.blue }]}>{uiText.data.todayReadingTitle}</Text>
         <SymbolView
           name="chevron.right"
           size={15}
-          tintColor={tokens.colors.tertiaryLabel}
+          tintColor={theme.secondaryText}
           weight="semibold"
         />
       </View>
@@ -103,7 +104,7 @@ export function TodayReadingCard({
       <View style={styles.bodyRow}>
         <View style={styles.leftCol}>
           <Text
-            style={styles.status}
+            style={[styles.status, { color: theme.primaryText }]}
             numberOfLines={1}
             adjustsFontSizeToFit
             minimumFontScale={0.6}
@@ -112,20 +113,20 @@ export function TodayReadingCard({
           </Text>
 
           <View style={styles.metricRow} accessible={false}>
-            <View style={[styles.dot, { backgroundColor: cardColors.primary }]} />
-            <Text style={styles.metricText}>
+            <View style={[styles.dot, { backgroundColor: theme.durationBlue }]} />
+            <Text style={[styles.metricText, { color: theme.primaryText }]}>
               {uiText.data.todayMetricDuration}：{durationText}
             </Text>
           </View>
           <View style={styles.metricRow} accessible={false}>
-            <View style={[styles.dot, { backgroundColor: cardColors.secondary }]} />
-            <Text style={styles.metricText}>
+            <View style={[styles.dot, { backgroundColor: theme.teal }]} />
+            <Text style={[styles.metricText, { color: theme.primaryText }]}>
               {uiText.data.todayMetricChars}：{charsText}
             </Text>
           </View>
           <View style={styles.metricRow} accessible={false}>
-            <View style={[styles.dot, { backgroundColor: cardColors.tertiary }]} />
-            <Text style={styles.metricText}>
+            <View style={[styles.dot, { backgroundColor: theme.orange }]} />
+            <Text style={[styles.metricText, { color: theme.primaryText }]}>
               {uiText.data.todayMetricExcerpts}：{excerptText}
             </Text>
           </View>
@@ -137,16 +138,16 @@ export function TodayReadingCard({
               cx={RING_SIZE / 2}
               cy={RING_SIZE / 2}
               r={RING_RADIUS}
-              stroke={PlatformColor('tertiarySystemFill')}
+              stroke={theme.ringTrack}
               strokeWidth={RING_STROKE}
               fill="none"
             />
             <G rotation={-90} origin={`${RING_SIZE / 2}, ${RING_SIZE / 2}`}>
-              {ARC_COLORS.map((color, i) => {
-                const start = (i * fraction) / ARC_COLORS.length;
+              {arcColors.map((color, i) => {
+                const start = (i * fraction) / arcColors.length;
                 const length = Math.max(
                   0,
-                  (fraction / ARC_COLORS.length) * RING_CIRCUMFERENCE - ARC_GAP,
+                  (fraction / arcColors.length) * RING_CIRCUMFERENCE - ARC_GAP,
                 );
                 if (length <= 0) return null;
                 return (
@@ -167,35 +168,33 @@ export function TodayReadingCard({
             </G>
           </Svg>
           <View style={styles.ringCenter}>
-            <Text style={styles.ringFraction}>
+            <Text style={[styles.ringFraction, { color: theme.primaryText }]}>
               {activeDays7 === null ? '—' : `${activeDays7}/7`}
             </Text>
-            <Text style={styles.ringUnit}>{uiText.data.dayUnit}</Text>
+            <Text style={[styles.ringUnit, { color: theme.primaryText }]}>
+              {uiText.data.dayUnit}
+            </Text>
           </View>
         </View>
       </View>
 
-      <View style={styles.divider} />
+      <View style={[styles.divider, { backgroundColor: theme.divider }]} />
 
-      <Text style={styles.summary}>{summaryText}</Text>
+      <Text style={[styles.summary, { color: theme.primaryText }]}>{summaryText}</Text>
     </DataCard>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    padding: 20,
-  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   title: {
     flex: 1,
-    color: cardColors.primary,
-    fontSize: 20,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '800',
   },
   bodyRow: {
     flexDirection: 'row',
@@ -205,29 +204,28 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingRight: 8,
   },
-  /** 状态词：卡内最大字，黑体粗。 */
+  /** 状态大字：卡内最大字，900 黑体。 */
   status: {
-    color: tokens.colors.label,
-    fontSize: 40,
-    fontWeight: '800',
+    fontSize: 36,
+    fontWeight: '900',
     letterSpacing: -0.8,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   metricRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
+  /** 实心色点。 */
   dot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     marginRight: 10,
   },
   metricText: {
-    color: tokens.colors.label,
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
   },
   ringWrap: {
     width: RING_SIZE,
@@ -240,27 +238,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   ringFraction: {
-    color: tokens.colors.label,
-    fontSize: 30,
-    fontWeight: '800',
+    fontSize: 28,
+    fontWeight: '900',
     letterSpacing: -0.6,
   },
   ringUnit: {
-    color: tokens.colors.label,
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
     marginTop: 2,
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: tokens.colors.separator,
-    marginTop: 16,
+    marginTop: 18,
     marginBottom: 14,
   },
   summary: {
-    color: tokens.colors.label,
     fontSize: 17,
     lineHeight: 24,
-    fontWeight: '500',
+    fontWeight: '700',
   },
 });

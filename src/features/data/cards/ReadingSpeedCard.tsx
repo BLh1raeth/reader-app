@@ -1,11 +1,9 @@
-import { PlatformColor, StyleSheet, Text, View } from 'react-native';
-import { SymbolView } from 'expo-symbols';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { tokens } from '../../../design-system/tokens';
 import { uiText } from '../../../localization';
 import type { DailyReadingStats } from '../reading-analytics-types';
 import { DataCard } from '../DataCard';
-import { cardColors } from './cardColors';
+import { useDataTheme } from '../dataTheme';
 
 type ReadingSpeedCardProps = {
   /** summary.last7DaysReadingSpeedCharsPerMinute；null = 未加载或无有效数据。 */
@@ -14,27 +12,24 @@ type ReadingSpeedCardProps = {
   days: DailyReadingStats[] | null;
 };
 
-const CHART_HEIGHT = 84;
-const DOT_SIZE = 14;
-const DOT_BORDER = 3;
-const RAIL_HEIGHT = 10;
+const PLOT_HEIGHT = 84;
+const DOT_SIZE = 12;
 /** 点在绘图区内的上下留白：点悬空、不贴边、不被裁。 */
 const DOT_INSET = 10;
 
 /**
- * “阅读速度”半宽卡（视觉稿还原版）。
+ * “阅读速度”半宽卡（2026-09-24 视觉规范）。
+ *
+ * 极简散点图：上下两条很淡的浅灰横线作“轨道感”，中间无边框、无大面积色块；
+ * 每天一个青色实心圆点（null 的天不画点，但保留 column 占位维持 7 天结构），
+ * 点的 vertical position 按当日速度归一化，点数完全由真实数据驱动。
  *
  * 主值忠实显示 Analytics 输出：null → —；不 clamp、不隐藏异常值
  * （数据质量问题留给独立审计，UI 不掩盖）。超长数字用
  * adjustsFontSizeToFit 保证不撑破 layout。
- *
- * 图形是带框线的点状趋势：上下两条浅灰轨道、中间浅蓝底，
- * 7 个等宽 column，每列一个空心圆点（白底蓝圈），vertical position
- * 按当日速度归一化；null day 不画点（不把 null 当 0 落到底部），
- * 但保留 column 占位以维持 7 天位置结构。不连线。
- * 右上 chevron 纯装饰（详情页未实现，卡片不可点）。
  */
 export function ReadingSpeedCard({ speed, days }: ReadingSpeedCardProps) {
+  const theme = useDataTheme();
   const list = days ?? [];
   const validSpeeds = list
     .map((d) => d.readingSpeedCharsPerMinute)
@@ -48,18 +43,9 @@ export function ReadingSpeedCard({ speed, days }: ReadingSpeedCardProps) {
 
   return (
     <DataCard accessible accessibilityLabel={`${uiText.data.readingSpeed}，${a11yValue}`}>
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>{uiText.data.readingSpeed}</Text>
-        <SymbolView
-          name="chevron.right"
-          size={14}
-          tintColor={tokens.colors.tertiaryLabel}
-          weight="semibold"
-        />
-      </View>
-      <View style={styles.rail} accessible={false} />
-      <View style={styles.plotWrap} accessible={false}>
-        <View style={styles.plotBg} />
+      <Text style={[styles.title, { color: theme.teal }]}>{uiText.data.readingSpeed}</Text>
+      <View style={styles.plot} accessible={false}>
+        <View style={[styles.railLine, { backgroundColor: theme.rail }]} />
         <View style={styles.dotsRow}>
           {list.map((day) => {
             const daySpeed = day.readingSpeedCharsPerMinute;
@@ -71,61 +57,54 @@ export function ReadingSpeedCard({ speed, days }: ReadingSpeedCardProps) {
               norm === null
                 ? 0
                 : DOT_INSET +
-                  Math.round((1 - norm) * (CHART_HEIGHT - DOT_SIZE - DOT_INSET * 2));
+                  Math.round((1 - norm) * (PLOT_HEIGHT - DOT_SIZE - DOT_INSET * 2));
             return (
               <View key={day.dayKey} style={styles.dotColumn}>
                 {norm === null ? null : (
-                  <View style={[styles.dot, { marginTop }]} />
+                  <View
+                    style={[styles.dot, { backgroundColor: theme.teal, marginTop }]}
+                  />
                 )}
               </View>
             );
           })}
         </View>
+        <View style={[styles.railLine, { backgroundColor: theme.rail }]} />
       </View>
-      <View style={styles.rail} accessible={false} />
       <View style={styles.valueRow}>
         <Text
-          style={styles.value}
+          style={[styles.value, { color: theme.teal }]}
           numberOfLines={1}
           adjustsFontSizeToFit
           minimumFontScale={0.5}
         >
           {valueText}
         </Text>
-        {speed !== null ? <Text style={styles.unit}>{uiText.data.speedUnit}</Text> : null}
+        {speed !== null ? (
+          <Text style={[styles.unit, { color: theme.secondaryText }]}>
+            {uiText.data.speedUnit}
+          </Text>
+        ) : null}
       </View>
     </DataCard>
   );
 }
 
 const styles = StyleSheet.create({
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
   title: {
-    flex: 1,
-    color: cardColors.secondary,
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '800',
+    marginBottom: 12,
   },
-  /** 上下轨道：浅灰圆角细条。 */
-  rail: {
-    height: RAIL_HEIGHT,
-    borderRadius: RAIL_HEIGHT / 2,
-    backgroundColor: PlatformColor('tertiarySystemFill'),
+  plot: {
+    height: PLOT_HEIGHT + 16,
+    justifyContent: 'space-between',
+    marginBottom: 12,
   },
-  /** 绘图区容器：浅蓝底（独立一层做透明）+ 上层点行。 */
-  plotWrap: {
-    height: CHART_HEIGHT,
-    marginVertical: 6,
-  },
-  plotBg: {
-    ...StyleSheet.absoluteFill,
-    borderRadius: 12,
-    backgroundColor: cardColors.primary,
-    opacity: 0.14,
+  /** 上下轨道：很淡的浅灰横线。 */
+  railLine: {
+    height: 2,
+    borderRadius: 1,
   },
   dotsRow: {
     flex: 1,
@@ -136,31 +115,24 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
   },
-  /** 空心圆点：白底 + 蓝圈。 */
+  /** 青色实心散点。 */
   dot: {
     width: DOT_SIZE,
     height: DOT_SIZE,
     borderRadius: DOT_SIZE / 2,
-    backgroundColor: '#FFFFFF',
-    borderWidth: DOT_BORDER,
-    borderColor: cardColors.primary,
-    marginTop: 0,
   },
   valueRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    marginTop: 10,
   },
   value: {
-    color: cardColors.secondary,
-    fontSize: 28,
-    fontWeight: '800',
+    fontSize: 32,
+    fontWeight: '900',
     letterSpacing: -0.5,
   },
   unit: {
-    color: tokens.colors.secondaryLabel,
-    fontSize: 14,
+    fontSize: 17,
     marginLeft: 6,
-    fontWeight: '500',
+    fontWeight: '600',
   },
 });

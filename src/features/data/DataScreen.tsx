@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { tokens } from '../../design-system/tokens';
 import { uiText } from '../../localization';
 import { addLocalCalendarDays, todayLocalDayKey } from '../../shared/time/local-day';
-import { cardColors } from './cards/cardColors';
+import { useDataTheme } from './dataTheme';
 import { TodayReadingCard } from './cards/TodayReadingCard';
 import { ReadingTimeCard } from './cards/ReadingTimeCard';
 import { ReadingSpeedCard } from './cards/ReadingSpeedCard';
@@ -26,16 +26,16 @@ type DataLoadResult = {
   todayKey: string;
 };
 
-const CARD_GAP = 12;
-const SECTION_SPACING = 18;
+const CARD_GAP = 16;
+const SECTION_SPACING = 20;
 
 /**
- * Data Tab（视觉稿还原版）：页面顺序固定。
+ * Data Tab（2026-09-24 视觉规范：Apple Health 式信息卡片仪表盘）。
  *
  *   数据（大标题）
  *   → 今日阅读主卡（状态词 + 三色指标行 + 7 天活跃圆环 + 摘要句）
- *   → 阅读时长 / 阅读速度（两张半宽卡）
- *   → 摘要（大标题 + 全部显示）→ 阅读节奏卡（结论 + 三色累计 + 7 天柱状图）
+ *   → “最近 7 天” section → 阅读时长 / 阅读速度（两张半宽卡）
+ *   → 阅读节奏卡（结论 + 三色累计；“全部显示”在卡片内部右上，纯装饰）
  *
  * 只消费 Reading Analytics public API（getReadingAnalyticsSummary /
  * getDailyReadingStats），不直接读取 reader_reading_sessions / reader_excerpts，
@@ -46,6 +46,7 @@ const SECTION_SPACING = 18;
  */
 export default function DataScreen() {
   const insets = useSafeAreaInsets();
+  const theme = useDataTheme();
   const [data, setData] = useState<DataLoadResult | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const loadingRef = useRef(false);
@@ -86,7 +87,7 @@ export default function DataScreen() {
     last7Days === null ? null : last7Days.filter((d) => d.activeSeconds > 0).length;
 
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, { backgroundColor: theme.pageBackground }]}>
       <ScrollView
         contentContainerStyle={[
           styles.content,
@@ -95,7 +96,7 @@ export default function DataScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <Text accessibilityRole="header" style={styles.largeTitle}>
+        <Text accessibilityRole="header" style={[styles.largeTitle, { color: theme.primaryText }]}>
           {uiText.data.title}
         </Text>
 
@@ -114,6 +115,9 @@ export default function DataScreen() {
           </View>
         ) : null}
 
+        <Text style={[styles.sectionTitle, { color: theme.primaryText }]}>
+          {uiText.data.last7Days}
+        </Text>
         <View style={styles.cardRow}>
           <View style={styles.cardCell}>
             <ReadingTimeCard
@@ -130,10 +134,6 @@ export default function DataScreen() {
           </View>
         </View>
 
-        <View style={styles.summaryHeaderRow}>
-          <Text style={styles.summaryTitle}>{uiText.data.summarySection}</Text>
-          <Text style={styles.showAll}>{uiText.data.showAll}</Text>
-        </View>
         <AccumulationCard
           days={last7Days}
           streakDays={summary?.currentStreakDays ?? null}
@@ -148,17 +148,16 @@ export default function DataScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: tokens.colors.groupedBackground,
   },
   content: {
     paddingHorizontal: 20,
   },
+  /** 视觉规范：32pt / 900 黑体。位置（insets.top + 2 / 左 20）与其他两页统一，不动。 */
   largeTitle: {
-    color: tokens.colors.label,
-    fontSize: tokens.typography.largeTitle,
-    fontWeight: '700',
+    fontSize: 32,
+    fontWeight: '900',
     letterSpacing: -0.6,
-    lineHeight: 40,
+    lineHeight: 38,
     marginBottom: 16,
   },
   heroBlock: {
@@ -172,31 +171,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
+  /** section 小标题：21pt / 800，与上下卡片留白。 */
+  sectionTitle: {
+    fontSize: 21,
+    fontWeight: '800',
+    letterSpacing: -0.4,
+    marginBottom: 12,
+  },
   /** 两列等宽：同一 row 卡片 stretch 等高。 */
   cardRow: {
     flexDirection: 'row',
     gap: CARD_GAP,
-    marginBottom: SECTION_SPACING + 6,
+    marginBottom: SECTION_SPACING,
   },
   cardCell: {
     flex: 1,
-  },
-  /** 摘要 section 头：大号黑标题 + 右侧蓝色“全部显示”（纯展示，不可点）。 */
-  summaryHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    marginBottom: 10,
-  },
-  summaryTitle: {
-    flex: 1,
-    color: tokens.colors.label,
-    fontSize: 28,
-    fontWeight: '700',
-    letterSpacing: -0.6,
-  },
-  showAll: {
-    color: cardColors.primary,
-    fontSize: 17,
-    fontWeight: '500',
   },
 });

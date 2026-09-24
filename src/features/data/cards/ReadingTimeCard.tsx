@@ -1,12 +1,10 @@
-import { PlatformColor, StyleSheet, Text, View } from 'react-native';
-import { SymbolView } from 'expo-symbols';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { tokens } from '../../../design-system/tokens';
 import { uiText } from '../../../localization';
 import type { DailyReadingStats } from '../reading-analytics-types';
 import { DataCard } from '../DataCard';
+import { useDataTheme } from '../dataTheme';
 import { formatDuration } from '../analytics-format';
-import { cardColors } from './cardColors';
 
 type ReadingTimeCardProps = {
   /** 最近 7 个 local calendar day（含今天），最旧 → 今天；null = 未加载。 */
@@ -30,13 +28,14 @@ function shortDateLabel(dayKey: string): string {
 }
 
 /**
- * “阅读时长”半宽卡（视觉稿还原版）。
+ * “阅读时长”半宽卡（2026-09-24 视觉规范）。
  *
- * 极简 7 日 spark bars + 底部总量：今天实蓝强调，其他非零日浅蓝，
- * 0 秒为浅灰 baseline；每根柱子下方一个小圆点作 x 轴刻度。
- * 右上 chevron 纯装饰（详情页未实现，卡片不可点）。
+ * 极简 7 日 spark bars：今天深蓝（#4A8CFF）强调，其他非零日浅蓝（#8EC5FF），
+ * 0 秒不画柱子、只留下方浅灰圆点作 x 轴刻度；底部 7 日总量大号蓝色数字。
+ * 所有柱子高度来自真实 activeSeconds，不写死。
  */
 export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingTimeCardProps) {
+  const theme = useDataTheme();
   const list = days ?? [];
   const maxSeconds = Math.max(0, ...list.map((d) => d.activeSeconds));
   const total = totalActiveSeconds === null ? '—' : formatDuration(totalActiveSeconds);
@@ -50,15 +49,7 @@ export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingT
       accessible
       accessibilityLabel={`${uiText.data.totalReadingTime}，过去 7 天总计${total}。${accessibilityParts}`}
     >
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>{uiText.data.totalReadingTime}</Text>
-        <SymbolView
-          name="chevron.right"
-          size={14}
-          tintColor={tokens.colors.tertiaryLabel}
-          weight="semibold"
-        />
-      </View>
+      <Text style={[styles.title, { color: theme.blue }]}>{uiText.data.totalReadingTime}</Text>
       <View style={styles.chart} accessible={false}>
         <View style={styles.barsRow}>
           {list.map((day) => {
@@ -70,21 +61,27 @@ export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingT
                   Math.round((day.activeSeconds / maxSeconds) * CHART_HEIGHT),
                 )
               : 0;
-            const barStyle = isToday ? styles.barToday : styles.barPast;
             return (
               <View key={day.dayKey} style={styles.barColumn}>
-                {/* 0 秒的天不画柱子，只留下方圆点作位置刻度（视觉稿即如此）。 */}
                 {hasData ? (
-                  <View style={[styles.barFill, barStyle, { height: barHeight }]} />
+                  <View
+                    style={[
+                      styles.barFill,
+                      {
+                        height: barHeight,
+                        backgroundColor: isToday ? theme.blue : theme.barLightBlue,
+                      },
+                    ]}
+                  />
                 ) : null}
-                <View style={styles.axisDot} />
+                <View style={[styles.axisDot, { backgroundColor: theme.rail }]} />
               </View>
             );
           })}
         </View>
       </View>
       <Text
-        style={styles.total}
+        style={[styles.total, { color: theme.blue }]}
         numberOfLines={1}
         adjustsFontSizeToFit
         minimumFontScale={0.6}
@@ -96,16 +93,10 @@ export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingT
 }
 
 const styles = StyleSheet.create({
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
   title: {
-    flex: 1,
-    color: cardColors.primary,
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '800',
+    marginBottom: 14,
   },
   chart: {
     height: CHART_HEIGHT + AXIS_DOT_SIZE + 8,
@@ -125,26 +116,17 @@ const styles = StyleSheet.create({
     width: BAR_WIDTH,
     borderRadius: BAR_WIDTH / 2,
   },
-  barToday: {
-    backgroundColor: cardColors.primary,
-  },
-  barPast: {
-    backgroundColor: cardColors.primary,
-    opacity: 0.45,
-  },
   /** 每根柱子下方的 x 轴小圆点。 */
   axisDot: {
     width: AXIS_DOT_SIZE,
     height: AXIS_DOT_SIZE,
     borderRadius: AXIS_DOT_SIZE / 2,
-    backgroundColor: PlatformColor('tertiarySystemFill'),
     marginTop: 8,
   },
   total: {
-    color: cardColors.primary,
-    fontSize: 26,
-    fontWeight: '700',
+    fontSize: 28,
+    fontWeight: '900',
     letterSpacing: -0.4,
-    marginTop: 10,
+    marginTop: 12,
   },
 });
