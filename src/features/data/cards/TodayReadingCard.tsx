@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
 import { Circle, G, Svg } from 'react-native-svg';
@@ -47,8 +48,8 @@ type AnimatedRingProps = {
 };
 
 /**
- * 单环入场动画：挂载时从起点（offset = 整周长，弧不可见）扫到目标进度，
- * 模仿 Apple 健康 / 健身记录圆环的开场效果。
+ * 单环入场动画：每次切回数据页时从起点（offset = 整周长，弧不可见）
+ * 扫到目标进度，模仿 Apple 健康 / 健身记录圆环的开场效果。
  * 用 Animated 驱动 strokeDashoffset；SVG 属性不支持 native driver，走 JS 线程，
  * 三环体量很小，真机足够流畅。
  */
@@ -65,17 +66,22 @@ function AnimatedRing({
   const circumference = 2 * Math.PI * radius;
   const offset = useRef(new Animated.Value(circumference)).current;
 
-  useEffect(() => {
-    const animation = Animated.timing(offset, {
-      toValue: circumference * (1 - fraction),
-      duration: 900,
-      delay,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    });
-    animation.start();
-    return () => animation.stop();
-  }, [circumference, fraction, delay, offset]);
+  useFocusEffect(
+    useCallback(() => {
+      // 每次回到数据页都从起点重播：先复位到不可见，再扫到目标进度。
+      // 切走时 cleanup 停掉动画，下次聚焦重新来过，不会有跳变。
+      offset.setValue(circumference);
+      const animation = Animated.timing(offset, {
+        toValue: circumference * (1 - fraction),
+        duration: 900,
+        delay,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      });
+      animation.start();
+      return () => animation.stop();
+    }, [circumference, fraction, delay, offset]),
+  );
 
   return (
     <G rotation={-90} origin={`${center}, ${center}`}>
@@ -109,7 +115,8 @@ function AnimatedRing({
  * 三行灰阶指标点（时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73，与三环灰度对应）；
  * 右：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
  * 内环摘录数量（#6E6E73）；本轮固定演示比例 65% / 40% / 80%，中心文字暂空；
- * 挂载时三环从起点扫到目标进度（Apple 健康式入场动画，错峰 150ms）；
+ * 每次切回数据页三环都从起点扫到目标进度
+ * （Apple 健康式入场动画，错峰 150ms）；
  * 真实数据与每日目标完成率下一轮 UI 稳定后再接入。
  *
  * 所有数字来自 Analytics 实时数据，不写死。
