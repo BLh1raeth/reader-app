@@ -586,10 +586,12 @@ const styles = StyleSheet.create({
   fixedHeader: {
     paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
   },
-  /** 标题行：摘录（左，自然宽度）+ 原生搜索框（右，占满剩余宽度）。 */
+  /** 标题行：摘录（左，自然宽度）+ 原生搜索框（右，占满剩余宽度）。
+      标题必须顶对齐：搜索框高 56pt 会把行高撑到 56，若居中对齐，
+      40pt 行高的标题会被压低 (56-40)/2 = 8pt，看起来比书库/数据页更靠下。 */
   headerRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 12,
   },
   headerTitle: {
