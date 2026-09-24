@@ -3,10 +3,11 @@ import { useColorScheme } from 'react-native';
 /**
  * Data 页视觉主题（Data Core B.6：黑白极简视觉统一）。
  *
- * 浅色 = B.6 规范固定值：#FAFAFC 页面底 / #FFFFFF 卡片 / #111111 主文字 /
- * #636366 次要 / #8E8E93 辅助 / #AEAEB2 弱化 /
- * #242424 主图表 / #626262 次图表 / #A1A1A6 浅图表 / #E5E5EA 无数据 /
- * #E9E9EC 分割线。整页只出现白、黑、灰。
+ * 浅色：卡片 #FFFFFF；页面背景保留原来的分组底 #F3F2F8（用户要求换回原值，
+ * 不使用 B.6 规范的 #FAFAFC）。文字与图表走黑白灰体系：
+ * 主文字 #111111 / 次要 #636366 / 辅助 #8E8E93 / 弱化 #AEAEB2 /
+ * 主图表 #242424 / 次图表 #626262 / 浅图表 #A1A1A6 / 无数据 #E5E5EA /
+ * 分割线 #E9E9EC。图表与文字只出现白、黑、灰。
  *
  * 深色模式本轮不重构：仅保留可用的灰阶映射（不崩、能看），
  * 等 B.6 浅色视觉稳定后再单独处理。
@@ -40,7 +41,8 @@ export type DataTheme = {
 };
 
 const lightTheme: DataTheme = {
-  pageBackground: '#FAFAFC',
+  /** 页面背景：换回 B.6 之前的原值（分组底）。 */
+  pageBackground: '#F3F2F8',
   cardBackground: '#FFFFFF',
   primaryText: '#111111',
   secondaryText: '#636366',
