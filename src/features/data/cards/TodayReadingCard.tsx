@@ -154,7 +154,7 @@ export function TodayReadingCard({
       <View style={styles.bodyRow}>
         <View style={styles.leftCol}>
           <View style={styles.metricRow} accessible={false}>
-            <View style={[styles.dot, { backgroundColor: '#111111' }]} />
+            <View style={[styles.durationDot, { backgroundColor: '#111111' }]} />
             <Text
               style={[styles.durationName, { color: theme.secondaryText }]}
               numberOfLines={1}
@@ -229,13 +229,20 @@ const styles = StyleSheet.create({
   metricRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 16,
   },
   /** 实心色点。 */
   dot: {
     width: 12,
     height: 12,
     borderRadius: 6,
+    marginRight: 10,
+  },
+  /** 时长行圆点：加大到 16，配合放大的时长行一起强调时长。 */
+  durationDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     marginRight: 10,
   },
   /** 指标名称（#636366）与数值（#111111）分开着色。 */
