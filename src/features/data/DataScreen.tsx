@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { tokens } from '../../design-system/tokens';
 import { uiText } from '../../localization';
 import { addLocalCalendarDays, todayLocalDayKey } from '../../shared/time/local-day';
+import { cardColors } from './cards/cardColors';
 import { TodayReadingCard } from './cards/TodayReadingCard';
 import { ReadingTimeCard } from './cards/ReadingTimeCard';
 import { ReadingSpeedCard } from './cards/ReadingSpeedCard';
@@ -29,12 +30,12 @@ const CARD_GAP = 12;
 const SECTION_SPACING = 18;
 
 /**
- * Data Tab Core B.3：今日优先的信息层级。
+ * Data Tab（视觉稿还原版）：页面顺序固定。
  *
- * 页面顺序固定：
- *   今日阅读（全宽主卡，视觉中心：今日时长 / 今日字数 / 今日摘录）
- *   → 最近 7 天 section → 阅读时长 / 阅读速度（两张半宽周趋势卡）
- *   → 阅读积累 section → 紧凑累计卡（最低权重）
+ *   数据（大标题）
+ *   → 今日阅读主卡（状态词 + 三色指标行 + 7 天活跃圆环 + 摘要句）
+ *   → 阅读时长 / 阅读速度（两张半宽卡）
+ *   → 摘要（大标题 + 全部显示）→ 阅读节奏卡（结论 + 三色累计 + 7 天柱状图）
  *
  * 只消费 Reading Analytics public API（getReadingAnalyticsSummary /
  * getDailyReadingStats），不直接读取 reader_reading_sessions / reader_excerpts，
@@ -81,6 +82,8 @@ export default function DataScreen() {
   const summary = data?.summary ?? null;
   const last7Days = data?.last7Days ?? null;
   const todayKey = data?.todayKey ?? '';
+  const activeDays7 =
+    last7Days === null ? null : last7Days.filter((d) => d.activeSeconds > 0).length;
 
   return (
     <View style={styles.screen}>
@@ -100,6 +103,7 @@ export default function DataScreen() {
             activeSeconds={summary?.todayActiveSeconds ?? null}
             forwardCharacters={summary?.todayForwardCharacters ?? null}
             excerptCount={summary?.todayExcerptCount ?? null}
+            activeDays7={activeDays7}
           />
         </View>
 
@@ -109,7 +113,6 @@ export default function DataScreen() {
           </View>
         ) : null}
 
-        <Text style={styles.sectionTitle}>{uiText.data.last7Days}</Text>
         <View style={styles.cardRow}>
           <View style={styles.cardCell}>
             <ReadingTimeCard
@@ -126,8 +129,12 @@ export default function DataScreen() {
           </View>
         </View>
 
-        <Text style={styles.sectionTitle}>{uiText.data.readingAccumulation}</Text>
+        <View style={styles.summaryHeaderRow}>
+          <Text style={styles.summaryTitle}>{uiText.data.summarySection}</Text>
+          <Text style={styles.showAll}>{uiText.data.showAll}</Text>
+        </View>
         <AccumulationCard
+          days={last7Days}
           streakDays={summary?.currentStreakDays ?? null}
           totalDays={summary?.totalReadingDays ?? null}
           excerptCount={summary?.totalExcerptCount ?? null}
@@ -164,19 +171,31 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
-  sectionTitle: {
-    color: tokens.colors.label,
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 10,
-  },
   /** 两列等宽：同一 row 卡片 stretch 等高。 */
   cardRow: {
     flexDirection: 'row',
     gap: CARD_GAP,
-    marginBottom: SECTION_SPACING,
+    marginBottom: SECTION_SPACING + 6,
   },
   cardCell: {
     flex: 1,
+  },
+  /** 摘要 section 头：大号黑标题 + 右侧蓝色“全部显示”（纯展示，不可点）。 */
+  summaryHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    marginBottom: 10,
+  },
+  summaryTitle: {
+    flex: 1,
+    color: tokens.colors.label,
+    fontSize: 28,
+    fontWeight: '700',
+    letterSpacing: -0.6,
+  },
+  showAll: {
+    color: cardColors.primary,
+    fontSize: 17,
+    fontWeight: '500',
   },
 });

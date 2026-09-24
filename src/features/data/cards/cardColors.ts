@@ -13,6 +13,13 @@ export const cardColors = {
   primary: PlatformColor('systemBlue'),
   /** 次 accent：阅读速度 */
   secondary: PlatformColor('systemTeal'),
+  /**
+   * 第三 accent：今日阅读“摘录”行、主卡圆环摘录弧段。
+   * 视觉稿要求三行指标三色（蓝 / 青 / 橙），与 B.2 蓝青体系不冲突：仅装饰性点缀。
+   */
+  tertiary: PlatformColor('systemOrange'),
+  /** 第四 accent：阅读节奏卡“累计摘录”数值（视觉稿紫色）。 */
+  quaternary: PlatformColor('systemPurple'),
 } as const;
 
 /**

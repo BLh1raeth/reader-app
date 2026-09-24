@@ -39,3 +39,24 @@ export function formatReadingSpeed(charsPerMinute: number | null): string {
 export function formatCount(value: number, unit: string): string {
   return `${value} ${unit}`;
 }
+
+/**
+ * dayKey（YYYY-MM-DD）→ 周几中文名（周日…周六）。
+ * 用本地日历解析，不涉及时区转换；解析失败返回空串。
+ */
+export function weekdayName(dayKey: string): string {
+  const parts = dayKey.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return '';
+  const date = new Date(parts[0], parts[1] - 1, parts[2]);
+  if (Number.isNaN(date.getTime())) return '';
+  return uiText.data.weekdayNames[date.getDay()] ?? '';
+}
+
+/**
+ * dayKey（YYYY-MM-DD）→ “M/D”短标签，如 9/18。不带年份噪音。
+ */
+export function shortMonthDayLabel(dayKey: string): string {
+  const parts = dayKey.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return '';
+  return `${parts[1]}/${parts[2]}`;
+}

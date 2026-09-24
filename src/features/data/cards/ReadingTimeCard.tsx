@@ -1,4 +1,5 @@
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
+import { SymbolView } from 'expo-symbols';
 
 import { tokens } from '../../../design-system/tokens';
 import { uiText } from '../../../localization';
@@ -16,12 +17,13 @@ type ReadingTimeCardProps = {
   totalActiveSeconds: number | null;
 };
 
-const CHART_HEIGHT = 80;
+const CHART_HEIGHT = 88;
 const BAR_WIDTH = 8;
 /** 0 秒的日子：极浅短 baseline，位置可见但不伪装成有数据。 */
 const ZERO_BAR_HEIGHT = 6;
 /** 非零值最小可见高度；0 秒保持 baseline，明确区分“没读”和“读了几秒”。 */
 const MIN_VISIBLE_BAR_HEIGHT = 10;
+const AXIS_DOT_SIZE = 5;
 
 /** 无障碍短标签：9月17日，不带年份噪音。 */
 function shortDateLabel(dayKey: string): string {
@@ -30,11 +32,11 @@ function shortDateLabel(dayKey: string): string {
 }
 
 /**
- * Data Tab Core B.2：“阅读时长”半宽核心卡。
+ * “阅读时长”半宽卡（视觉稿还原版）。
  *
- * 极简 7 日 spark bars + 底部总量。即使只有一天有数据，
- * 7 根位置也完整可见（0 秒 = 极浅短 baseline）。
- * 今天用实色强调，其他非零日用同色系浅色。
+ * 极简 7 日 spark bars + 底部总量：今天实蓝强调，其他非零日浅蓝，
+ * 0 秒为浅灰 baseline；每根柱子下方一个小圆点作 x 轴刻度。
+ * 右上 chevron 纯装饰（详情页未实现，卡片不可点）。
  */
 export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingTimeCardProps) {
   const list = days ?? [];
@@ -50,31 +52,42 @@ export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingT
       accessible
       accessibilityLabel={`${uiText.data.totalReadingTime}，过去 7 天总计${total}。${accessibilityParts}`}
     >
-      <Text style={styles.title}>{uiText.data.totalReadingTime}</Text>
-      <View style={styles.barsRow} accessible={false}>
-        {list.map((day) => {
-          const isToday = day.dayKey === todayKey;
-          let barHeight = ZERO_BAR_HEIGHT;
-          let barStyle = styles.barZero;
-          if (day.activeSeconds > 0 && maxSeconds > 0) {
-            barHeight = Math.max(
-              MIN_VISIBLE_BAR_HEIGHT,
-              Math.round((day.activeSeconds / maxSeconds) * CHART_HEIGHT),
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>{uiText.data.totalReadingTime}</Text>
+        <SymbolView
+          name="chevron.right"
+          size={14}
+          tintColor={tokens.colors.tertiaryLabel}
+          weight="semibold"
+        />
+      </View>
+      <View style={styles.chart} accessible={false}>
+        <View style={styles.barsRow}>
+          {list.map((day) => {
+            const isToday = day.dayKey === todayKey;
+            let barHeight = ZERO_BAR_HEIGHT;
+            let barStyle = styles.barZero;
+            if (day.activeSeconds > 0 && maxSeconds > 0) {
+              barHeight = Math.max(
+                MIN_VISIBLE_BAR_HEIGHT,
+                Math.round((day.activeSeconds / maxSeconds) * CHART_HEIGHT),
+              );
+              barStyle = isToday ? styles.barToday : styles.barPast;
+            }
+            return (
+              <View key={day.dayKey} style={styles.barColumn}>
+                <View style={[styles.barFill, barStyle, { height: barHeight }]} />
+                <View style={styles.axisDot} />
+              </View>
             );
-            barStyle = isToday ? styles.barToday : styles.barPast;
-          }
-          return (
-            <View key={day.dayKey} style={styles.barColumn}>
-              <View style={[styles.barFill, barStyle, { height: barHeight }]} />
-            </View>
-          );
-        })}
+          })}
+        </View>
       </View>
       <Text
         style={styles.total}
         numberOfLines={1}
         adjustsFontSizeToFit
-        minimumFontScale={0.7}
+        minimumFontScale={0.6}
       >
         {total}
       </Text>
@@ -83,11 +96,19 @@ export function ReadingTimeCard({ days, todayKey, totalActiveSeconds }: ReadingT
 }
 
 const styles = StyleSheet.create({
-  title: {
-    color: cardColors.primary,
-    fontSize: 17,
-    fontWeight: '600',
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 12,
+  },
+  title: {
+    flex: 1,
+    color: cardColors.primary,
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  chart: {
+    height: CHART_HEIGHT + AXIS_DOT_SIZE + 8,
   },
   barsRow: {
     flexDirection: 'row',
@@ -114,11 +135,19 @@ const styles = StyleSheet.create({
   barZero: {
     backgroundColor: PlatformColor('tertiarySystemFill'),
   },
+  /** 每根柱子下方的 x 轴小圆点。 */
+  axisDot: {
+    width: AXIS_DOT_SIZE,
+    height: AXIS_DOT_SIZE,
+    borderRadius: AXIS_DOT_SIZE / 2,
+    backgroundColor: PlatformColor('tertiarySystemFill'),
+    marginTop: 8,
+  },
   total: {
     color: cardColors.primary,
-    fontSize: 24,
-    fontWeight: '600',
+    fontSize: 26,
+    fontWeight: '700',
     letterSpacing: -0.4,
-    marginTop: 12,
+    marginTop: 10,
   },
 });

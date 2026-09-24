@@ -71,6 +71,28 @@ export const zhHans = {
     todaySummaryExcerpts: (count: number) => `今天你记录了 ${count} 条摘录。`,
     todaySummaryDuration: (duration: string) => `今天你已阅读${duration}。`,
     todaySummaryZero: '开始阅读后，这里会显示你今天的阅读数据。',
+    /**
+     * Data Tab 视觉稿还原：今日阅读主卡状态词（纯时长档位，无评分无评价）。
+     * 0 秒 → todayStatusZero；(0, 60) 秒 → todayStatusJustStarted；
+     * [60, 1800) 秒 → todayStatusSteady；>= 1800 秒 → todayStatusDeep。
+     */
+    todayStatusZero: '今天还没读',
+    todayStatusJustStarted: '刚开始',
+    todayStatusSteady: '稳步进行',
+    todayStatusDeep: '沉浸其中',
+    /** 主卡三行指标标签（配色点）：时长 / 字数 / 摘录。 */
+    todayMetricDuration: '时长',
+    todayMetricChars: '字数',
+    todayMetricExcerpts: '摘录',
+    todaySummaryCharsAndExcerpts: (chars: number, count: number) =>
+      `今天你已经阅读了 ${chars} 字，并记录了 ${count} 条摘录。`,
+    /** 摘要 section 右侧链接（详情页未实现：纯展示，不可点）。 */
+    showAll: '全部显示',
+    /** 阅读节奏卡加粗结论（“最近 7 天”与界面 section 文案对齐）。 */
+    rhythmSummaryRecent: (days: number) => `最近 7 天，你有 ${days} 天进行了阅读。`,
+    totalExcerptLabel: '累计摘录',
+    /** dayKey → 周几：new Date(y, m - 1, d).getDay() 取下标。 */
+    weekdayNames: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
     last7Days: '最近 7 天',
     totalReadingTime: '阅读时长',
     readingSpeed: '阅读速度',

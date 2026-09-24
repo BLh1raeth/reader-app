@@ -1,4 +1,6 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { PlatformColor, StyleSheet, Text, View } from 'react-native';
+import { SymbolView } from 'expo-symbols';
+import { Circle, G, Svg } from 'react-native-svg';
 
 import { tokens } from '../../../design-system/tokens';
 import { uiText } from '../../../localization';
@@ -13,28 +15,54 @@ type TodayReadingCardProps = {
   forwardCharacters: number | null;
   /** summary.todayExcerptCount；null = 未加载，显示占位。 */
   excerptCount: number | null;
+  /** 最近 7 个 local day 中 activeSeconds > 0 的天数；null = 未加载。 */
+  activeDays7: number | null;
 };
 
+const RING_SIZE = 148;
+const RING_STROKE = 18;
+const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+/** 三段弧之间的间隙（px），模仿视觉稿圆环色段的断开感。 */
+const ARC_GAP = 6;
+/** 弧段颜色与左侧三行色点一一对应：时长蓝 / 字数青 / 摘录橙。 */
+const ARC_COLORS = [cardColors.secondary, cardColors.tertiary, cardColors.primary];
+
 /**
- * Data Tab Core B.3：今日阅读主卡（页面唯一的视觉中心）。
+ * 今日阅读主卡（视觉稿还原版）。
  *
- * 只展示真实发生的数据：今日阅读时长（最大主值）、今日阅读字数、
- * 今日摘录数。没有目标完成率、没有评分、没有百分制。
+ * 左：状态词（纯时长档位）+ 三行色点指标（时长蓝 / 字数青 / 摘录橙）；
+ * 右：7 天活跃度圆环——填充比例 = 最近 7 天有阅读的天数 / 7，
+ * 三色弧段均分填充部分（与左侧三行颜色对应），中心显示 “X/7 天”。
+ * 底部一句 deterministic 事实型摘要：
+ * - 字数 > 0 且摘录 > 0 → “今天你已经阅读了 X 字，并记录了 Y 条摘录。”
+ * - 其余沿用 B.3 四条规则（0 秒 / 有字 / 有摘录 / 只有时长）。
  *
- * 底部一句 deterministic 事实型摘要（无价值判断、无 AI）：
- * - 有时长且有字数 → “今天你已经阅读了 X 字。”
- * - 有时长、有摘录、无字数 → “今天你记录了 X 条摘录。”
- * - 有时长、无字数无摘录 → “今天你已阅读 X 分钟。”
- * - 今日 0 秒 → “开始阅读后，这里会显示你今天的阅读数据。”
- *
- * zero state 完整显示 0 分钟 / 0 字 / 0 条，不留空。
+ * chevron 为纯装饰（详情页未实现，卡片不可点），与 DataCard 注释一致。
+ * zero state 完整显示 0 分钟 / 0 字 / 0 条；圆环全灰、中心 0/7 天。
  */
 export function TodayReadingCard({
   activeSeconds,
   forwardCharacters,
   excerptCount,
+  activeDays7,
 }: TodayReadingCardProps) {
-  const loaded = activeSeconds !== null && forwardCharacters !== null && excerptCount !== null;
+  const loaded =
+    activeSeconds !== null &&
+    forwardCharacters !== null &&
+    excerptCount !== null &&
+    activeDays7 !== null;
+
+  const statusText =
+    activeSeconds === null
+      ? '—'
+      : activeSeconds === 0
+        ? uiText.data.todayStatusZero
+        : activeSeconds < 60
+          ? uiText.data.todayStatusJustStarted
+          : activeSeconds < 1800
+            ? uiText.data.todayStatusSteady
+            : uiText.data.todayStatusDeep;
 
   const durationText = activeSeconds === null ? '—' : formatDuration(activeSeconds);
   const charsText =
@@ -45,51 +73,105 @@ export function TodayReadingCard({
     ? '—'
     : activeSeconds === 0
       ? uiText.data.todaySummaryZero
-      : forwardCharacters > 0
-        ? uiText.data.todaySummaryChars(forwardCharacters)
-        : excerptCount > 0
-          ? uiText.data.todaySummaryExcerpts(excerptCount)
-          : uiText.data.todaySummaryDuration(durationText);
+      : forwardCharacters > 0 && excerptCount > 0
+        ? uiText.data.todaySummaryCharsAndExcerpts(forwardCharacters, excerptCount)
+        : forwardCharacters > 0
+          ? uiText.data.todaySummaryChars(forwardCharacters)
+          : excerptCount > 0
+            ? uiText.data.todaySummaryExcerpts(excerptCount)
+            : uiText.data.todaySummaryDuration(durationText);
+
+  const fraction = activeDays7 === null ? 0 : Math.min(1, Math.max(0, activeDays7 / 7));
+
+  const a11y =
+    `今日阅读：${statusText}，时长${durationText}，字数${charsText}，摘录${excerptText}。` +
+    (activeDays7 === null ? '' : `最近 7 天有 ${activeDays7} 天进行了阅读。`) +
+    summaryText;
 
   return (
-    <DataCard
-      accessible
-      accessibilityLabel={`今日阅读：今天阅读${durationText}，阅读${charsText}，摘录${excerptText}。${summaryText}`}
-      style={styles.card}
-    >
-      <Text style={styles.title}>{uiText.data.todayReadingTitle}</Text>
+    <DataCard accessible accessibilityLabel={a11y} style={styles.card}>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>{uiText.data.todayReadingTitle}</Text>
+        <SymbolView
+          name="chevron.right"
+          size={15}
+          tintColor={tokens.colors.tertiaryLabel}
+          weight="semibold"
+        />
+      </View>
 
-      <Text
-        style={styles.bigValue}
-        numberOfLines={1}
-        adjustsFontSizeToFit
-        minimumFontScale={0.7}
-      >
-        {durationText}
-      </Text>
-
-      <View style={styles.auxRow}>
-        <View style={styles.auxCol}>
-          <Text style={styles.auxLabel}>{uiText.data.todayCharsLabel}</Text>
+      <View style={styles.bodyRow}>
+        <View style={styles.leftCol}>
           <Text
-            style={styles.auxCharsValue}
+            style={styles.status}
             numberOfLines={1}
             adjustsFontSizeToFit
             minimumFontScale={0.6}
           >
-            {charsText}
+            {statusText}
           </Text>
+
+          <View style={styles.metricRow} accessible={false}>
+            <View style={[styles.dot, { backgroundColor: cardColors.primary }]} />
+            <Text style={styles.metricText}>
+              {uiText.data.todayMetricDuration}：{durationText}
+            </Text>
+          </View>
+          <View style={styles.metricRow} accessible={false}>
+            <View style={[styles.dot, { backgroundColor: cardColors.secondary }]} />
+            <Text style={styles.metricText}>
+              {uiText.data.todayMetricChars}：{charsText}
+            </Text>
+          </View>
+          <View style={styles.metricRow} accessible={false}>
+            <View style={[styles.dot, { backgroundColor: cardColors.tertiary }]} />
+            <Text style={styles.metricText}>
+              {uiText.data.todayMetricExcerpts}：{excerptText}
+            </Text>
+          </View>
         </View>
-        <View style={styles.auxCol}>
-          <Text style={styles.auxLabel}>{uiText.data.excerpts}</Text>
-          <Text
-            style={styles.auxValue}
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            minimumFontScale={0.6}
-          >
-            {excerptText}
-          </Text>
+
+        <View style={styles.ringWrap} accessible={false}>
+          <Svg width={RING_SIZE} height={RING_SIZE}>
+            <Circle
+              cx={RING_SIZE / 2}
+              cy={RING_SIZE / 2}
+              r={RING_RADIUS}
+              stroke={PlatformColor('tertiarySystemFill')}
+              strokeWidth={RING_STROKE}
+              fill="none"
+            />
+            <G rotation={-90} origin={`${RING_SIZE / 2}, ${RING_SIZE / 2}`}>
+              {ARC_COLORS.map((color, i) => {
+                const start = (i * fraction) / ARC_COLORS.length;
+                const length = Math.max(
+                  0,
+                  (fraction / ARC_COLORS.length) * RING_CIRCUMFERENCE - ARC_GAP,
+                );
+                if (length <= 0) return null;
+                return (
+                  <Circle
+                    key={i}
+                    cx={RING_SIZE / 2}
+                    cy={RING_SIZE / 2}
+                    r={RING_RADIUS}
+                    stroke={color}
+                    strokeWidth={RING_STROKE}
+                    strokeLinecap="round"
+                    fill="none"
+                    strokeDasharray={`${length} ${RING_CIRCUMFERENCE - length}`}
+                    strokeDashoffset={-start * RING_CIRCUMFERENCE}
+                  />
+                );
+              })}
+            </G>
+          </Svg>
+          <View style={styles.ringCenter}>
+            <Text style={styles.ringFraction}>
+              {activeDays7 === null ? '—' : `${activeDays7}/7`}
+            </Text>
+            <Text style={styles.ringUnit}>{uiText.data.dayUnit}</Text>
+          </View>
         </View>
       </View>
 
@@ -104,54 +186,81 @@ const styles = StyleSheet.create({
   card: {
     padding: 20,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
   title: {
+    flex: 1,
     color: cardColors.primary,
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  bodyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  leftCol: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  /** 状态词：卡内最大字，黑体粗。 */
+  status: {
+    color: tokens.colors.label,
+    fontSize: 40,
+    fontWeight: '800',
+    letterSpacing: -0.8,
+    marginBottom: 12,
+  },
+  metricRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  dot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    marginRight: 10,
+  },
+  metricText: {
+    color: tokens.colors.label,
     fontSize: 18,
     fontWeight: '600',
-    marginBottom: 10,
   },
-  /** 今日阅读时长：卡内最大数字，主蓝色。 */
-  bigValue: {
-    color: cardColors.primary,
-    fontSize: 34,
-    fontWeight: '700',
-    letterSpacing: -0.6,
-    lineHeight: 40,
+  ringWrap: {
+    width: RING_SIZE,
+    height: RING_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  auxRow: {
-    flexDirection: 'row',
-    marginTop: 18,
+  ringCenter: {
+    position: 'absolute',
+    alignItems: 'center',
   },
-  auxCol: {
-    flex: 1,
-  },
-  auxLabel: {
-    color: tokens.colors.secondaryLabel,
-    fontSize: 13,
-    marginBottom: 4,
-  },
-  /** 今日阅读字数：偏青（主色同系），是本卡第二视觉点。 */
-  auxCharsValue: {
-    color: cardColors.secondary,
-    fontSize: 22,
-    fontWeight: '600',
-    letterSpacing: -0.3,
-  },
-  /** 今日摘录：中性色，不抢视觉。 */
-  auxValue: {
+  ringFraction: {
     color: tokens.colors.label,
-    fontSize: 22,
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: -0.6,
+  },
+  ringUnit: {
+    color: tokens.colors.label,
+    fontSize: 16,
     fontWeight: '600',
-    letterSpacing: -0.3,
+    marginTop: 2,
   },
   divider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: tokens.colors.separator,
-    marginVertical: 14,
+    marginTop: 16,
+    marginBottom: 14,
   },
   summary: {
     color: tokens.colors.label,
-    fontSize: 15,
-    lineHeight: 21,
+    fontSize: 17,
+    lineHeight: 24,
+    fontWeight: '500',
   },
 });
