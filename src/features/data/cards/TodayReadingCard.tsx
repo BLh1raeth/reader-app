@@ -109,8 +109,9 @@ function AnimatedRing({
 /**
  * 今日阅读主卡（2026-09-24 视觉规范）。
  *
- * 左：小标题“今日阅读”（#111111 18pt / 700）→ 状态大字（34pt / 800）→
- * 三行灰阶指标点（时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73，与三环灰度对应）；
+ * 左：小标题“今日阅读”（#111111 18pt / 700）→
+ * 三行灰阶指标点（时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73，与三环灰度对应），
+ * 其中时长行数值放大到 26pt / 800，作为卡内视觉重心；
  * 右：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
  * 内环摘录数量（#6E6E73）；本轮固定演示比例 65% / 40% / 80%，中心文字暂空；
  * 每次切回数据页三环都从起点同步扫到目标进度
@@ -129,24 +130,13 @@ export function TodayReadingCard({
 }: TodayReadingCardProps) {
   const theme = useDataTheme();
 
-  const statusText =
-    activeSeconds === null
-      ? '—'
-      : activeSeconds === 0
-        ? uiText.data.todayStatusZero
-        : activeSeconds < 60
-          ? uiText.data.todayStatusJustStarted
-          : activeSeconds < 1800
-            ? uiText.data.todayStatusSteady
-            : uiText.data.todayStatusDeep;
-
   const durationText = activeSeconds === null ? '—' : formatDuration(activeSeconds);
   const charsText =
     forwardCharacters === null ? '—' : `${forwardCharacters}${uiText.data.characterUnit}`;
   const excerptText = excerptCount === null ? '—' : `${excerptCount}${uiText.data.excerptUnit}`;
 
   const a11y =
-    `今日阅读：${statusText}，时长${durationText}，字数${charsText}，摘录${excerptText}。` +
+    `今日阅读：时长${durationText}，字数${charsText}，摘录${excerptText}。` +
     (activeDays7 === null ? '' : `最近 7 天有 ${activeDays7} 天进行了阅读。`);
 
   return (
@@ -163,20 +153,16 @@ export function TodayReadingCard({
 
       <View style={styles.bodyRow}>
         <View style={styles.leftCol}>
-          <Text
-            style={[styles.status, { color: theme.primaryText }]}
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            minimumFontScale={0.6}
-          >
-            {statusText}
-          </Text>
-
           <View style={styles.metricRow} accessible={false}>
             <View style={[styles.dot, { backgroundColor: '#111111' }]} />
-            <Text style={[styles.metricName, { color: theme.secondaryText }]}>
+            <Text
+              style={[styles.durationName, { color: theme.secondaryText }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+            >
               {uiText.data.todayMetricDuration}：
-              <Text style={[styles.metricValue, { color: theme.primaryText }]}>
+              <Text style={[styles.durationValue, { color: theme.primaryText }]}>
                 {durationText}
               </Text>
             </Text>
@@ -240,13 +226,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingRight: 8,
   },
-  /** 状态大字：卡内最大字，34pt / 800。 */
-  status: {
-    fontSize: 34,
-    fontWeight: '800',
-    letterSpacing: -0.7,
-    marginBottom: 14,
-  },
   metricRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -267,6 +246,16 @@ const styles = StyleSheet.create({
   metricValue: {
     fontSize: 17,
     fontWeight: '700',
+  },
+  /** 时长行：卡内视觉重心，名称 17pt，数值放大到 26pt / 800。 */
+  durationName: {
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  durationValue: {
+    fontSize: 26,
+    fontWeight: '800',
+    letterSpacing: -0.5,
   },
   ringWrap: {
     width: RING_SIZE,
