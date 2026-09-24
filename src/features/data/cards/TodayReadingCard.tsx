@@ -39,8 +39,7 @@ const DEMO_RINGS = [
  * 右：三同心圆环（B.6 完整保留，不动）；
  * 右：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
  * 内环摘录数量（#6E6E73）；本轮固定演示比例 65% / 40% / 80%，中心文字暂空；
- * 真实数据与每日目标完成率下一轮 UI 稳定后再接入；
- * 底部分割线 + deterministic 事实型摘要句。
+ * 真实数据与每日目标完成率下一轮 UI 稳定后再接入。
  *
  * 所有数字来自 Analytics 实时数据，不写死。
  * chevron 为纯装饰（详情页未实现，卡片不可点）。
@@ -53,12 +52,6 @@ export function TodayReadingCard({
   activeDays7,
 }: TodayReadingCardProps) {
   const theme = useDataTheme();
-
-  const loaded =
-    activeSeconds !== null &&
-    forwardCharacters !== null &&
-    excerptCount !== null &&
-    activeDays7 !== null;
 
   const statusText =
     activeSeconds === null
@@ -76,22 +69,9 @@ export function TodayReadingCard({
     forwardCharacters === null ? '—' : `${forwardCharacters}${uiText.data.characterUnit}`;
   const excerptText = excerptCount === null ? '—' : `${excerptCount}${uiText.data.excerptUnit}`;
 
-  const summaryText = !loaded
-    ? '—'
-    : activeSeconds === 0
-      ? uiText.data.todaySummaryZero
-      : forwardCharacters > 0 && excerptCount > 0
-        ? uiText.data.todaySummaryCharsAndExcerpts(forwardCharacters, excerptCount)
-        : forwardCharacters > 0
-          ? uiText.data.todaySummaryChars(forwardCharacters)
-          : excerptCount > 0
-            ? uiText.data.todaySummaryExcerpts(excerptCount)
-            : uiText.data.todaySummaryDuration(durationText);
-
   const a11y =
     `今日阅读：${statusText}，时长${durationText}，字数${charsText}，摘录${excerptText}。` +
-    (activeDays7 === null ? '' : `最近 7 天有 ${activeDays7} 天进行了阅读。`) +
-    summaryText;
+    (activeDays7 === null ? '' : `最近 7 天有 ${activeDays7} 天进行了阅读。`);
 
   return (
     <DataCard accessible accessibilityLabel={a11y}>
@@ -182,10 +162,6 @@ export function TodayReadingCard({
           </Svg>
         </View>
       </View>
-
-      <View style={[styles.divider, { backgroundColor: theme.divider }]} />
-
-      <Text style={[styles.summary, { color: theme.primaryText }]}>{summaryText}</Text>
     </DataCard>
   );
 }
@@ -256,16 +232,5 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     marginTop: 2,
-  },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    marginTop: 18,
-    marginBottom: 14,
-  },
-  /** 底部摘要：真正的 secondary summary，15pt / 500。 */
-  summary: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '500',
   },
 });
