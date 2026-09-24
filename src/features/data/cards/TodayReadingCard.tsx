@@ -43,8 +43,6 @@ type AnimatedRingProps = {
   /** 目标进度 0–1（本轮为 DEMO_RINGS 的固定演示比例）。 */
   fraction: number;
   trackColor: string;
-  /** 入场延迟 ms：三环错峰 0 / 150 / 300。 */
-  delay: number;
 };
 
 /**
@@ -60,7 +58,6 @@ function AnimatedRing({
   color,
   fraction,
   trackColor,
-  delay,
 }: AnimatedRingProps) {
   const center = size / 2;
   const circumference = 2 * Math.PI * radius;
@@ -68,19 +65,20 @@ function AnimatedRing({
 
   useFocusEffect(
     useCallback(() => {
-      // 每次回到数据页都从起点重播：先复位到不可见，再扫到目标进度。
-      // 切走时 cleanup 停掉动画，下次聚焦重新来过，不会有跳变。
-      offset.setValue(circumference);
       const animation = Animated.timing(offset, {
         toValue: circumference * (1 - fraction),
         duration: 900,
-        delay,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: false,
       });
       animation.start();
-      return () => animation.stop();
-    }, [circumference, fraction, delay, offset]),
+      return () => {
+        animation.stop();
+        // 切走时复位到起点：下次切回首帧就是不可见状态，
+        // 不会先闪出完整圆环再消失重播。
+        offset.setValue(circumference);
+      };
+    }, [circumference, fraction, offset]),
   );
 
   return (
@@ -115,8 +113,8 @@ function AnimatedRing({
  * 三行灰阶指标点（时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73，与三环灰度对应）；
  * 右：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
  * 内环摘录数量（#6E6E73）；本轮固定演示比例 65% / 40% / 80%，中心文字暂空；
- * 每次切回数据页三环都从起点扫到目标进度
- * （Apple 健康式入场动画，错峰 150ms）；
+ * 每次切回数据页三环都从起点同步扫到目标进度
+ * （Apple 健康式入场动画）；
  * 真实数据与每日目标完成率下一轮 UI 稳定后再接入。
  *
  * 所有数字来自 Analytics 实时数据，不写死。
@@ -205,7 +203,7 @@ export function TodayReadingCard({
 
         <View style={styles.ringWrap} accessible={false}>
           <Svg width={RING_SIZE} height={RING_SIZE}>
-            {DEMO_RINGS.map((ring, index) => (
+            {DEMO_RINGS.map((ring) => (
               <AnimatedRing
                 key={ring.color}
                 size={RING_SIZE}
@@ -214,7 +212,6 @@ export function TodayReadingCard({
                 color={ring.color}
                 fraction={ring.fraction}
                 trackColor={theme.ringTrack}
-                delay={index * 150}
               />
             ))}
           </Svg>
