@@ -110,10 +110,10 @@ function AnimatedRing({
  *
  * “今日阅读”标题已移到卡片外，由 DataScreen 按 section 标题（21pt / 800）
  * 统一渲染，与“最近 7 天”一致；卡内只剩内容区：
- * 左：三行灰阶指标点（时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73，与三环灰度对应），
- * 其中时长行整行放大到 26pt，作为卡内视觉重心；
- * 右：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
+ * 左：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
  * 内环摘录数量（#6E6E73）；本轮固定演示比例 65% / 40% / 80%，中心文字暂空；
+ * 右：三行灰阶指标点（时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73，与三环灰度对应），
+ * 其中时长行整行放大到 26pt，作为卡内视觉重心；
  * 每次切回数据页三环都从起点同步扫到目标进度
  * （Apple 健康式入场动画）；
  * 真实数据与每日目标完成率下一轮 UI 稳定后再接入。
@@ -141,7 +141,23 @@ export function TodayReadingCard({
   return (
     <DataCard accessible accessibilityLabel={a11y}>
       <View style={styles.bodyRow}>
-        <View style={styles.leftCol}>
+        <View style={styles.ringWrap} accessible={false}>
+          <Svg width={RING_SIZE} height={RING_SIZE}>
+            {DEMO_RINGS.map((ring) => (
+              <AnimatedRing
+                key={ring.color}
+                size={RING_SIZE}
+                radius={ring.radius}
+                strokeWidth={RING_STROKE}
+                color={ring.color}
+                fraction={ring.fraction}
+                trackColor={theme.ringTrack}
+              />
+            ))}
+          </Svg>
+        </View>
+
+        <View style={styles.textCol}>
           <View style={styles.metricRow} accessible={false}>
             <View style={[styles.durationDot, { backgroundColor: '#111111' }]} />
             <Text
@@ -175,22 +191,6 @@ export function TodayReadingCard({
             </Text>
           </View>
         </View>
-
-        <View style={styles.ringWrap} accessible={false}>
-          <Svg width={RING_SIZE} height={RING_SIZE}>
-            {DEMO_RINGS.map((ring) => (
-              <AnimatedRing
-                key={ring.color}
-                size={RING_SIZE}
-                radius={ring.radius}
-                strokeWidth={RING_STROKE}
-                color={ring.color}
-                fraction={ring.fraction}
-                trackColor={theme.ringTrack}
-              />
-            ))}
-          </Svg>
-        </View>
       </View>
     </DataCard>
   );
@@ -201,9 +201,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  leftCol: {
+  textCol: {
     flex: 1,
-    paddingRight: 8,
+    paddingLeft: 8,
   },
   metricRow: {
     flexDirection: 'row',
