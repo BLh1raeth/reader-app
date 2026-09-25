@@ -112,7 +112,8 @@ function AnimatedRing({
  * 统一渲染，与“最近 7 天”一致；卡内只剩内容区：
  * 左：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
  * 内环摘录数量（#6E6E73）；本轮固定演示比例 65% / 40% / 80%，中心文字暂空；
- * 右：三行灰阶指标点（时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73，与三环灰度对应），
+ * 右：三行指标文字，名称与数值同色，颜色与三环一一对应
+ * （时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73）；
  * 其中时长行整行放大到 26pt，作为卡内视觉重心；
  * 每次切回数据页三环都从起点同步扫到目标进度
  * （Apple 健康式入场动画）；
@@ -159,33 +160,30 @@ export function TodayReadingCard({
 
         <View style={styles.textCol}>
           <View style={styles.metricRow} accessible={false}>
-            <View style={[styles.durationDot, { backgroundColor: '#111111' }]} />
             <Text
-              style={[styles.durationName, { color: theme.secondaryText }]}
+              style={[styles.durationName, { color: DEMO_RINGS[0].color }]}
               numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.6}
             >
               {uiText.data.todayMetricDuration}：
-              <Text style={[styles.durationValue, { color: theme.primaryText }]}>
+              <Text style={[styles.durationValue, { color: DEMO_RINGS[0].color }]}>
                 {durationText}
               </Text>
             </Text>
           </View>
           <View style={styles.metricRow} accessible={false}>
-            <View style={[styles.dot, { backgroundColor: '#3A3A3C' }]} />
-            <Text style={[styles.metricName, { color: theme.secondaryText }]}>
+            <Text style={[styles.metricName, { color: DEMO_RINGS[1].color }]}>
               {uiText.data.todayMetricChars}：
-              <Text style={[styles.metricValue, { color: theme.primaryText }]}>
+              <Text style={[styles.metricValue, { color: DEMO_RINGS[1].color }]}>
                 {charsText}
               </Text>
             </Text>
           </View>
           <View style={styles.metricRow} accessible={false}>
-            <View style={[styles.dot, { backgroundColor: '#6E6E73' }]} />
-            <Text style={[styles.metricName, { color: theme.secondaryText }]}>
+            <Text style={[styles.metricName, { color: DEMO_RINGS[2].color }]}>
               {uiText.data.todayMetricExcerpts}：
-              <Text style={[styles.metricValue, { color: theme.primaryText }]}>
+              <Text style={[styles.metricValue, { color: DEMO_RINGS[2].color }]}>
                 {excerptText}
               </Text>
             </Text>
@@ -210,21 +208,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-  /** 实心色点。 */
-  dot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: 10,
-  },
-  /** 时长行圆点：加大到 16，配合放大的时长行一起强调时长。 */
-  durationDot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    marginRight: 10,
-  },
-  /** 指标名称（#636366）与数值（#111111）分开着色。 */
+  /** 指标名称与数值同色，颜色取自 DEMO_RINGS（与三环一一对应）。 */
   metricName: {
     fontSize: 17,
     fontWeight: '600',
