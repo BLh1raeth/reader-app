@@ -150,16 +150,30 @@ export function normalizeAnalyticsExcerpt(
 // ---------------------------------------------------------------------------
 
 /**
- * Speed eligibility, first version: deliberately threshold-free.
- * A session contributes to speed only when it has both real active time
- * AND real forward progress. A 20s open-and-stare still counts toward
- * reading time, but not toward reading speed.
+ * Minimum active seconds for a session to count toward reading speed.
+ * Physical lower bound of genuine reading: at a brisk 600 chars/min, one
+ * phone page (~350 chars) takes ~35s to actually read. Anything much
+ * shorter carrying hundreds of characters is page-flipping to find
+ * something, not reading — without this floor a 4s/1500-char skim
+ * reports 22500 chars/min and blows up the daily chart.
+ */
+export const MIN_SPEED_ELIGIBLE_SECONDS = 30;
+
+/**
+ * Speed eligibility: a session contributes to speed only when it has real
+ * active time AND real forward progress AND enough duration to plausibly
+ * be reading rather than flipping. A 20s open-and-stare still counts
+ * toward reading time, but not toward reading speed; neither does a
+ * sub-threshold skim.
  */
 export function isSpeedEligibleSession(session: {
   activeSeconds: number;
   forwardCharacters: number;
 }): boolean {
-  return session.activeSeconds > 0 && session.forwardCharacters > 0;
+  return (
+    session.activeSeconds >= MIN_SPEED_ELIGIBLE_SECONDS &&
+    session.forwardCharacters > 0
+  );
 }
 
 /**
