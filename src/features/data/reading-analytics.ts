@@ -245,6 +245,57 @@ export function buildDailyStats(
 // ---------------------------------------------------------------------------
 
 /**
+ * Today's reading activity split into 24 device-local hour buckets [0..23].
+ *
+ * Each valid session's activeSeconds are distributed across the local hours
+ * it overlaps, proportional to wall-clock overlap (a 10:20–11:10 session
+ * contributes 40/50 of its seconds to hour 10 and 10/50 to hour 11).
+ * Sessions never cross a local day (the tracker splits at local midnight),
+ * so each session belongs to exactly one day. Rows that fail validation are
+ * skipped exactly like everywhere else, so the 24 buckets always sum to the
+ * day's activeSeconds total.
+ *
+ * Pure: `nowMs` pins "now" for still-open (endedAt === null) sessions.
+ */
+export function bucketActiveSecondsByLocalHour(
+  rows: ReadonlyArray<ReadingAnalyticsSessionRow>,
+  todayKey: string,
+  nowMs: number,
+): number[] {
+  const buckets = new Array<number>(24).fill(0);
+  for (const row of rows) {
+    const session = normalizeAnalyticsSession(row);
+    if (session === null || session.dayKey !== todayKey) continue;
+    if (session.activeSeconds <= 0) continue;
+    const startMs = Date.parse(row.startedAt);
+    if (!Number.isFinite(startMs)) continue;
+    const endMs = row.endedAt === null ? nowMs : Date.parse(row.endedAt);
+    if (!Number.isFinite(endMs)) continue;
+    const clampedEnd = Math.max(endMs, startMs);
+    const wallMs = clampedEnd - startMs;
+    if (wallMs <= 0) {
+      buckets[new Date(startMs).getHours()] += session.activeSeconds;
+      continue;
+    }
+    let cursor = startMs;
+    while (cursor < clampedEnd) {
+      const cursorDate = new Date(cursor);
+      const hour = cursorDate.getHours();
+      const hourStart = new Date(
+        cursorDate.getFullYear(),
+        cursorDate.getMonth(),
+        cursorDate.getDate(),
+        hour,
+      ).getTime();
+      const segmentEnd = Math.min(hourStart + 3_600_000, clampedEnd);
+      buckets[hour] += (session.activeSeconds * (segmentEnd - cursor)) / wallMs;
+      cursor = segmentEnd;
+    }
+  }
+  return buckets;
+}
+
+/**
  * Reading-day definition, v1: a local calendar day with aggregate
  * activeSeconds > 0 is a reading day. No minute thresholds — those belong
  * to a future goals system, not to Core A.

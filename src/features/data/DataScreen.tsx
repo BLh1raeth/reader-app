@@ -14,6 +14,7 @@ import { AccumulationCard } from './cards/AccumulationCard';
 import {
   getDailyReadingStats,
   getReadingAnalyticsSummary,
+  getTodayHourlyActiveSeconds,
 } from './reading-analytics-service';
 import type {
   DailyReadingStats,
@@ -24,6 +25,8 @@ type DataLoadResult = {
   summary: ReadingAnalyticsSummary;
   last7Days: DailyReadingStats[];
   todayKey: string;
+  /** 今天 24 小时 activeSeconds 分桶（0..23，零填充）。 */
+  hourlyActiveSeconds: number[];
 };
 
 const CARD_GAP = 12;
@@ -58,11 +61,12 @@ export default function DataScreen() {
     try {
       const todayKey = todayLocalDayKey();
       const startDay = addLocalCalendarDays(todayKey, -6);
-      const [summary, last7Days] = await Promise.all([
+      const [summary, last7Days, hourlyActiveSeconds] = await Promise.all([
         getReadingAnalyticsSummary(),
         getDailyReadingStats({ startDay, endDay: todayKey }),
+        getTodayHourlyActiveSeconds(),
       ]);
-      setData({ summary, last7Days, todayKey });
+      setData({ summary, last7Days, todayKey, hourlyActiveSeconds });
       setLoadFailed(false);
     } catch (error) {
       if (__DEV__) {
@@ -124,9 +128,8 @@ export default function DataScreen() {
         <View style={styles.cardRow}>
           <View style={styles.cardCell}>
             <ReadingTimeCard
-              days={last7Days}
-              todayKey={todayKey}
-              totalActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
+              hourlyActiveSeconds={data?.hourlyActiveSeconds ?? null}
+              todayActiveSeconds={summary?.todayActiveSeconds ?? null}
               style={styles.halfCard}
             />
           </View>

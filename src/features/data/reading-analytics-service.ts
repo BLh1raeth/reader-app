@@ -18,6 +18,7 @@ import { isValidDayKey, todayLocalDayKey } from '../../shared/time/local-day';
 import { readingAnalyticsRepository } from './reading-analytics-repository';
 import {
   analyzeReadingData,
+  bucketActiveSecondsByLocalHour,
   buildDailyStats,
   normalizeAnalyticsExcerpt,
   normalizeAnalyticsSession,
@@ -85,4 +86,18 @@ export async function getDailyReadingStats(
   }
   const { sessions, excerpts } = await loadNormalizedData();
   return buildDailyStats(sessions, excerpts, startDay, endDay);
+}
+
+/**
+ * Today's active seconds bucketed into 24 device-local hours [0..23].
+ * Zero-filled; sums to `getReadingAnalyticsSummary().todayActiveSeconds`
+ * for the same day (same validation, same session set).
+ * Pass `now` only to pin "today" (tests / previews); production callers
+ * omit it and get the real device-local day.
+ */
+export async function getTodayHourlyActiveSeconds(
+  now: Date = new Date(),
+): Promise<number[]> {
+  const rows = await readingAnalyticsRepository.listSessionsForAnalytics();
+  return bucketActiveSecondsByLocalHour(rows, todayLocalDayKey(now), now.getTime());
 }

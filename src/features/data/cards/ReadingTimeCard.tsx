@@ -1,91 +1,59 @@
 import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
 import { uiText } from '../../../localization';
-import type { DailyReadingStats } from '../reading-analytics-types';
 import { DataCard } from '../DataCard';
 import { useDataTheme } from '../dataTheme';
 import { formatDuration } from '../analytics-format';
 
 type ReadingTimeCardProps = {
-  /** 最近 7 个 local calendar day（含今天），最旧 → 今天；null = 未加载。 */
-  days: DailyReadingStats[] | null;
-  /** 今天的 local day key，用于强调当天的柱子。 */
-  todayKey: string;
-  /** 7 日总量：summary.last7DaysActiveSeconds；null = 未加载。 */
-  totalActiveSeconds: number | null;
+  /** 今天 24 个设备本地小时的 activeSeconds（顺序 0..23，零填充）；null = 未加载。 */
+  hourlyActiveSeconds: number[] | null;
+  /** 今天总量：summary.todayActiveSeconds；null = 未加载。 */
+  todayActiveSeconds: number | null;
   /** 外层可覆盖 DataCard 样式（如半宽卡内边距）。 */
   style?: ViewStyle;
 };
 
 const CHART_HEIGHT = 88;
-const BAR_WIDTH = 8;
-/** 非零值最小可见高度。 */
-const MIN_VISIBLE_BAR_HEIGHT = 10;
-/** 0 秒日的极浅短柱高度：保留 7 个日期位置，不画成圆点。 */
-const EMPTY_BAR_HEIGHT = 6;
-
-/** 无障碍短标签：9月17日，不带年份噪音。 */
-function shortDateLabel(dayKey: string): string {
-  const [y, m, d] = dayKey.split('-').map(Number);
-  return `${m}月${d}日`;
-}
+const BAR_WIDTH = 4;
+/** 非零值最小可见高度（细柱）。 */
+const MIN_VISIBLE_BAR_HEIGHT = 8;
+/** X 轴刻度小时：与淡网格线对齐。 */
+const AXIS_HOURS = [0, 6, 12, 18];
 
 /**
- * “阅读时长”半宽卡（B.6 黑白极简）。
+ * “阅读时长”半宽卡（B.6 黑白极简，模仿 iOS 健身“步数”卡）。
  *
- * 7 日圆角柱：今天 #242424，其他有数据的日期 #8E8E93，
- * 0 秒日显示 #E5E5EA 极浅短柱（保留 7 个日期位置）；底部 7 日总量黑色大数字。
- * 所有柱子高度来自真实 activeSeconds，不写死。
+ * 标题 → “今天” → 今日总量大数字 → 24 小时细柱（有阅读的小时 #242424，
+ * 无数据的小时留空，只剩 0/6/12/18 时淡网格线 + 刻度）。
+ * 所有柱子高度来自真实 session 数据按小时分桶，不写死。
  */
-export function ReadingTimeCard({ days, todayKey, totalActiveSeconds, style }: ReadingTimeCardProps) {
+export function ReadingTimeCard({
+  hourlyActiveSeconds,
+  todayActiveSeconds,
+  style,
+}: ReadingTimeCardProps) {
   const theme = useDataTheme();
-  const list = days ?? [];
-  const maxSeconds = Math.max(0, ...list.map((d) => d.activeSeconds));
-  const total = totalActiveSeconds === null ? '—' : formatDuration(totalActiveSeconds);
+  const buckets = hourlyActiveSeconds ?? new Array<number>(24).fill(0);
+  const maxSeconds = Math.max(0, ...buckets);
+  const total = todayActiveSeconds === null ? '—' : formatDuration(todayActiveSeconds);
 
-  const accessibilityParts = list
-    .map((d) => `${shortDateLabel(d.dayKey)}${formatDuration(d.activeSeconds)}`)
+  const activeHours = buckets
+    .map((seconds, hour) => ({ hour, seconds }))
+    .filter(({ seconds }) => seconds > 0)
+    .map(({ hour, seconds }) => `${hour}时${formatDuration(Math.round(seconds))}`)
     .join('，');
 
+  const accessibilityLabel =
+    `${uiText.data.totalReadingTime}，${uiText.data.today}总计${total}。` +
+    (activeHours.length > 0 ? `活跃时段：${activeHours}。` : '今天还没有阅读记录。');
+
   return (
-    <DataCard
-      accessible
-      accessibilityLabel={`${uiText.data.totalReadingTime}，过去 7 天总计${total}。${accessibilityParts}`}
-      style={style}
-    >
-      <Text style={[styles.title, { color: theme.primaryText }]}>{uiText.data.totalReadingTime}</Text>
-      <View style={styles.chart} accessible={false}>
-        <View style={styles.barsRow}>
-          {list.map((day) => {
-            const isToday = day.dayKey === todayKey;
-            const hasData = day.activeSeconds > 0 && maxSeconds > 0;
-            const barHeight = hasData
-              ? Math.max(
-                  MIN_VISIBLE_BAR_HEIGHT,
-                  Math.round((day.activeSeconds / maxSeconds) * CHART_HEIGHT),
-                )
-              : EMPTY_BAR_HEIGHT;
-            const barColor = !hasData
-              ? theme.chartEmpty
-              : isToday
-                ? theme.chartPrimary
-                : theme.tertiaryText;
-            return (
-              <View key={day.dayKey} style={styles.barColumn}>
-                <View
-                  style={[
-                    styles.barFill,
-                    {
-                      height: barHeight,
-                      backgroundColor: barColor,
-                    },
-                  ]}
-                />
-              </View>
-            );
-          })}
-        </View>
-      </View>
+    <DataCard accessible accessibilityLabel={accessibilityLabel} style={style}>
+      <Text style={[styles.title, { color: theme.primaryText }]}>
+        {uiText.data.totalReadingTime}
+      </Text>
+      <Text style={[styles.today, { color: theme.secondaryText }]}>{uiText.data.today}</Text>
       <Text
         style={[styles.total, { color: theme.primaryText }]}
         numberOfLines={1}
@@ -94,6 +62,54 @@ export function ReadingTimeCard({ days, todayKey, totalActiveSeconds, style }: R
       >
         {total}
       </Text>
+
+      <View style={styles.chart} accessible={false}>
+        {AXIS_HOURS.map((hour) => (
+          <View
+            key={hour}
+            style={[
+              styles.gridLine,
+              { left: `${(hour / 24) * 100}%`, backgroundColor: theme.chartEmpty },
+            ]}
+          />
+        ))}
+        <View style={styles.barsRow}>
+          {buckets.map((seconds, hour) => {
+            const hasData = seconds > 0 && maxSeconds > 0;
+            const barHeight = hasData
+              ? Math.max(
+                  MIN_VISIBLE_BAR_HEIGHT,
+                  Math.round((seconds / maxSeconds) * CHART_HEIGHT),
+                )
+              : 0;
+            return (
+              <View key={hour} style={styles.barColumn}>
+                {hasData ? (
+                  <View
+                    style={[
+                      styles.barFill,
+                      { height: barHeight, backgroundColor: theme.chartPrimary },
+                    ]}
+                  />
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
+      </View>
+      <View style={styles.axisRow} accessible={false}>
+        {AXIS_HOURS.map((hour) => (
+          <Text
+            key={hour}
+            style={[
+              styles.axisLabel,
+              { left: `${(hour / 24) * 100}%`, color: theme.secondaryText },
+            ]}
+          >
+            {hour}时
+          </Text>
+        ))}
+      </View>
     </DataCard>
   );
 }
@@ -102,15 +118,31 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '700',
-    marginBottom: 14,
+    marginBottom: 6,
+  },
+  today: {
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  total: {
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: -0.4,
+    marginBottom: 12,
   },
   chart: {
     height: CHART_HEIGHT,
   },
+  /** 0/6/12/18 时淡竖线，贯穿图表区。 */
+  gridLine: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: StyleSheet.hairlineWidth,
+  },
   barsRow: {
     flexDirection: 'row',
-    alignItems: 'stretch',
-    gap: 6,
     height: CHART_HEIGHT,
   },
   barColumn: {
@@ -122,10 +154,12 @@ const styles = StyleSheet.create({
     width: BAR_WIDTH,
     borderRadius: BAR_WIDTH / 2,
   },
-  total: {
-    fontSize: 28,
-    fontWeight: '800',
-    letterSpacing: -0.4,
-    marginTop: 12,
+  axisRow: {
+    height: 16,
+    marginTop: 6,
+  },
+  axisLabel: {
+    position: 'absolute',
+    fontSize: 11,
   },
 });

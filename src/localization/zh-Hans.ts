@@ -95,6 +95,7 @@ export const zhHans = {
     weekdayNames: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
     last7Days: '最近 7 天',
     totalReadingTime: '阅读时长',
+    today: '今天',
     readingSpeed: '阅读速度',
     currentStreak: '连续阅读',
     totalReadingDays: '阅读天数',
