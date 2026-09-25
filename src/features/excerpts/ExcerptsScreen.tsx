@@ -47,7 +47,7 @@ const GROUP_LABELS = {
   monthTitle: uiText.excerpts.monthTitle,
 };
 
-const CELL_RADIUS = 26;
+const CELL_RADIUS = 28;
 const CONTENT_HORIZONTAL_PADDING = 20;
 const ITEM_HORIZONTAL_PADDING = 16;
 // 正文右 inset：收起态是"裸文本 + 容器硬裁"（无省略号），iOS 按像素裁剪；
