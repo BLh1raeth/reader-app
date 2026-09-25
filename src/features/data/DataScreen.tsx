@@ -33,7 +33,7 @@ const SECTION_SPACING = 24;
  * Data Tab（B.6 黑白极简视觉：#FAFAFC 底 / 白圆角卡 / 黑灰文字与图表）。
  *
  *   数据（大标题）
- *   → 今日阅读主卡（状态词 + 灰阶指标行 + 三同心圆环 + 摘要句）
+ *   → “今日阅读” section 标题 + 主卡（灰阶指标行 + 三同心圆环）
  *   → “最近 7 天” section → 阅读时长 / 阅读速度（两张半宽卡）
  *   → 阅读节奏卡（结论 + 灰阶累计；“全部显示”在卡片内部右上，纯装饰）
  *
@@ -100,6 +100,9 @@ export default function DataScreen() {
           {uiText.data.title}
         </Text>
 
+        <Text style={[styles.sectionTitle, { color: theme.primaryText }]}>
+          {uiText.data.todayReadingTitle}
+        </Text>
         <View style={styles.heroBlock}>
           <TodayReadingCard
             activeSeconds={summary?.todayActiveSeconds ?? null}

@@ -1,7 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
-import { SymbolView } from 'expo-symbols';
 import { Circle, G, Svg } from 'react-native-svg';
 
 import { uiText } from '../../../localization';
@@ -109,8 +108,9 @@ function AnimatedRing({
 /**
  * 今日阅读主卡（2026-09-24 视觉规范）。
  *
- * 左：小标题“今日阅读”（#111111 18pt / 700）→
- * 三行灰阶指标点（时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73，与三环灰度对应），
+ * “今日阅读”标题已移到卡片外，由 DataScreen 按 section 标题（21pt / 800）
+ * 统一渲染，与“最近 7 天”一致；卡内只剩内容区：
+ * 左：三行灰阶指标点（时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73，与三环灰度对应），
  * 其中时长行整行放大到 26pt，作为卡内视觉重心；
  * 右：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
  * 内环摘录数量（#6E6E73）；本轮固定演示比例 65% / 40% / 80%，中心文字暂空；
@@ -119,7 +119,6 @@ function AnimatedRing({
  * 真实数据与每日目标完成率下一轮 UI 稳定后再接入。
  *
  * 所有数字来自 Analytics 实时数据，不写死。
- * chevron 为纯装饰（详情页未实现，卡片不可点）。
  * zero state 完整显示 0 分钟 / 0 字 / 0 条；圆环全灰、中心 0/7 天。
  */
 export function TodayReadingCard({
@@ -141,16 +140,6 @@ export function TodayReadingCard({
 
   return (
     <DataCard accessible accessibilityLabel={a11y}>
-      <View style={styles.headerRow}>
-        <Text style={[styles.title, { color: theme.primaryText }]}>{uiText.data.todayReadingTitle}</Text>
-        <SymbolView
-          name="chevron.right"
-          size={15}
-          tintColor={theme.secondaryText}
-          weight="semibold"
-        />
-      </View>
-
       <View style={styles.bodyRow}>
         <View style={styles.leftCol}>
           <View style={styles.metricRow} accessible={false}>
@@ -208,16 +197,6 @@ export function TodayReadingCard({
 }
 
 const styles = StyleSheet.create({
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  title: {
-    flex: 1,
-    fontSize: 18,
-    fontWeight: '700',
-  },
   bodyRow: {
     flexDirection: 'row',
     alignItems: 'center',
