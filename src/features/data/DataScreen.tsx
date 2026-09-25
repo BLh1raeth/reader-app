@@ -7,6 +7,7 @@ import { tokens } from '../../design-system/tokens';
 import { uiText } from '../../localization';
 import { addLocalCalendarDays, todayLocalDayKey } from '../../shared/time/local-day';
 import { useDataTheme } from './dataTheme';
+import { USE_DEMO_DATA, buildDemoData } from './demo-data';
 import { TodayReadingCard } from './cards/TodayReadingCard';
 import { ReadingTimeCard } from './cards/ReadingTimeCard';
 import { ReadingSpeedCard } from './cards/ReadingSpeedCard';
@@ -60,6 +61,22 @@ export default function DataScreen() {
     loadingRef.current = true;
     try {
       const todayKey = todayLocalDayKey();
+      if (USE_DEMO_DATA) {
+        // UI 预览模式：显示 demo-data.ts 的假数据，不读 SQLite。
+        // 恢复真实数据：把 USE_DEMO_DATA 改成 false。
+        if (__DEV__) {
+          console.warn('[DATA_DEMO_MODE] showing fake preview data');
+        }
+        const demo = buildDemoData(todayKey);
+        setData({
+          summary: demo.summary,
+          last7Days: demo.last7Days,
+          todayKey: demo.todayKey,
+          hourlyActiveSeconds: demo.hourlyActiveSeconds,
+        });
+        setLoadFailed(false);
+        return;
+      }
       const startDay = addLocalCalendarDays(todayKey, -6);
       const [summary, last7Days, hourlyActiveSeconds] = await Promise.all([
         getReadingAnalyticsSummary(),
