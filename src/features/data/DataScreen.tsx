@@ -139,9 +139,6 @@ export default function DataScreen() {
           </View>
         ) : null}
 
-        <Text style={[styles.sectionTitle, { color: theme.primaryText }]}>
-          {uiText.data.last7Days}
-        </Text>
         <View style={styles.cardRow}>
           <View style={styles.cardCell}>
             <ReadingTimeCard
@@ -211,8 +208,9 @@ const styles = StyleSheet.create({
   cardCell: {
     flex: 1,
   },
-  /** B.6：半宽卡内边距 20（规范 18–20）。 */
+  /** B.6：半宽卡内边距 20（规范 18–20）；flex:1 撑满 cell，与同行卡等高。 */
   halfCard: {
     padding: 20,
+    flex: 1,
   },
 });
