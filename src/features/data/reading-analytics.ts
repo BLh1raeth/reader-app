@@ -162,6 +162,14 @@ export function normalizeAnalyticsExcerpt(
 export const MIN_SPEED_ELIGIBLE_SECONDS = 30;
 
 /**
+ * Daily speed-capsule threshold: a day needs at least this many 1-minute
+ * speed samples before we compute P10/P90 for it. Percentiles over 1–2
+ * samples have no statistical meaning — false precision. Leave the day
+ * blank instead.
+ */
+export const MIN_DAILY_SPEED_SAMPLES = 5;
+
+/**
  * Speed eligibility: a session contributes to speed only when it has real
  * active time AND real forward progress AND enough duration to plausibly
  * be reading rather than flipping. A 20s open-and-stare still counts
@@ -285,7 +293,7 @@ export function buildDailyStats(
       sessionsByDay.get(dayKey) ?? [],
     );
     const daySamples = samplesByDay.get(dayKey) ?? [];
-    if (daySamples.length > 0) {
+    if (daySamples.length >= MIN_DAILY_SPEED_SAMPLES) {
       const speeds = daySamples.map((s) => s.chars).sort((a, b) => a - b);
       bucket.readingSpeedP10CharsPerMinute = percentileSorted(speeds, 0.1);
       bucket.readingSpeedP90CharsPerMinute = percentileSorted(speeds, 0.9);
@@ -489,9 +497,11 @@ export function analyzeReadingData(
     if (excerpt.dayKey === todayKey) todayExcerptCount += 1;
   }
 
+  // 只看今天：卡片语境是"现在"，几天前的样本再"最新"也是误导。
   let latestSpeedSample: ReadingAnalyticsSummary['latestSpeedSample'] = null;
   let latestSampledAt = '';
   for (const sample of samples) {
+    if (sample.dayKey !== todayKey) continue;
     // ISO-8601 UTC strings compare lexicographically in chronological order.
     if (sample.sampledAt >= latestSampledAt) {
       latestSampledAt = sample.sampledAt;

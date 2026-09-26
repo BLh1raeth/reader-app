@@ -80,9 +80,9 @@ export type ReadingAnalyticsSummary = {
   /** All reader_excerpts rows (source of truth; deletions reflect here). */
   totalExcerptCount: number;
   /**
-   * Latest 1-minute speed sample (chars/min) with its day. The speed
-   * card's big number and black dot come from here — "最新一次检测的速度".
-   * null when no sample exists yet.
+   * Today's latest 1-minute speed sample (chars/min) with its day. The
+   * speed card's big number and black dot come from here — "最新一次检测的速度".
+   * null when there is no sample yet today.
    */
   latestSpeedSample: { dayKey: string; charsPerMinute: number } | null;
 };

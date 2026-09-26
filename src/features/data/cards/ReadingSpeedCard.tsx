@@ -9,9 +9,9 @@ import { useDataTheme } from '../dataTheme';
 
 type ReadingSpeedCardProps = {
   /**
-   * 最新一次 1 分钟速度检测（summary.latestSpeedSample）：
-   * 大数字显示它的速度，黑点画在它所在天的柱子上。
-   * null = 还没有任何检测。
+   * 今天最新一次 1 分钟速度检测（summary.latestSpeedSample）：
+   * 大数字显示它的速度，黑点画在今天柱子上的真实位置（可超出胶囊）。
+   * null = 今天还没有检测。
    */
   latestSpeedSample: { dayKey: string; charsPerMinute: number } | null;
   /** 最近 7 天每天的 readingSpeed(P10|P90)CharsPerMinute；null = 未加载。 */
@@ -38,9 +38,9 @@ const DOT_DROP_DISTANCE = 28;
  *
  * 区间柱：每根胶囊柱的上界 = 当天 1 分钟速度样本的 P90，下界 = P10
  * （分位数，不用严格 min/max，单个极端分钟拉不动柱子）；
- * 缺数据的天留空。柱子全部浅灰；最新一次检测的速度在它所在天的
- * 柱子上用一个黑色小圆点标出（钳制在柱子范围内）。
- * 下方大数字 = 最新一次检测的速度（字/分钟），不是 7 天平均。
+ * 样本不足 5 分钟的天留空。柱子全部浅灰；今天最新一次检测的速度
+ * 在今天的柱子上用一个黑色小圆点标出真实位置（可超出胶囊）。
+ * 下方大数字 = 今天最新一次检测的速度（字/分钟），不是 7 天平均。
  */
 export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpeedCardProps) {
   const theme = useDataTheme();
@@ -89,6 +89,8 @@ export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpee
       ? [d.readingSpeedP10CharsPerMinute, d.readingSpeedP90CharsPerMinute]
       : [],
   );
+  // 黑点不再钳制：纵轴域必须包含最新样本，否则真实位置画不出来。
+  if (latestSpeedSample !== null) bounds.push(latestSpeedSample.charsPerMinute);
   const hasRanges = bounds.length > 0;
   const dataLo = hasRanges ? Math.min(...bounds) : 0;
   const dataHi = hasRanges ? Math.max(...bounds) : 1;
@@ -119,16 +121,13 @@ export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpee
             const barHeight = Math.max(MIN_BAR_HEIGHT, rawHeight);
             const top =
               rawHeight >= MIN_BAR_HEIGHT ? rawTop : toY((p10 + p90) / 2) - MIN_BAR_HEIGHT / 2;
-            const barBottom = top + barHeight;
             const progress =
               columnProgress[Math.min(index, columnProgress.length - 1)];
 
             const isLatestDay =
               latestSpeedSample !== null && latestSpeedSample.dayKey === day.dayKey;
-            // 黑点标出最新速度的位置，钳制在柱子范围内不悬空。
-            const dotY = isLatestDay
-              ? Math.min(barBottom, Math.max(top, toY(latestSpeedSample.charsPerMinute)))
-              : null;
+            // 黑点标出最新速度的真实位置：超出胶囊就超出，超出本身就是信息。
+            const dotY = isLatestDay ? toY(latestSpeedSample.charsPerMinute) : null;
 
             return (
               <View key={day.dayKey} style={styles.barColumn}>
