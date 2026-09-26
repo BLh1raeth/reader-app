@@ -1,4 +1,6 @@
-import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { useCallback, useRef } from 'react';
+import { Animated, Easing, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 
 import { uiText } from '../../../localization';
 import { DataCard } from '../DataCard';
@@ -43,6 +45,29 @@ export function ReadingTimeCard({ hourlyActiveSeconds, style }: ReadingTimeCardP
     `${uiText.data.totalReadingTime}。` +
     (activeHours.length > 0 ? `活跃时段：${activeHours}。` : '今天还没有阅读记录。');
 
+  /**
+   * 柱子升起动画（与今日卡三圆环一致：900ms / Easing.out(cubic) / JS 驱动）。
+   * 柱子底部贴着基线，高度从 0 长到目标值，看起来就是从最底下升起。
+   * 每次切回 Data 页重播；切走时复位到 0，下次首帧不可见不闪。
+   */
+  const progress = useRef(new Animated.Value(0)).current;
+  useFocusEffect(
+    useCallback(() => {
+      progress.setValue(0);
+      const animation = Animated.timing(progress, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      });
+      animation.start();
+      return () => {
+        animation.stop();
+        progress.setValue(0);
+      };
+    }, [progress]),
+  );
+
   return (
     <DataCard accessible accessibilityLabel={accessibilityLabel} style={style}>
       <Text style={[styles.title, { color: theme.primaryText }]}>
@@ -72,10 +97,16 @@ export function ReadingTimeCard({ hourlyActiveSeconds, style }: ReadingTimeCardP
               return (
                 <View key={hour} style={styles.barColumn}>
                   {hasData ? (
-                    <View
+                    <Animated.View
                       style={[
                         styles.barFill,
-                        { height: barHeight, backgroundColor: theme.chartPrimary },
+                        {
+                          height: progress.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, barHeight],
+                          }),
+                          backgroundColor: theme.chartPrimary,
+                        },
                       ]}
                     />
                   ) : null}
