@@ -43,15 +43,17 @@ const DEMO_DAYS: Array<{
   seconds: number;
   chars: number;
   speed: number | null;
+  speedMin: number | null;
+  speedMax: number | null;
   excerpts: number;
 }> = [
-  { seconds: 3200, chars: 26800, speed: 502, excerpts: 2 },
-  { seconds: 0, chars: 0, speed: null, excerpts: 0 },
-  { seconds: 5400, chars: 48600, speed: 540, excerpts: 4 },
-  { seconds: 1800, chars: 14400, speed: 480, excerpts: 1 },
-  { seconds: 0, chars: 0, speed: null, excerpts: 0 },
-  { seconds: 4600, chars: 41400, speed: 540, excerpts: 3 },
-  { seconds: 5100, chars: 42500, speed: 500, excerpts: 5 },
+  { seconds: 3200, chars: 26800, speed: 502, speedMin: 468, speedMax: 545, excerpts: 2 },
+  { seconds: 0, chars: 0, speed: null, speedMin: null, speedMax: null, excerpts: 0 },
+  { seconds: 5400, chars: 48600, speed: 540, speedMin: 505, speedMax: 578, excerpts: 4 },
+  { seconds: 1800, chars: 14400, speed: 480, speedMin: 451, speedMax: 512, excerpts: 1 },
+  { seconds: 0, chars: 0, speed: null, speedMin: null, speedMax: null, excerpts: 0 },
+  { seconds: 4600, chars: 41400, speed: 540, speedMin: 498, speedMax: 571, excerpts: 3 },
+  { seconds: 5100, chars: 42500, speed: 500, speedMin: 472, speedMax: 533, excerpts: 5 },
 ];
 
 export function buildDemoData(todayKey: string): DemoDataLoadResult {
@@ -65,6 +67,8 @@ export function buildDemoData(todayKey: string): DemoDataLoadResult {
     activeSeconds: day.seconds,
     forwardCharacters: day.chars,
     readingSpeedCharsPerMinute: day.speed,
+    readingSpeedMinCharsPerMinute: day.speedMin,
+    readingSpeedMaxCharsPerMinute: day.speedMax,
     excerptCount: day.excerpts,
   }));
 

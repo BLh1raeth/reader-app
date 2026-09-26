@@ -26,6 +26,14 @@ export type DailyReadingStats = {
    * null when the day has no speed-eligible data.
    */
   readingSpeedCharsPerMinute: number | null;
+  /**
+   * Slowest / fastest single-session speed this day (chars/min), over the
+   * same speed-eligible sessions as `readingSpeedCharsPerMinute`.
+   * null when the day has no speed-eligible data. Drives the Health-style
+   * range bars: min = bar bottom, max = bar top.
+   */
+  readingSpeedMinCharsPerMinute: number | null;
+  readingSpeedMaxCharsPerMinute: number | null;
   /** Number of reader_excerpts created on this day. */
   excerptCount: number;
 };

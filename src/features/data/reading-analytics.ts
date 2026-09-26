@@ -196,6 +196,26 @@ export function weightedSpeedCharsPerMinute(
   return (eligibleCharacters / eligibleSeconds) * 60;
 }
 
+/**
+ * Min/max single-session speed for a set of sessions (chars/min), over the
+ * same speed-eligible sessions used by `weightedSpeedCharsPerMinute`.
+ * Returns null when no session is speed-eligible — the day's range bar is
+ * then omitted, not drawn as zero.
+ */
+export function daySpeedRangeCharsPerMinute(
+  sessions: ReadonlyArray<{ activeSeconds: number; forwardCharacters: number }>,
+): { min: number; max: number } | null {
+  let min: number | null = null;
+  let max: number | null = null;
+  for (const session of sessions) {
+    if (!isSpeedEligibleSession(session)) continue;
+    const speed = (session.forwardCharacters / session.activeSeconds) * 60;
+    if (min === null || speed < min) min = speed;
+    if (max === null || speed > max) max = speed;
+  }
+  return min === null || max === null ? null : { min, max };
+}
+
 // ---------------------------------------------------------------------------
 // Daily series (zero-filled).
 // ---------------------------------------------------------------------------
@@ -219,6 +239,8 @@ export function buildDailyStats(
       activeSeconds: 0,
       forwardCharacters: 0,
       readingSpeedCharsPerMinute: null,
+      readingSpeedMinCharsPerMinute: null,
+      readingSpeedMaxCharsPerMinute: null,
       excerptCount: 0,
     });
   }
@@ -243,9 +265,11 @@ export function buildDailyStats(
   for (const dayKey of days) {
     const bucket = statsByDay.get(dayKey);
     if (!bucket) continue;
-    bucket.readingSpeedCharsPerMinute = weightedSpeedCharsPerMinute(
-      sessionsByDay.get(dayKey) ?? [],
-    );
+    const daySessions = sessionsByDay.get(dayKey) ?? [];
+    bucket.readingSpeedCharsPerMinute = weightedSpeedCharsPerMinute(daySessions);
+    const range = daySpeedRangeCharsPerMinute(daySessions);
+    bucket.readingSpeedMinCharsPerMinute = range?.min ?? null;
+    bucket.readingSpeedMaxCharsPerMinute = range?.max ?? null;
   }
   return days.map((dayKey) => {
     const bucket = statsByDay.get(dayKey);
