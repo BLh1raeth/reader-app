@@ -116,7 +116,7 @@ function AnimatedRing({
  * （时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73）；
  * 其中时长行整行放大到 26pt，作为卡内视觉重心；
  * 三行数值字号另做 26 → 22 → 18 的渐进：时长最大、摘录最小；
- * 标签统一 15pt / 500 不跟渐进；
+ * 标签跟着一起走 26 → 18 → 14（每行比数值小 4pt）；
  * 每次切回数据页三环都从起点同步扫到目标进度
  * （Apple 健康式入场动画）；
  * 真实数据与每日目标完成率下一轮 UI 稳定后再接入。
@@ -180,7 +180,7 @@ export function TodayReadingCard({
            * 让它们的视觉中心对齐。
            */}
           <View style={styles.metricRow} accessible={false}>
-            <Text style={[styles.metricName, { color: DEMO_RINGS[1].color }]}>
+            <Text style={[styles.charsName, { color: DEMO_RINGS[1].color }]}>
               {uiText.data.todayMetricChars}：
             </Text>
             <Text style={[styles.charsValue, { color: DEMO_RINGS[1].color }]}>
@@ -188,7 +188,7 @@ export function TodayReadingCard({
             </Text>
           </View>
           <View style={styles.metricRow} accessible={false}>
-            <Text style={[styles.metricName, { color: DEMO_RINGS[2].color }]}>
+            <Text style={[styles.excerptName, { color: DEMO_RINGS[2].color }]}>
               {uiText.data.todayMetricExcerpts}：
             </Text>
             <Text style={[styles.excerptValue, { color: DEMO_RINGS[2].color }]}>
@@ -219,9 +219,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-  /** 三行标签统一 15pt / 500（B.7 定稿）；字号渐进只做在数值上，标签保持安静。 */
-  metricName: {
-    fontSize: 15,
+  /**
+   * 三行标签也跟数值一起渐进：时长 26pt / 字数 18pt / 摘录 14pt，
+   * 每行标签比它的数值小 4pt（时长行整行 26pt 是例外，作为视觉重心）。
+   */
+  charsName: {
+    fontSize: 18,
+    fontWeight: '500',
+  },
+  excerptName: {
+    fontSize: 14,
     fontWeight: '500',
   },
   /**
