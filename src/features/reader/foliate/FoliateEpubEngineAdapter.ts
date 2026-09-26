@@ -2810,6 +2810,10 @@ export class FoliateEpubEngineAdapter {
     // established page-turn pipeline.
     void this.clearSelectedSearchHighlight();
     let nextDirection: 'next' | 'prev' | null = direction;
+    // Burst detection: the first turn keeps the cross-dissolve, but once a
+    // queued turn exists the user is flipping fast — cut instantly instead
+    // of serializing every turn on `transition.finished`.
+    let instant = false;
     try {
       // Keep the lock for the entire burst. Starting a new View Transition
       // recursively in the same task that completed the previous one could
@@ -2819,12 +2823,13 @@ export class FoliateEpubEngineAdapter {
         // must not inherit this turn's reason.
         this.pendingNavigationReason = nextDirection === 'next' ? 'reading-forward' : 'reading-backward';
         try {
-          await this.turnWithCrossDissolve(nextDirection);
+          await this.turnWithCrossDissolve(nextDirection, instant);
         } finally {
           this.pendingNavigationReason = null;
         }
         const pendingTurn = this.takePendingPageTurn();
         if (!pendingTurn) break;
+        instant = true;
         await this.nextFrame();
         nextDirection = pendingTurn.direction;
       }
@@ -2936,7 +2941,7 @@ export class FoliateEpubEngineAdapter {
     for (const index of [...this.prewarmedSectionIndexes]) this.releaseSectionPrewarm(index);
   }
 
-  private async turnWithCrossDissolve(direction: 'next' | 'prev') {
+  private async turnWithCrossDissolve(direction: 'next' | 'prev', instant = false) {
     const view = this.view;
     if (!view) return;
     const turn = async () => {
@@ -2950,7 +2955,9 @@ export class FoliateEpubEngineAdapter {
     };
     const transitionDocument = document as ViewTransitionDocument;
     const startViewTransition = transitionDocument.startViewTransition;
-    if (this.prefersReducedMotion() || !startViewTransition) {
+    // Burst (fast flipping), reduced motion, or no View Transition support:
+    // cut straight to the next page with no snapshot animation.
+    if (instant || this.prefersReducedMotion() || !startViewTransition) {
       await turn();
       return;
     }
