@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
@@ -47,65 +47,38 @@ export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpee
   const list = days ?? [];
 
   /**
-   * 动画（与圆环 / 时段柱同家族：900ms / Easing.out(cubic) / 切回 Data 页重播）：
+   * 图形动画（与圆环 / 时段柱同家族：900ms / Easing.out(cubic) / 切回 Data 页重播）：
    * - 胶囊从中间向上下展开（区间语义：不是从 0 涨起来，是区间确立）；
    * - 黑点在柱子展开过半后从上方落定到最新速度位置；
-   * - 下方大数字从 0 滚到最新速度，与今天柱子的黑点同步到达；
    * - 7 天从左到右每根晚 40ms，历史先铺、今天最后落定。
+   * 大数字不做滚动（与今日大卡一致）：只做图形动画。
    */
   const columnProgress = useRef(
     Array.from({ length: 7 }, () => new Animated.Value(0)),
   ).current;
-  const numberProgress = useRef(new Animated.Value(0)).current;
-  const [displaySpeed, setDisplaySpeed] = useState(0);
-  const targetSpeed =
-    latestSpeedSample === null ? 0 : Math.round(latestSpeedSample.charsPerMinute);
-  const targetSpeedRef = useRef(targetSpeed);
-  targetSpeedRef.current = targetSpeed;
-
-  useEffect(() => {
-    const listenerId = numberProgress.addListener(({ value }) => {
-      setDisplaySpeed(Math.round(value * targetSpeedRef.current));
-    });
-    return () => numberProgress.removeListener(listenerId);
-  }, [numberProgress]);
 
   useFocusEffect(
     useCallback(() => {
       columnProgress.forEach((p) => p.setValue(0));
-      numberProgress.setValue(0);
-      setDisplaySpeed(0);
-      const animations = columnProgress.map((p, i) =>
-        Animated.sequence([
-          Animated.delay(i * STAGGER_MS),
-          Animated.timing(p, {
-            toValue: 1,
-            duration: 900,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: false,
-          }),
-        ]),
+      const all = Animated.parallel(
+        columnProgress.map((p, i) =>
+          Animated.sequence([
+            Animated.delay(i * STAGGER_MS),
+            Animated.timing(p, {
+              toValue: 1,
+              duration: 900,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: false,
+            }),
+          ]),
+        ),
       );
-      // 大数字与最后一根（今天）柱子同步开始滚动。
-      animations.push(
-        Animated.sequence([
-          Animated.delay((columnProgress.length - 1) * STAGGER_MS),
-          Animated.timing(numberProgress, {
-            toValue: 1,
-            duration: 900,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: false,
-          }),
-        ]),
-      );
-      const all = Animated.parallel(animations);
       all.start();
       return () => {
         all.stop();
         columnProgress.forEach((p) => p.setValue(0));
-        numberProgress.setValue(0);
       };
-    }, [columnProgress, numberProgress]),
+    }, [columnProgress]),
   );
 
   const bounds = list.flatMap((d) =>
@@ -123,7 +96,7 @@ export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpee
   const toY = (value: number) =>
     PLOT_HEIGHT - PLOT_INSET - ((value - yLo) / (yHi - yLo)) * (PLOT_HEIGHT - PLOT_INSET * 2);
 
-  const valueText = latestSpeedSample === null ? '—' : `${displaySpeed}`;
+  const valueText = latestSpeedSample === null ? '—' : `${Math.round(latestSpeedSample.charsPerMinute)}`;
   const a11yValue =
     latestSpeedSample === null ? '—' : `最新${Math.round(latestSpeedSample.charsPerMinute)}字每分钟`;
 
