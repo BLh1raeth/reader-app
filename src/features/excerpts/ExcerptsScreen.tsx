@@ -469,14 +469,14 @@ export default function ExcerptsScreen() {
           pointerEvents="none"
           editable
         />
-        {/* 固定头部：标题 + 原生搜索框。下滑时整行渐隐（与书库页同行为），
-            回到顶部时恢复。 */}
+        {/* 浮动头部（与书库页同行为）：absolute 盖在列表上，无背景；
+            下滑时只有标题渐隐，搜索框常驻；内容从头部下方滚上来，无空白死区。 */}
         <View style={[styles.fixedHeader, { paddingTop: insets.top + 2 }]}>
-          {/* 整行下滑渐隐（与书库页同行为）：标题+搜索框一起淡出，顶部全透明。 */}
-          <Animated.View style={[styles.headerRow, titleFadeStyle]}>
-            <Text accessibilityRole="header" style={[styles.largeTitle, styles.headerTitle]}>
+          <View style={styles.headerRow}>
+            {/* 大标题下滑渐隐（与书库页同行为）：只淡出标题，搜索框常驻（对标书库右上角菜单）。 */}
+            <Animated.Text accessibilityRole="header" style={[styles.largeTitle, styles.headerTitle, titleFadeStyle]}>
               {uiText.excerpts.title}
-            </Text>
+            </Animated.Text>
             {/* 真正的 UIKit UISearchBar（本地原生模块），不是 RN 模拟：
                 放大镜 / placeholder / 清空键 / 键盘 / 深浅色全部系统提供。
                 需要包含该模块的新 Development Build 才能运行（EAS）。
@@ -494,7 +494,7 @@ export default function ExcerptsScreen() {
                 onTextChange={(event) => setQuery(event.nativeEvent.text)}
               />
             </Pressable>
-          </Animated.View>
+          </View>
         </View>
         <AnimatedSectionList<ExcerptFeedItem, ExcerptFeedSection>
           sections={sections}
@@ -506,9 +506,12 @@ export default function ExcerptsScreen() {
           scrollEventThrottle={16}
         contentContainerStyle={[
           styles.content,
-          // 顶部内边距原来撑在 ListHeader 上方；头部移出后这里不再需要，
-          // 头部与首个 section 的间距仍由 headerRow marginBottom + section marginTop 保证，和原来像素一致。
-          { paddingBottom: insets.bottom + 32 },
+          // 浮动头部预留：insets.top + 2（头部 paddingTop）+ 40（headerRow 高）
+          // + 12（headerRow marginBottom）。静止时首个 section 位置与原来像素一致。
+          {
+            paddingTop: insets.top + 54,
+            paddingBottom: insets.bottom + 32,
+          },
         ]}
         renderSectionHeader={({ section }) => {
           // Excerpts Tab Core E：books mode 的 section header = 书名
@@ -604,7 +607,14 @@ const styles = StyleSheet.create({
   },
   /** 固定头部：标题 + 搜索框。横向内边距和列表内容对齐（原来 ListHeader 在
       contentContainer 里，吃的是同一份 paddingHorizontal）；顶部安全区内边距在 JSX 里拼 insets。 */
+  /** 浮动头部：absolute 盖在列表上方（与书库浮动标题同行为），无背景；
+      高度 = paddingTop(insets.top + 2) + headerRow(40)，列表用 paddingTop 预留。 */
   fixedHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1,
     paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
   },
   /** 标题行：摘录（左，自然宽度）+ 原生搜索框（右，占满剩余宽度）。
