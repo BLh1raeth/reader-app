@@ -12,6 +12,8 @@ export type ReaderHighlight = {
   chapterTitle: string | null;
   sectionIndex: number;
   color: ReaderHighlightColor;
+  /** Nullable note attached 1:1 to this highlight (DB v19). */
+  note: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -21,6 +23,9 @@ export type NewReaderHighlight = Omit<ReaderHighlight, 'id' | 'createdAt' | 'upd
 export type ReaderHighlightSnapshotItem = {
   rangeCfi: string;
   sectionIndex: number;
+  /** True when the highlight carries a note; the DOM tap layer uses this to
+      route the tap to the note popover instead of the delete bubble. */
+  hasNote: boolean;
 };
 
 type ReaderHighlightRow = {
@@ -33,6 +38,7 @@ type ReaderHighlightRow = {
   chapter_title: string | null;
   section_index: number;
   color: string;
+  note: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -48,6 +54,7 @@ function mapRow(row: ReaderHighlightRow): ReaderHighlight {
     chapterTitle: row.chapter_title,
     sectionIndex: row.section_index,
     color: (row.color === 'blue' ? 'blue' : 'blue') as ReaderHighlightColor,
+    note: row.note ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -70,8 +77,8 @@ export const highlightRepository = {
     const result = await database.runAsync(
       `INSERT INTO reader_highlights (
         book_id, text, start_cfi, end_cfi, range_cfi,
-        chapter_title, section_index, color, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        chapter_title, section_index, color, note, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(book_id, range_cfi) DO NOTHING;`,
       highlight.bookId,
       highlight.text,
@@ -81,6 +88,7 @@ export const highlightRepository = {
       highlight.chapterTitle,
       highlight.sectionIndex,
       highlight.color,
+      highlight.note,
       now,
       now,
     );
@@ -115,13 +123,35 @@ export const highlightRepository = {
 
   async listSnapshotForBook(bookId: string): Promise<ReaderHighlightSnapshotItem[]> {
     const database = await getLibraryDatabase();
-    const rows = await database.getAllAsync<{ range_cfi: string; section_index: number }>(
-      `SELECT range_cfi, section_index FROM reader_highlights
+    const rows = await database.getAllAsync<{ range_cfi: string; section_index: number; has_note: number }>(
+      `SELECT range_cfi, section_index, (note IS NOT NULL AND note != '') AS has_note
+       FROM reader_highlights
        WHERE book_id = ?
        ORDER BY section_index ASC, id ASC;`,
       bookId,
     );
-    return rows.map((row) => ({ rangeCfi: row.range_cfi, sectionIndex: row.section_index }));
+    return rows.map((row) => ({
+      rangeCfi: row.range_cfi,
+      sectionIndex: row.section_index,
+      hasNote: row.has_note === 1,
+    }));
+  },
+
+  /** Set (or clear with null/empty) the note attached to a highlight. */
+  async updateHighlightNote(bookId: string, rangeCfi: string, note: string | null) {
+    const database = await getLibraryDatabase();
+    const trimmed = note?.trim() ? note.trim() : null;
+    const now = new Date().toISOString();
+    await database.runAsync(
+      `UPDATE reader_highlights
+       SET note = ?, updated_at = ?
+       WHERE book_id = ? AND range_cfi = ?;`,
+      trimmed,
+      now,
+      bookId,
+      rangeCfi,
+    );
+    return trimmed;
   },
 
   async deleteHighlight(id: number) {

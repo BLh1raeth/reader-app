@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { excerptRepository } from '../excerpt-repository';
 import { highlightRepository, type ReaderHighlightSnapshotItem } from '../highlight-repository';
 import type {
+  FootnoteAnchorRect,
   ReaderExcerptVerificationRequest,
   ReaderSelectionActionEvent,
   ReaderSelectionCommand,
@@ -13,6 +14,16 @@ export const EXCERPT_ACTION_WIDTH = 72;
 export const EXCERPT_ACTION_HEIGHT = 40;
 export const EXCERPT_ACTION_EDGE_GAP = 12;
 export const EXCERPT_ACTION_SELECTION_GAP = 10;
+
+/**
+ * 笔记弹窗状态：
+ * - create：从选词菜单「添加笔记」进入，payload 是选中的文字；
+ * - view：点按带笔记的高亮进入，只读展示；
+ * - edit：从 view 切换到编辑。
+ */
+export type ReaderNotePopoverState =
+  | { mode: 'create'; payload: ReaderSelectionPayload }
+  | { mode: 'view' | 'edit'; rangeCfi: string; sectionIndex: number; note: string; anchor: FootnoteAnchorRect };
 
 /**
  * ReaderScreen 巨型组件拆分：选中、高亮、笔记、摘录保存。
@@ -49,11 +60,13 @@ export function useReaderSelection({
   const [selectionCommand, setSelectionCommand] = useState<ReaderSelectionCommand | null>(null);
   const [excerptVerificationRequest, setExcerptVerificationRequest] = useState<ReaderExcerptVerificationRequest | null>(null);
   const [highlightSnapshot, setHighlightSnapshot] = useState<ReaderHighlightSnapshotItem[] | null>(null);
+  const [notePopover, setNotePopover] = useState<ReaderNotePopoverState | null>(null);
   const activeSelectionRef = useRef<ReaderSelectionPayload | null>(null);
   const excerptActionPayloadRef = useRef<ReaderSelectionPayload | null>(null);
   const excerptActionPressingRef = useRef(false);
   const excerptSavingRef = useRef(false);
   const highlightSavingRef = useRef(false);
+  const noteSavingRef = useRef(false);
   const selectionCommandSequenceRef = useRef(0);
   const excerptVerificationSequenceRef = useRef(0);
 
@@ -68,6 +81,7 @@ export function useReaderSelection({
     setSelectionCommand(null);
     setExcerptVerificationRequest(null);
     setHighlightSnapshot(null);
+    setNotePopover(null);
   }, [bookId]);
 
   // 换书时加载高亮快照。
@@ -199,10 +213,15 @@ export function useReaderSelection({
         chapterTitle: payload.chapterTitle,
         sectionIndex: payload.sectionIndex,
         color: 'blue',
+        note: null,
       });
       // Paint even on a dedup hit: the adapter registry may have been rebuilt
       // since, and overlayer paint is idempotent for the same range CFI.
-      const snapshotItem = { rangeCfi: result.highlight.rangeCfi, sectionIndex: result.highlight.sectionIndex };
+      const snapshotItem: ReaderHighlightSnapshotItem = {
+        rangeCfi: result.highlight.rangeCfi,
+        sectionIndex: result.highlight.sectionIndex,
+        hasNote: result.highlight.note != null && result.highlight.note !== '',
+      };
       setHighlightSnapshot((prev) => {
         const next = (prev ?? []).filter((item) => item.rangeCfi !== snapshotItem.rangeCfi);
         next.push(snapshotItem);
@@ -213,6 +232,7 @@ export function useReaderSelection({
         type: 'apply-highlight',
         rangeCfi: result.highlight.rangeCfi,
         sectionIndex: result.highlight.sectionIndex,
+        hasNote: result.highlight.note != null && result.highlight.note !== '',
       });
       await Haptics.selectionAsync().catch(() => undefined);
       activeSelectionRef.current = null;
@@ -227,18 +247,132 @@ export function useReaderSelection({
   }, [markReaderActivity]);
 
   // Fired by the adapter after it already removed the paint for a tapped
-  // highlight. Only the SQLite row and the RN-side snapshot remain.
+  // highlight (delete bubble), or by the note popover delete action (paint
+  // still on screen — the remove-highlight command clears it). Only the
+  // SQLite row and the RN-side snapshot remain.
   const handleHighlightDeleteRequest = useCallback((rangeCfi: string) => {
     if (!bookId) return;
     setHighlightSnapshot((prev) => prev?.filter((item) => item.rangeCfi !== rangeCfi) ?? prev);
+    setSelectionCommand({
+      id: ++selectionCommandSequenceRef.current,
+      type: 'remove-highlight',
+      rangeCfi,
+    });
     void highlightRepository.deleteHighlightByRange(bookId, rangeCfi).catch((error: unknown) => {
       if (__DEV__) console.error('[HIGHLIGHT_DELETE_FAILED]', error);
     });
   }, [bookId]);
 
+  // 选中后点「添加笔记」：打开笔记编辑器（create 模式），保存时才建高亮。
   const onNoteRequested = useCallback((payload: ReaderSelectionPayload) => {
-    if (__DEV__) console.log('[ANNOTATION_ACTION]', JSON.stringify({ action: 'note', rangeCfi: payload.rangeCfi, textLength: payload.text.length }));
+    markReaderActivity();
+    setNotePopover({ mode: 'create', payload });
+  }, [markReaderActivity]);
+
+  const closeNotePopover = useCallback(() => {
+    setNotePopover(null);
   }, []);
+
+  // view → edit：保留 rangeCfi/sectionIndex/anchor，只切模式。
+  const startEditNote = useCallback(() => {
+    setNotePopover((prev) => prev && prev.mode === 'view'
+      ? { mode: 'edit', rangeCfi: prev.rangeCfi, sectionIndex: prev.sectionIndex, note: prev.note, anchor: prev.anchor }
+      : prev);
+  }, []);
+
+  // 点按带笔记的高亮：读 DB 拿笔记，打开 view 模式。DB 里没笔记（竞态）
+  // 就什么都不做——点按已经消费掉了，不会翻页。
+  const handleHighlightNoteTap = useCallback(async (rangeCfi: string, anchor: FootnoteAnchorRect) => {
+    if (!bookId) return;
+    markReaderActivity();
+    try {
+      const highlight = await highlightRepository.findByRange(bookId, rangeCfi);
+      const note = highlight?.note?.trim();
+      if (!note || !highlight) return;
+      setNotePopover({ mode: 'view', rangeCfi, sectionIndex: highlight.sectionIndex, note, anchor });
+    } catch (error) {
+      if (__DEV__) console.error('[NOTE_OPEN_FAILED]', error);
+    }
+  }, [bookId, markReaderActivity]);
+
+  // 高亮建好/更新后：同步 RN 快照（hasNote 决定下次点按走弹窗还是删除气泡）
+  // 并下发 paint 命令。paint 是幂等的，重复下发无害。
+  const syncHighlightPaint = useCallback((rangeCfi: string, sectionIndex: number, hasNote: boolean) => {
+    const snapshotItem: ReaderHighlightSnapshotItem = { rangeCfi, sectionIndex, hasNote };
+    setHighlightSnapshot((prev) => {
+      const next = (prev ?? []).filter((item) => item.rangeCfi !== snapshotItem.rangeCfi);
+      next.push(snapshotItem);
+      return next;
+    });
+    setSelectionCommand({
+      id: ++selectionCommandSequenceRef.current,
+      type: 'apply-highlight',
+      rangeCfi,
+      sectionIndex,
+      hasNote,
+    });
+  }, []);
+
+  // 保存笔记。create：建高亮（已存在则把笔记附上去）；edit：更新笔记，
+  // 清空则删掉笔记（高亮保留）。
+  const saveNote = useCallback(async (text: string) => {
+    const state = notePopover;
+    if (!state || noteSavingRef.current) return;
+    const trimmed = text.trim();
+    noteSavingRef.current = true;
+    try {
+      if (state.mode === 'create') {
+        if (!trimmed) {
+          setNotePopover(null);
+          return;
+        }
+        const payload = state.payload;
+        const result = await highlightRepository.createHighlight({
+          bookId: payload.bookId,
+          text: payload.text,
+          startCfi: payload.startCfi,
+          endCfi: payload.endCfi,
+          rangeCfi: payload.rangeCfi,
+          chapterTitle: payload.chapterTitle,
+          sectionIndex: payload.sectionIndex,
+          color: 'blue',
+          note: trimmed,
+        });
+        let finalNote = result.highlight.note;
+        if (!result.created) {
+          // 该范围已有高亮：把笔记附到已有的高亮上。
+          finalNote = await highlightRepository.updateHighlightNote(payload.bookId, payload.rangeCfi, trimmed);
+        }
+        syncHighlightPaint(payload.rangeCfi, payload.sectionIndex, finalNote != null && finalNote !== '');
+        await Haptics.selectionAsync().catch(() => undefined);
+        activeSelectionRef.current = null;
+        excerptActionPayloadRef.current = null;
+        setActiveSelection(null);
+      } else if (state.mode === 'edit') {
+        if (!bookId) return;
+        const finalNote = await highlightRepository.updateHighlightNote(bookId, state.rangeCfi, trimmed || null);
+        syncHighlightPaint(state.rangeCfi, state.sectionIndex, finalNote != null && finalNote !== '');
+        if (finalNote) {
+          setNotePopover({ mode: 'view', rangeCfi: state.rangeCfi, sectionIndex: state.sectionIndex, note: finalNote, anchor: state.anchor });
+        } else {
+          setNotePopover(null);
+        }
+      }
+    } catch (error) {
+      if (__DEV__) console.error('[NOTE_SAVE_FAILED]', error);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
+    } finally {
+      noteSavingRef.current = false;
+    }
+  }, [bookId, syncHighlightPaint]);
+
+  // view 模式删除：整条高亮（含笔记）删掉，和无笔记高亮的删除气泡语义一致。
+  const deleteNoteHighlight = useCallback(async () => {
+    const state = notePopover;
+    if (!state || state.mode === 'create' || !bookId) return;
+    setNotePopover(null);
+    handleHighlightDeleteRequest(state.rangeCfi);
+  }, [notePopover, bookId, handleHighlightDeleteRequest]);
 
   const handleNativeSelectionAction = useCallback((event: ReaderSelectionActionEvent) => {
     const action = event.nativeEvent.action;
@@ -289,12 +423,19 @@ export function useReaderSelection({
     selectionCommand,
     excerptVerificationRequest,
     highlightSnapshot,
+    notePopover,
+    notePopoverOpen: notePopover != null,
     handleSelectionChange,
     clearReaderSelection,
     searchSelectionInBook,
     onHighlightRequested,
     handleHighlightDeleteRequest,
+    handleHighlightNoteTap,
     onNoteRequested,
+    saveNote,
+    closeNotePopover,
+    startEditNote,
+    deleteNoteHighlight,
     handleNativeSelectionAction,
     freezeExcerptSelection,
     releaseExcerptActionPress,
