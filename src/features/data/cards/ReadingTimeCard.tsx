@@ -18,6 +18,8 @@ const BAR_WIDTH = 4;
 const MIN_VISIBLE_BAR_HEIGHT = 8;
 /** X 轴刻度小时：与淡网格线对齐。 */
 const AXIS_HOURS = [0, 6, 12, 18];
+/** X 轴刻度标签宽度：配合 translateX(-50%) 让文字居中对齐竖线。 */
+const AXIS_LABEL_WIDTH = 44;
 
 /**
  * “阅读时段”半宽卡（B.6 黑白极简，模仿 iOS 健身“步数”卡）。
@@ -134,5 +136,8 @@ const styles = StyleSheet.create({
   axisLabel: {
     position: 'absolute',
     fontSize: 11,
+    width: AXIS_LABEL_WIDTH,
+    textAlign: 'center',
+    transform: [{ translateX: -AXIS_LABEL_WIDTH / 2 }],
   },
 });
