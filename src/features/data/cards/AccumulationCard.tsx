@@ -38,8 +38,7 @@ const TREND_MIN_VISIBLE_BAR_HEIGHT = 8;
  *
  * 顶部：书本图标（#636366）+ “阅读节奏”标题（#111111），
  * 右上“全部显示”（#636366，纯装饰）；
- * 结论“最近 7 天，你有 X 天进行了阅读。”（X = 7 天内 activeSeconds > 0 的天数；
- * 7 天全无阅读时只陈述“最近 7 天还没有阅读记录。”，不加评价）；
+ * （2026-09-26 结论句“最近 7 天，你有 X 天进行了阅读。”已删除）；
  * “最近 7 天累计阅读” + formatDuration(summary.last7DaysActiveSeconds)；
  * 7 日阅读时长趋势柱状图（最旧在左、今天在右，圆润胶囊柱）；
  * 轻量分割线；
@@ -58,18 +57,10 @@ export function AccumulationCard({
 }: RhythmCardProps) {
   const theme = useDataTheme();
   const list = days ?? [];
-  const activeDays7 = list.filter((d) => d.activeSeconds > 0).length;
 
   const streakText = streakDays === null ? '—' : `${streakDays}${uiText.data.dayUnit}`;
   const daysText = totalDays === null ? '—' : `${totalDays}${uiText.data.dayUnit}`;
   const excerptText = excerptCount === null ? '—' : `${excerptCount}${uiText.data.excerptUnit}`;
-
-  const statement =
-    days === null
-      ? '—'
-      : activeDays7 === 0
-        ? uiText.data.rhythmSummaryEmpty
-        : uiText.data.rhythmSummaryRecent(activeDays7);
 
   const total7Text =
     last7DaysActiveSeconds === null ? '—' : formatDuration(last7DaysActiveSeconds);
@@ -131,7 +122,7 @@ export function AccumulationCard({
   return (
     <DataCard
       accessible
-      accessibilityLabel={`${uiText.data.readingRhythm}：${statement}` +
+      accessibilityLabel={`${uiText.data.readingRhythm}：` +
         `${uiText.data.currentStreak}${streakText}，${uiText.data.totalReadingDays}${daysText}，${uiText.data.totalExcerptLabel}${excerptText}`}
     >
       <View style={styles.headerRow}>
@@ -140,8 +131,6 @@ export function AccumulationCard({
           <Text style={[styles.title, { color: theme.primaryText }]}>{uiText.data.readingRhythm}</Text>
         </View>
       </View>
-
-      <Text style={[styles.statement, { color: theme.chartPrimary }]}>{statement}</Text>
 
       <View style={styles.totalBlock}>
         <Text style={[styles.totalLabel, { color: theme.tertiaryText }]}>
@@ -255,13 +244,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     marginLeft: 8,
-  },
-  /** B.7：结论句 16pt / 600 / #242424，不再用 17pt / 700 纯黑。 */
-  statement: {
-    fontSize: 16,
-    fontWeight: '600',
-    letterSpacing: -0.4,
-    lineHeight: 24,
   },
   totalBlock: {
     marginTop: 16,
