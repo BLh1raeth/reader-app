@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
-import { Circle, Line, Polyline, Svg } from 'react-native-svg';
+import { Circle, Line, Polygon, Polyline, Svg } from 'react-native-svg';
 
 import { uiText } from '../../../localization';
 import type { DailyReadingStats } from '../reading-analytics-types';
@@ -21,6 +21,8 @@ const PLOT_HEIGHT = 84;
 const PLOT_INSET = 10;
 const DOT_RADIUS = 3.5;
 const LINE_WIDTH = 2;
+/** 面积填充不透明度：很淡的灰，iOS 健康 App 式，只为填满 0 基线上的空白。 */
+const FILL_OPACITY = 0.08;
 /** Y 轴 0 起，上限至少 600：固定刻度，不用当周 min/max 归一化，
  *  避免把速度的小抖动视觉放大。 */
 const Y_MIN = 0;
@@ -32,7 +34,8 @@ type PlotPoint = { x: number; y: number; key: string };
  * “阅读速度”半宽卡（B.6 黑白极简，主打简约）。
  *
  * 极简折线：7 天有效速度连成一条细线（#242424），缺数据的天直接断开、
- * 不插值；一条淡虚线标出 7 天平均值（呼应下方大数字）。
+ * 不插值；线下铺一层很淡的灰色面积填充（iOS 健康 App 式，填满 0 基线
+ * 上的空白）；一条淡虚线标出 7 天平均值（呼应下方大数字）。
  * Y 轴固定 0 起（上限至少 600），小抖动不会被放大——速度本身方差小，
  * 这张图的作用是展示“稳定在什么水平”，而不是波动。
  */
@@ -85,6 +88,22 @@ export function ReadingSpeedCard({ speed, days, style }: ReadingSpeedCardProps) 
       >
         {plotWidth > 0 ? (
           <Svg width={plotWidth} height={PLOT_HEIGHT}>
+            {drawableSegments.map((seg, i) => {
+              const first = seg[0];
+              const last = seg[seg.length - 1];
+              const baseY = toY(Y_MIN);
+              const fillPoints =
+                seg.map((p) => `${p.x},${p.y}`).join(' ') +
+                ` ${last.x},${baseY} ${first.x},${baseY}`;
+              return (
+                <Polygon
+                  key={`fill-${i}`}
+                  points={fillPoints}
+                  fill={theme.chartPrimary}
+                  fillOpacity={FILL_OPACITY}
+                />
+              );
+            })}
             {speed !== null ? (
               <Line
                 x1={0}
