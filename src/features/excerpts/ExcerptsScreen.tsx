@@ -15,6 +15,9 @@ import {
 } from 'react-native';
 import Animated, {
   Easing,
+  Extrapolation,
+  interpolate,
+  useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -304,9 +307,24 @@ function ExcerptFeedItemRow({
   );
 }
 
+// SectionList 不在 reanimated Animated 对象上，包一层以支持 useAnimatedScrollHandler。
+// 放模块级：放组件里每次渲染重建会导致列表 remount。
+// as typeof SectionList：保留泛型签名（<ItemT, SectionT>）。
+const AnimatedSectionList = Animated.createAnimatedComponent(
+  SectionList,
+) as unknown as typeof SectionList;
+
 export default function ExcerptsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  /** 大标题下滑渐隐（与书库页同一行为）：滚动 0→42pt 时透明度 1→0。 */
+  const scrollOffset = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler((event) => {
+    scrollOffset.set(event.contentOffset.y);
+  });
+  const titleFadeStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(scrollOffset.get(), [0, 8, 22, 42], [1, 0.82, 0.12, 0], Extrapolation.CLAMP),
+  }));
   // Excerpts Tab Core E：按时间 / 按书籍浏览模式（内存态，与书库 Grid/List 对齐）。
   const { viewMode } = useExcerptsView();
   // null = loading（与 empty 区分开，避免 empty → 列表一闪而过）
@@ -455,9 +473,10 @@ export default function ExcerptsScreen() {
             列表滚动时也不跟随滚走，搜索框随时可用。 */}
         <View style={[styles.fixedHeader, { paddingTop: insets.top + 2 }]}>
           <View style={styles.headerRow}>
-            <Text accessibilityRole="header" style={[styles.largeTitle, styles.headerTitle]}>
+            {/* 大标题下滑渐隐（与书库页同行为）：只淡出标题，搜索框保持可用。 */}
+            <Animated.Text accessibilityRole="header" style={[styles.largeTitle, styles.headerTitle, titleFadeStyle]}>
               {uiText.excerpts.title}
-            </Text>
+            </Animated.Text>
             {/* 真正的 UIKit UISearchBar（本地原生模块），不是 RN 模拟：
                 放大镜 / placeholder / 清空键 / 键盘 / 深浅色全部系统提供。
                 需要包含该模块的新 Development Build 才能运行（EAS）。
@@ -477,12 +496,14 @@ export default function ExcerptsScreen() {
             </Pressable>
           </View>
         </View>
-        <SectionList<ExcerptFeedItem, ExcerptFeedSection>
+        <AnimatedSectionList<ExcerptFeedItem, ExcerptFeedSection>
           sections={sections}
           keyExtractor={(item) => item.id}
           stickySectionHeadersEnabled={false}
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          onScroll={onScroll}
+          scrollEventThrottle={16}
         contentContainerStyle={[
           styles.content,
           // 顶部内边距原来撑在 ListHeader 上方；头部移出后这里不再需要，

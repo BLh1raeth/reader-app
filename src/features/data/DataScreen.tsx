@@ -1,5 +1,12 @@
 import { useCallback, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  Extrapolation,
+  interpolate,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+} from 'react-native-reanimated';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -78,6 +85,15 @@ export default function DataScreen() {
   const [goals, setGoals] = useState<DailyGoals>({ ...DEFAULT_DAILY_GOALS });
   const [goalSheetVisible, setGoalSheetVisible] = useState(false);
 
+  /** 大标题下滑渐隐（与书库页同一行为）：滚动 0→42pt 时透明度 1→0。 */
+  const scrollOffset = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler((event) => {
+    scrollOffset.set(event.contentOffset.y);
+  });
+  const floatingTitleStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(scrollOffset.get(), [0, 8, 22, 42], [1, 0.82, 0.12, 0], Extrapolation.CLAMP),
+  }));
+
   const loadGoals = useCallback(async () => {
     try {
       const stored = await goalRepository.getDailyGoals();
@@ -155,17 +171,18 @@ export default function DataScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: theme.pageBackground }]}>
-      <ScrollView
+      <Animated.ScrollView
         contentContainerStyle={[
           styles.content,
           // 底部留出悬浮 Tab Bar 的高度，保证阅读节奏卡能完整滚到可视区。
           { paddingTop: insets.top + 2, paddingBottom: insets.bottom + 110 },
         ]}
         showsVerticalScrollIndicator={false}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
       >
-        <Text accessibilityRole="header" style={[styles.largeTitle, { color: theme.primaryText }]}>
-          {uiText.data.title}
-        </Text>
+        {/* 浮动大标题占位：40pt 行高 + 16pt 到二级标题的间距，静止时视觉与原来一致。 */}
+        <View style={styles.floatingTitleSpacer} />
 
         {/* 真实模式首帧 data 为 null：卡片不挂载，避免“—”占位闪一下；
             数据回来后一次挂载，文字即正确，只有图做入场动画。 */}
@@ -217,7 +234,17 @@ export default function DataScreen() {
             />
           </>
         )}
-      </ScrollView>
+      </Animated.ScrollView>
+
+      {/* 浮动大标题：与书库页同一行为，下滑时渐隐（不跟随滚动）。 */}
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.floatingTitle, { top: insets.top + 2 }, floatingTitleStyle]}
+      >
+        <Text accessibilityRole="header" style={[styles.largeTitle, styles.floatingTitleText, { color: theme.primaryText }]}>
+          {uiText.data.title}
+        </Text>
+      </Animated.View>
 
       {/* 每日目标设置：圆环点击打开，液态玻璃 Sheet。 */}
       <GoalSettingSheet
@@ -245,6 +272,19 @@ const styles = StyleSheet.create({
     letterSpacing: -0.6,
     lineHeight: 40,
     marginBottom: 16,
+  },
+  /** 浮动大标题占位：40pt 行高 + 16pt marginBottom，静止时与原来像素一致。 */
+  floatingTitleSpacer: {
+    height: 56,
+  },
+  /** 浮动大标题容器：与书库页同位置（insets.top + 2 / 左 20 来自 content padding）。 */
+  floatingTitle: {
+    position: 'absolute',
+    left: 20,
+  },
+  /** 浮动时 marginBottom 不产生布局作用，清零。 */
+  floatingTitleText: {
+    marginBottom: 0,
   },
   heroBlock: {
     marginBottom: SECTION_SPACING,
