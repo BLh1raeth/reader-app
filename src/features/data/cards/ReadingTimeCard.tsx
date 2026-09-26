@@ -49,52 +49,54 @@ export function ReadingTimeCard({ hourlyActiveSeconds, style }: ReadingTimeCardP
         {uiText.data.totalReadingTime}
       </Text>
 
-      <View style={styles.chart} accessible={false}>
-        {AXIS_HOURS.map((hour) => (
-          <View
-            key={hour}
-            style={[
-              styles.gridLine,
-              { left: `${(hour / 24) * 100}%`, backgroundColor: theme.chartEmpty },
-            ]}
-          />
-        ))}
-        <View style={styles.barsRow}>
-          {buckets.map((seconds, hour) => {
-            const hasData = seconds > 0 && maxSeconds > 0;
-            const barHeight = hasData
-              ? Math.max(
-                  MIN_VISIBLE_BAR_HEIGHT,
-                  Math.round((seconds / maxSeconds) * CHART_HEIGHT),
-                )
-              : 0;
-            return (
-              <View key={hour} style={styles.barColumn}>
-                {hasData ? (
-                  <View
-                    style={[
-                      styles.barFill,
-                      { height: barHeight, backgroundColor: theme.chartPrimary },
-                    ]}
-                  />
-                ) : null}
-              </View>
-            );
-          })}
+      <View style={styles.chartBlock} accessible={false}>
+        <View style={styles.chart} accessible={false}>
+          {AXIS_HOURS.map((hour) => (
+            <View
+              key={hour}
+              style={[
+                styles.gridLine,
+                { left: `${(hour / 24) * 100}%`, backgroundColor: theme.chartEmpty },
+              ]}
+            />
+          ))}
+          <View style={styles.barsRow}>
+            {buckets.map((seconds, hour) => {
+              const hasData = seconds > 0 && maxSeconds > 0;
+              const barHeight = hasData
+                ? Math.max(
+                    MIN_VISIBLE_BAR_HEIGHT,
+                    Math.round((seconds / maxSeconds) * CHART_HEIGHT),
+                  )
+                : 0;
+              return (
+                <View key={hour} style={styles.barColumn}>
+                  {hasData ? (
+                    <View
+                      style={[
+                        styles.barFill,
+                        { height: barHeight, backgroundColor: theme.chartPrimary },
+                      ]}
+                    />
+                  ) : null}
+                </View>
+              );
+            })}
+          </View>
         </View>
-      </View>
-      <View style={styles.axisRow} accessible={false}>
-        {AXIS_HOURS.map((hour) => (
-          <Text
-            key={hour}
-            style={[
-              styles.axisLabel,
-              { left: `${(hour / 24) * 100}%`, color: theme.secondaryText },
-            ]}
-          >
-            {hour}时
-          </Text>
-        ))}
+        <View style={styles.axisRow} accessible={false}>
+          {AXIS_HOURS.map((hour) => (
+            <Text
+              key={hour}
+              style={[
+                styles.axisLabel,
+                { left: `${(hour / 24) * 100}%`, color: theme.secondaryText },
+              ]}
+            >
+              {hour}时
+            </Text>
+          ))}
+        </View>
       </View>
     </DataCard>
   );
@@ -105,6 +107,14 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 12,
+  },
+  /**
+   * 图表区占满标题下方的剩余空间并垂直居中：与右侧速度卡等高后，
+   * 下半部分不再空出一大块。
+   */
+  chartBlock: {
+    flex: 1,
+    justifyContent: 'center',
   },
   chart: {
     height: CHART_HEIGHT,
