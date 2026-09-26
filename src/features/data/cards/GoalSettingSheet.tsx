@@ -49,33 +49,26 @@ type Props = {
 
 function StepperRow({
   label,
-  unit,
   value,
   min,
   max,
   step,
   onChange,
   primaryColor,
-  secondaryColor,
 }: {
   label: string;
-  unit: string;
   value: number;
   min: number;
   max: number;
   step: number;
   onChange: (value: number) => void;
   primaryColor: string;
-  secondaryColor: string;
 }) {
   const canDecrease = value > min;
   const canIncrease = value < max;
   return (
     <View style={styles.row}>
-      <View style={styles.labelCol}>
-        <Text style={[styles.rowLabel, { color: primaryColor }]}>{label}</Text>
-        <Text style={[styles.rowUnit, { color: secondaryColor }]}>{unit}</Text>
-      </View>
+      <Text style={[styles.rowLabel, { color: primaryColor }]}>{label}</Text>
       <View style={styles.stepper}>
         <Pressable
           accessibilityLabel={`${label}减少`}
@@ -174,7 +167,6 @@ export function GoalSettingSheet({
 
                 <StepperRow
                   label={uiText.data.goalDurationLabel}
-                  unit={uiText.data.goalMinuteUnit}
                   value={durationMin}
                   min={DURATION_MIN_MIN}
                   max={DURATION_MAX_MIN}
@@ -183,7 +175,6 @@ export function GoalSettingSheet({
                     onChange({ ...goals, targetSeconds: min * 60 })
                   }
                   primaryColor={primaryColor}
-                  secondaryColor={secondaryColor}
                 />
 
                 <View style={styles.presetsRow}>
@@ -216,19 +207,16 @@ export function GoalSettingSheet({
 
                 <StepperRow
                   label={uiText.data.goalCharsLabel}
-                  unit={uiText.data.goalCharUnit}
                   value={goals.targetChars}
                   min={CHARS_MIN}
                   max={CHARS_MAX}
                   step={CHARS_STEP}
                   onChange={(chars) => onChange({ ...goals, targetChars: chars })}
                   primaryColor={primaryColor}
-                  secondaryColor={secondaryColor}
                 />
 
                 <StepperRow
                   label={uiText.data.goalExcerptsLabel}
-                  unit={uiText.data.goalExcerptUnit}
                   value={goals.targetExcerpts}
                   min={EXCERPT_MIN}
                   max={EXCERPT_MAX}
@@ -237,7 +225,6 @@ export function GoalSettingSheet({
                     onChange({ ...goals, targetExcerpts: count })
                   }
                   primaryColor={primaryColor}
-                  secondaryColor={secondaryColor}
                 />
               </View>
             </View>
@@ -276,18 +263,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 10,
   },
-  labelCol: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 6,
-  },
   rowLabel: {
     fontSize: 17,
     fontWeight: '600',
-  },
-  rowUnit: {
-    fontSize: 14,
-    fontWeight: '500',
   },
   stepper: {
     flexDirection: 'row',
