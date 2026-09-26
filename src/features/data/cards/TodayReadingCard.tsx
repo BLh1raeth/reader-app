@@ -197,9 +197,13 @@ export function TodayReadingCard({
 }
 
 const styles = StyleSheet.create({
+  /**
+   * 文字列与圆环底对齐：三行文字整体下移（之前是居中对齐，视觉偏高）。
+   * 行间距保持 16pt 不变。
+   */
   bodyRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
   },
   textCol: {
     flex: 1,
@@ -208,7 +212,7 @@ const styles = StyleSheet.create({
   metricRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   /**
    * 三行标签也跟数值一起渐进：时长 26pt / 字数 18pt / 摘录 14pt，
