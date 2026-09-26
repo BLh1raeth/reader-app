@@ -59,6 +59,7 @@ import { ReaderSearchSheet } from './ReaderSearchSheet';
 import { ReaderSettingsSheet } from './ReaderSettingsSheet';
 import { ReaderTocSheet } from './ReaderTocSheet';
 import { useReaderController } from './use-reader-controller';
+import { useReaderChrome } from './hooks/useReaderChrome';
 import { useReaderSheets } from './hooks/useReaderSheets';
 
 const CONTROL_BAR_WIDTH = 232;
@@ -431,18 +432,8 @@ export default function ReaderScreen() {
   const readerColors = readerAppearance === 'dark'
     ? { background: '#151517', primary: '#f2f2f7', secondary: '#aeaeb2', glassFallback: 'rgba(44,44,46,0.88)', link: '#64d2ff' }
     : { background: tokens.colors.background, primary: '#171719', secondary: '#8b8b90', glassFallback: 'rgba(250,250,252,0.88)', link: '#007aff' };
-  const chromeVisibleRef = useRef(false);
-  // Latest setReaderChromeVisible for callbacks declared before it (e.g.
-  // handleFootnoteOpen). Assigned in an effect below; footnote taps call
-  // through this ref so they never summon reader chrome.
-  const setReaderChromeVisibleRef = useRef<(visible: boolean) => void>(() => undefined);
   const displayedPageLocationRef = useRef<ReaderLocation | null>(null);
   const pageIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const chromeMountedRef = useRef(false);
-  const chromeLayoutsRef = useRef({ close: false, menu: false });
-  const chromeRevealStartedRef = useRef(false);
-  const chromeFadePendingRef = useRef(false);
-  const chromeReadyFrameRef = useRef<number | null>(null);
   const pendingTocItemRef = useRef<ReaderTocItem | null>(null);
   const pendingBookmarkRef = useRef<ReaderBookmark | null>(null);
   const pendingSearchResultRef = useRef<ReaderSearchResult | null>(null);
@@ -464,11 +455,6 @@ export default function ReaderScreen() {
   const selectionCommandSequenceRef = useRef(0);
   const excerptVerificationSequenceRef = useRef(0);
   const [highlightSnapshot, setHighlightSnapshot] = useState<ReaderHighlightSnapshotItem[] | null>(null);
-  const [chromeMounted, setChromeMounted] = useState(false);
-  const [chromeVisible, setChromeVisible] = useState(false);
-  const [chromeInteractive, setChromeInteractive] = useState(false);
-  const [glassVisible, setGlassVisible] = useState(false);
-  const [glassAnimationDuration, setGlassAnimationDuration] = useState(0.24);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [toc, setToc] = useState<ReaderTocItem[]>([]);
   const [bookmarks, setBookmarks] = useState<ReaderBookmark[]>([]);
@@ -588,6 +574,20 @@ export default function ReaderScreen() {
     await controller.onLocation(location, restoreState);
   }, [controller.onLocation, readingSessionTrackerRef]);
 
+  const {
+    chromeMounted,
+    chromeVisible,
+    chromeInteractive,
+    glassVisible,
+    glassAnimationDuration,
+    chromeProgress,
+    chromeVisibleRef,
+    setReaderChromeVisible,
+    toggleChrome,
+    handleCloseLayout,
+    handleMenuLayout,
+  } = useReaderChrome({ reduceMotion, markReaderActivity });
+
   // RN fallback overlay path: kept until the native popover is verified on a
   // real Development Build. Used only when the native module is unavailable
   // or native presentation throws. Never shown together with the native one.
@@ -621,7 +621,7 @@ export default function ReaderScreen() {
     // path below (re-tapping the marker never leaves chrome visible).
     if (chromeVisibleRef.current) {
       if (__DEV__) console.log('[FOOTNOTE_CHROME_HIDE]');
-      setReaderChromeVisibleRef.current(false);
+      setReaderChromeVisible(false);
     }
     if (__DEV__) {
       // Empirical anchor-space check (no footnote content is logged). The
@@ -679,7 +679,7 @@ export default function ReaderScreen() {
       }
     }
     openFootnoteFallbackOverlay(payload);
-  }, [markReaderActivity, readerAppearance, openFootnoteFallbackOverlay]);
+  }, [markReaderActivity, readerAppearance, openFootnoteFallbackOverlay, setReaderChromeVisible]);
 
   const dismissFootnotePopover = useCallback(() => {
     if (__DEV__) console.log('[FOOTNOTE_CLOSE]');
@@ -742,7 +742,6 @@ export default function ReaderScreen() {
   const [excerptVerificationRequest, setExcerptVerificationRequest] = useState<ReaderExcerptVerificationRequest | null>(null);
   const [displayedPageLocation, setDisplayedPageLocation] = useState<ReaderLocation | null>(null);
   const [readerOpeningVisible, setReaderOpeningVisible] = useState(Boolean(openingTitle));
-  const chromeProgress = useSharedValue(0);
   const pageIndicatorOpacity = useSharedValue(0);
   const readerOpeningOpacity = useSharedValue(openingTitle ? 1 : 0);
 
@@ -974,99 +973,6 @@ export default function ReaderScreen() {
       else router.replace('/');
     });
   }, [controller, router]);
-
-  const unmountChromeAfterFade = useCallback(() => {
-    if (!chromeVisibleRef.current) {
-      chromeMountedRef.current = false;
-      chromeLayoutsRef.current = { close: false, menu: false };
-      chromeRevealStartedRef.current = false;
-      chromeFadePendingRef.current = false;
-      setGlassVisible(false);
-      setChromeMounted(false);
-    }
-  }, []);
-
-  const cancelChromeReadyFrame = useCallback(() => {
-    if (chromeReadyFrameRef.current !== null) {
-      cancelAnimationFrame(chromeReadyFrameRef.current);
-      chromeReadyFrameRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => cancelChromeReadyFrame, [cancelChromeReadyFrame]);
-
-  const beginChromeAfterLayout = useCallback(() => {
-    if (!chromeVisibleRef.current || !chromeMountedRef.current || chromeRevealStartedRef.current) return;
-    chromeRevealStartedRef.current = true;
-    chromeFadePendingRef.current = true;
-    setGlassVisible(true);
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!glassVisible || !chromeFadePendingRef.current || !chromeVisibleRef.current) return;
-    chromeFadePendingRef.current = false;
-    setChromeInteractive(true);
-    const duration = reduceMotion ? 90 : 240;
-    chromeProgress.set(withTiming(1, { duration, easing: Easing.out(Easing.cubic) }));
-  }, [chromeProgress, glassVisible, reduceMotion]);
-
-  const markChromeLayoutReady = useCallback((surface: 'close' | 'menu') => {
-    chromeLayoutsRef.current[surface] = true;
-    if (!chromeVisibleRef.current || chromeRevealStartedRef.current || chromeReadyFrameRef.current !== null) return;
-    if (!chromeLayoutsRef.current.close || !chromeLayoutsRef.current.menu) return;
-    chromeReadyFrameRef.current = requestAnimationFrame(() => {
-      chromeReadyFrameRef.current = null;
-      beginChromeAfterLayout();
-    });
-  }, [beginChromeAfterLayout]);
-
-  const handleCloseLayout = useCallback(() => markChromeLayoutReady('close'), [markChromeLayoutReady]);
-  const handleMenuLayout = useCallback(() => markChromeLayoutReady('menu'), [markChromeLayoutReady]);
-
-  const setReaderChromeVisible = useCallback((visible: boolean) => {
-    chromeVisibleRef.current = visible;
-    setChromeVisible(visible);
-    const duration = reduceMotion ? (visible ? 90 : 80) : (visible ? 240 : 160);
-    setGlassAnimationDuration(duration / 1000);
-    if (visible) {
-      if (!chromeMountedRef.current) {
-        chromeMountedRef.current = true;
-        chromeLayoutsRef.current = { close: false, menu: false };
-        chromeRevealStartedRef.current = false;
-        setChromeInteractive(false);
-        setGlassVisible(false);
-        setChromeMounted(true);
-        return;
-      }
-      cancelChromeReadyFrame();
-      chromeRevealStartedRef.current = true;
-      chromeFadePendingRef.current = false;
-      setGlassVisible(true);
-      setChromeInteractive(true);
-      chromeProgress.set(withTiming(1, { duration, easing: Easing.out(Easing.cubic) }));
-      return;
-    }
-    cancelChromeReadyFrame();
-    chromeFadePendingRef.current = false;
-    setChromeInteractive(false);
-    setGlassVisible(false);
-    chromeProgress.set(withTiming(0, { duration, easing: Easing.in(Easing.cubic) }, (finished) => {
-      if (finished) runOnJS(unmountChromeAfterFade)();
-    }));
-  }, [cancelChromeReadyFrame, chromeProgress, reduceMotion, unmountChromeAfterFade]);
-
-  // Keep the ref used by handleFootnoteOpen (declared above) pointing at the
-  // latest setter; footnote taps must keep the reader in immersive mode.
-  useEffect(() => {
-    setReaderChromeVisibleRef.current = setReaderChromeVisible;
-  }, [setReaderChromeVisible]);
-
-  const toggleChrome = useCallback(async () => {
-    // Center tap / chrome toggle is reader activity (also covers the DOM
-    // onChromeRequest path).
-    markReaderActivity();
-    setReaderChromeVisible(!chromeVisibleRef.current);
-  }, [markReaderActivity, setReaderChromeVisible]);
 
   const bookmarkAnchors = useMemo(() => bookmarks
     .filter((bookmark) => bookmark.spineIndex === controller.currentLocation?.spineIndex)
