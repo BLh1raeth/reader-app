@@ -59,6 +59,7 @@ import { ReaderSearchSheet } from './ReaderSearchSheet';
 import { ReaderSettingsSheet } from './ReaderSettingsSheet';
 import { ReaderTocSheet } from './ReaderTocSheet';
 import { useReaderController } from './use-reader-controller';
+import { useReaderSheets } from './hooks/useReaderSheets';
 
 const CONTROL_BAR_WIDTH = 232;
 const CONTROL_BAR_HEIGHT = 52;
@@ -474,9 +475,14 @@ export default function ReaderScreen() {
   const [bookmarksLoaded, setBookmarksLoaded] = useState(false);
   const [bookmarkBusy, setBookmarkBusy] = useState(false);
   const [currentBookmarked, setCurrentBookmarked] = useState(false);
-  const [tocSheetPresented, setTocSheetPresented] = useState(false);
-  const [settingsSheetPresented, setSettingsSheetPresented] = useState(false);
-  const [searchSheetPresented, setSearchSheetPresented] = useState(false);
+  const {
+    tocSheetPresented,
+    setTocSheetPresented,
+    settingsSheetPresented,
+    setSettingsSheetPresented,
+    searchSheetPresented,
+    setSearchSheetPresented,
+  } = useReaderSheets({ bookId });
   const [tocNavigating, setTocNavigating] = useState(false);
   const [tocNavigationRequest, setTocNavigationRequest] = useState<ReaderTocNavigationRequest | null>(null);
   const [bookmarkSnapshotRequest, setBookmarkSnapshotRequest] = useState<ReaderBookmarkSnapshotRequest | null>(null);
@@ -828,9 +834,6 @@ export default function ReaderScreen() {
     setBookmarksLoaded(false);
     setBookmarkBusy(false);
     setCurrentBookmarked(false);
-    setTocSheetPresented(false);
-    setSettingsSheetPresented(false);
-    setSearchSheetPresented(false);
     setTocNavigating(false);
     setTocNavigationRequest(null);
     setBookmarkSnapshotRequest(null);
