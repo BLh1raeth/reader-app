@@ -22,7 +22,6 @@ import type { ReaderHighlightSnapshotItem } from './highlight-repository';
 import type {
   FootnotePayload,
   FootnoteRichTextNode,
-  ReaderBookmarkNavigationRequest,
   ReaderBookmarkSnapshot,
   ReaderBookmarkSnapshotRequest,
   ReaderLocation,
@@ -36,7 +35,6 @@ import type {
   ReaderTextMeasureRequest,
   ReaderTextMeasureResult,
   ReaderTocItem,
-  ReaderTocNavigationRequest,
 } from './reader-types';
 import { markReaderOpen } from './reader-open-performance';
 import { READING_SESSION_MEASURE_TIMEOUT_MS } from './reading-session-tracker';
@@ -51,6 +49,7 @@ import { useFootnotePopover } from './hooks/useFootnotePopover';
 import { useReaderChrome } from './hooks/useReaderChrome';
 import { useReaderSearch } from './hooks/useReaderSearch';
 import { useReaderSheets } from './hooks/useReaderSheets';
+import { useReaderToc } from './hooks/useReaderToc';
 
 const CONTROL_BAR_WIDTH = 232;
 const CONTROL_BAR_HEIGHT = 52;
@@ -419,11 +418,7 @@ export default function ReaderScreen() {
     : { background: tokens.colors.background, primary: '#171719', secondary: '#8b8b90', glassFallback: 'rgba(250,250,252,0.88)', link: '#007aff' };
   const displayedPageLocationRef = useRef<ReaderLocation | null>(null);
   const pageIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingTocItemRef = useRef<ReaderTocItem | null>(null);
-  const pendingBookmarkRef = useRef<ReaderBookmark | null>(null);
-  const tocRequestSequenceRef = useRef(0);
   const bookmarkSnapshotSequenceRef = useRef(0);
-  const bookmarkNavigationSequenceRef = useRef(0);
   const pageLocationSequenceRef = useRef(0);
   const activeBookmarkSnapshotRequestRef = useRef<ReaderBookmarkSnapshotRequest | null>(null);
   const activePageLocationRequestRef = useRef<ReaderPageLocationRequest | null>(null);
@@ -436,7 +431,6 @@ export default function ReaderScreen() {
   const excerptVerificationSequenceRef = useRef(0);
   const [highlightSnapshot, setHighlightSnapshot] = useState<ReaderHighlightSnapshotItem[] | null>(null);
   const [reduceMotion, setReduceMotion] = useState(false);
-  const [toc, setToc] = useState<ReaderTocItem[]>([]);
   const [bookmarks, setBookmarks] = useState<ReaderBookmark[]>([]);
   const [bookmarksLoaded, setBookmarksLoaded] = useState(false);
   const [bookmarkBusy, setBookmarkBusy] = useState(false);
@@ -449,10 +443,7 @@ export default function ReaderScreen() {
     searchSheetPresented,
     setSearchSheetPresented,
   } = useReaderSheets({ bookId });
-  const [tocNavigating, setTocNavigating] = useState(false);
-  const [tocNavigationRequest, setTocNavigationRequest] = useState<ReaderTocNavigationRequest | null>(null);
   const [bookmarkSnapshotRequest, setBookmarkSnapshotRequest] = useState<ReaderBookmarkSnapshotRequest | null>(null);
-  const [bookmarkNavigationRequest, setBookmarkNavigationRequest] = useState<ReaderBookmarkNavigationRequest | null>(null);
   const [pageLocationRequest, setPageLocationRequest] = useState<ReaderPageLocationRequest | null>(null);
   const [pageByDestination, setPageByDestination] = useState<Record<string, number>>({});
   // Excerpts Tab Core C (warm path): a pending excerpt navigation request is
@@ -593,6 +584,26 @@ export default function ReaderScreen() {
     setSettingsSheetPresented,
     setSearchSheetPresented,
   });
+  const {
+    toc,
+    tocNavigating,
+    tocNavigationRequest,
+    bookmarkNavigationRequest,
+    openToc,
+    selectTocItem,
+    selectBookmark,
+    handleTocSheetDismissed,
+    handleBookmarkNavigationResult,
+    handleTocNavigationResult,
+    handleToc,
+  } = useReaderToc({
+    bookId,
+    markReaderActivity,
+    setTocSheetPresented,
+    setSettingsSheetPresented,
+    setSearchSheetPresented,
+    cancelSearchRequest,
+  });
   const [excerptSaving, setExcerptSaving] = useState(false);
   const [selectionCommand, setSelectionCommand] = useState<ReaderSelectionCommand | null>(null);
   const [excerptVerificationRequest, setExcerptVerificationRequest] = useState<ReaderExcerptVerificationRequest | null>(null);
@@ -680,19 +691,13 @@ export default function ReaderScreen() {
   }, [bookId]);
 
   useEffect(() => {
-    pendingTocItemRef.current = null;
-    pendingBookmarkRef.current = null;
     activeBookmarkSnapshotRequestRef.current = null;
     activePageLocationRequestRef.current = null;
-    setToc([]);
     setBookmarks([]);
     setBookmarksLoaded(false);
     setBookmarkBusy(false);
     setCurrentBookmarked(false);
-    setTocNavigating(false);
-    setTocNavigationRequest(null);
     setBookmarkSnapshotRequest(null);
-    setBookmarkNavigationRequest(null);
     setPageLocationRequest(null);
     setPageByDestination({});
     activeSelectionRef.current = null;
@@ -913,16 +918,6 @@ export default function ReaderScreen() {
     }
   }, [bookId, bookmarks]);
 
-  const openToc = useCallback(() => {
-    markReaderActivity();
-    pendingTocItemRef.current = null;
-    pendingBookmarkRef.current = null;
-    setTocNavigating(false);
-    setSettingsSheetPresented(false);
-    setSearchSheetPresented(false);
-    cancelSearchRequest();
-    setTocSheetPresented(true);
-  }, [markReaderActivity, cancelSearchRequest]);
 
   const openSettings = useCallback(() => {
     markReaderActivity();
@@ -1006,53 +1001,6 @@ export default function ReaderScreen() {
     void controller.commitReaderSettings().catch(() => undefined);
   }, [controller.commitReaderSettings, controller.updateReaderSettings]);
 
-  const selectTocItem = useCallback((item: ReaderTocItem) => {
-    if (tocNavigating) return;
-    pendingBookmarkRef.current = null;
-    pendingTocItemRef.current = item;
-    setTocNavigating(true);
-    setTocSheetPresented(false);
-  }, [tocNavigating]);
-
-  const selectBookmark = useCallback((bookmark: ReaderBookmark) => {
-    if (tocNavigating) return;
-    pendingTocItemRef.current = null;
-    pendingBookmarkRef.current = bookmark;
-    setTocNavigating(true);
-    setTocSheetPresented(false);
-  }, [tocNavigating]);
-
-  const handleTocSheetDismissed = useCallback(() => {
-    const bookmark = pendingBookmarkRef.current;
-    pendingBookmarkRef.current = null;
-    if (bookmark) {
-      setBookmarkNavigationRequest({ id: ++bookmarkNavigationSequenceRef.current, cfi: bookmark.cfi, reason: 'bookmark' });
-      return;
-    }
-    const target = pendingTocItemRef.current;
-    pendingTocItemRef.current = null;
-    if (!target) {
-      setTocNavigating(false);
-      return;
-    }
-    setTocNavigationRequest({ id: ++tocRequestSequenceRef.current, href: target.href, reason: 'toc' });
-  }, []);
-
-  const handleBookmarkNavigationResult = useCallback(async (requestId: number, succeeded: boolean, message: string | null) => {
-    setBookmarkNavigationRequest((request) => request?.id === requestId ? null : request);
-    setTocNavigating(false);
-    if (!succeeded) console.warn('[BOOKMARK_NAVIGATION_FAILED]', JSON.stringify({ requestId, message }));
-  }, []);
-
-  const handleTocNavigationResult = useCallback(async (requestId: number, succeeded: boolean, message: string | null) => {
-    setTocNavigationRequest((request) => request?.id === requestId ? null : request);
-    setTocNavigating(false);
-    if (!succeeded) console.warn('[TOC_NAVIGATION_FAILED]', JSON.stringify({ requestId, message }));
-  }, []);
-
-  const handleToc = useCallback(async (nextToc: ReaderTocItem[]) => {
-    setToc(nextToc);
-  }, []);
 
   const handleSelectionChange = useCallback(async (selection: ReaderSelectionPayload | null) => {
     // Touching the Native action may collapse WebKit's visual selection before
