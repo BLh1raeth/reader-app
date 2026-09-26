@@ -1,7 +1,7 @@
 import { useCallback, useRef } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Circle, Defs, FeDropShadow, Filter, G, Svg } from 'react-native-svg';
+import { Circle, G, Svg } from 'react-native-svg';
 
 import { uiText } from '../../../localization';
 import { DataCard } from '../DataCard';
@@ -29,19 +29,13 @@ const RING_STROKE = 18;
 /**
  * 三同心圆环：外环阅读时长 #111111 / 中环阅读字数 #3A3A3C / 内环摘录数量 #6E6E73。
  * 半径按线宽 18、环间距 2px 排布：61 / 41 / 21。
- * 进度 = 今日实际 / 每日目标；超过 100% 后，第二圈用 lapColor 在原轨道上
- * 继续画：4 段渐变（尾浅头亮，模仿健身 App 第二圈的渐变），头部带投影，
- * 视觉封顶 2 圈。
+ * 进度 = 今日实际 / 每日目标（超过目标按 1 封顶）。
  */
 const RINGS = [
-  { radius: 61, color: '#111111', lapColor: '#4D4D4F' },
-  { radius: 41, color: '#3A3A3C', lapColor: '#707074' },
-  { radius: 21, color: '#6E6E73', lapColor: '#A6A6AB' },
+  { radius: 61, color: '#111111' },
+  { radius: 41, color: '#3A3A3C' },
+  { radius: 21, color: '#6E6E73' },
 ];
-/** 多圈视觉封顶：base 1 圈 + 第二圈 1 圈，超出的不再画（数字文本里有精确值）。 */
-const MAX_VISUAL_FRACTION = 2;
-/** 第二圈分段数：分段做透明度渐变（尾浅头亮）。 */
-const LAP_SEGMENTS = 4;
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -50,40 +44,33 @@ type AnimatedRingProps = {
   radius: number;
   strokeWidth: number;
   color: string;
-  /** 第二圈颜色（比 color 亮一档，超 100% 后在原轨道上继续画）。 */
-  lapColor: string;
-  /** 目标进度（今日实际 / 每日目标，可 > 1；视觉封顶 2）。 */
+  /** 目标进度 0–1（今日实际 / 每日目标，超目标封顶 1）。 */
   fraction: number;
   trackColor: string;
 };
 
 /**
- * 单环入场动画：每次切回数据页时从起点扫到目标进度，模仿 Apple 健康 /
- * 健身记录圆环的开场效果。超 100% 时扫过整圈后，第二圈用 lapColor 在原
- * 轨道上继续画：分成 LAP_SEGMENTS 段，透明度尾浅头亮（渐变），最后一段
- * （头部）带 FeDropShadow 投影，突出"新的一圈压在旧圈上"。
- * 两圈共用一次 900ms 的连续扫动。
+ * 单环入场动画：每次切回数据页时从起点（offset = 整周长，弧不可见）
+ * 扫到目标进度，模仿 Apple 健康 / 健身记录圆环的开场效果。
  * 用 Animated 驱动 strokeDashoffset；SVG 属性不支持 native driver，走 JS 线程，
- * 三环体量很小，真机足够流畅（滤镜只在超 100% 的头部出现）。
+ * 三环体量很小，真机足够流畅。
  */
 function AnimatedRing({
   size,
   radius,
   strokeWidth,
   color,
-  lapColor,
   fraction,
   trackColor,
 }: AnimatedRingProps) {
   const center = size / 2;
   const circumference = 2 * Math.PI * radius;
-  const progress = useRef(new Animated.Value(0)).current;
+  const offset = useRef(new Animated.Value(circumference)).current;
 
   useFocusEffect(
     useCallback(() => {
-      progress.setValue(0);
-      const animation = Animated.timing(progress, {
-        toValue: fraction,
+      const animation = Animated.timing(offset, {
+        toValue: circumference * (1 - fraction),
         duration: 900,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: false,
@@ -93,53 +80,13 @@ function AnimatedRing({
         animation.stop();
         // 切走时复位到起点：下次切回首帧就是不可见状态，
         // 不会先闪出完整圆环再消失重播。
-        progress.setValue(0);
+        offset.setValue(circumference);
       };
-    }, [fraction, progress]),
+    }, [circumference, fraction, offset]),
   );
-
-  /** 第一圈：progress 0→1 映射到 offset 周长→0，超 1 后保持整圈。 */
-  const baseOffset = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [circumference, 0],
-    extrapolate: 'clamp',
-  });
-
-  /** 第二圈分段：[1, 1+remainder] 均分，透明度尾浅头亮。 */
-  const hasLap2 = fraction > 1;
-  const remainder = Math.min(fraction - 1, 1);
-  const lapSegments = hasLap2
-    ? Array.from({ length: LAP_SEGMENTS }, (_, k) => {
-        const segStart = 1 + (k * remainder) / LAP_SEGMENTS;
-        const segEnd = 1 + ((k + 1) * remainder) / LAP_SEGMENTS;
-        return {
-          key: k,
-          offset: progress.interpolate({
-            inputRange: [segStart, segEnd],
-            outputRange: [circumference, 0],
-            extrapolate: 'clamp',
-          }),
-          opacity: 0.3 + (0.7 * (k + 1)) / LAP_SEGMENTS,
-          isHead: k === LAP_SEGMENTS - 1,
-        };
-      })
-    : [];
-
-  const shadowId = `lap2shadow-${radius}`;
 
   return (
     <G rotation={-90} origin={`${center}, ${center}`}>
-      <Defs>
-        <Filter id={shadowId} x="-30%" y="-30%" width="160%" height="160%">
-          <FeDropShadow
-            dx="0"
-            dy="2"
-            stdDeviation="2.5"
-            floodColor="#000000"
-            floodOpacity="0.4"
-          />
-        </Filter>
-      </Defs>
       <Circle
         cx={center}
         cy={center}
@@ -157,24 +104,8 @@ function AnimatedRing({
         strokeLinecap="round"
         fill="none"
         strokeDasharray={`${circumference}`}
-        strokeDashoffset={baseOffset}
+        strokeDashoffset={offset}
       />
-      {lapSegments.map((seg) => (
-        <AnimatedCircle
-          key={seg.key}
-          cx={center}
-          cy={center}
-          r={radius}
-          stroke={lapColor}
-          strokeWidth={strokeWidth}
-          strokeLinecap={seg.isHead ? 'round' : 'butt'}
-          fill="none"
-          opacity={seg.opacity}
-          strokeDasharray={`${circumference}`}
-          strokeDashoffset={seg.offset}
-          filter={seg.isHead ? `url(#${shadowId})` : undefined}
-        />
-      ))}
     </G>
   );
 }
@@ -213,15 +144,15 @@ export function TodayReadingCard({
     forwardCharacters === null ? '—' : `${forwardCharacters}${uiText.data.characterUnit}`;
   const excerptText = excerptCount === null ? '—' : `${excerptCount}${uiText.data.excerptUnit}`;
 
-  /** 三环进度 = 今日实际 / 每日目标，可超 1；视觉封顶 2 圈。目标未加载时为 0。 */
-  const clampVisual = (v: number) => Math.min(MAX_VISUAL_FRACTION, Math.max(0, v));
+  /** 三环进度 = 今日实际 / 每日目标，超目标封顶 1；目标未加载时为 0。 */
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
   const ringFractions =
     goals === null
       ? [0, 0, 0]
       : [
-          activeSeconds === null ? 0 : clampVisual(activeSeconds / goals.targetSeconds),
-          forwardCharacters === null ? 0 : clampVisual(forwardCharacters / goals.targetChars),
-          excerptCount === null ? 0 : clampVisual(excerptCount / goals.targetExcerpts),
+          activeSeconds === null ? 0 : clamp01(activeSeconds / goals.targetSeconds),
+          forwardCharacters === null ? 0 : clamp01(forwardCharacters / goals.targetChars),
+          excerptCount === null ? 0 : clamp01(excerptCount / goals.targetExcerpts),
         ];
 
   const a11y =
@@ -245,7 +176,6 @@ export function TodayReadingCard({
                   radius={ring.radius}
                   strokeWidth={RING_STROKE}
                   color={ring.color}
-                  lapColor={ring.lapColor}
                   fraction={ringFractions[index]}
                   trackColor={theme.ringTrack}
                 />
