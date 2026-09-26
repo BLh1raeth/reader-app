@@ -6,24 +6,20 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ReactNode } from 'react';
 import { AccessibilityInfo, Linking, Pressable, ScrollView, StyleSheet, Text, TextStyle, useWindowDimensions, View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { AnimatedStyle, cancelAnimation, Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { AnimatedStyle, Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { isReaderEditMenuNativeAvailable } from '../../../modules/reader-edit-menu';
 import { tokens } from '../../design-system/tokens';
 import { uiText } from '../../localization';
 import { BookCoverArt } from '../library/BookCoverArt';
 import type { CoverTone } from '../library/library-types';
-import { takeReaderExternalNavigationRequest, type ReaderExternalNavigationRequest } from './reader-external-navigation';
 import type {
   FootnotePayload,
   FootnoteRichTextNode,
   ReaderLocation,
-  ReaderPageLocationRequest,
-  ReaderPageLocationResult,
   ReaderRestoreState,
   ReaderTextMeasureRequest,
   ReaderTextMeasureResult,
-  ReaderTocItem,
 } from './reader-types';
 import { markReaderOpen } from './reader-open-performance';
 import { READING_SESSION_MEASURE_TIMEOUT_MS } from './reading-session-tracker';
@@ -37,6 +33,7 @@ import { useReaderController } from './use-reader-controller';
 import { useFootnotePopover } from './hooks/useFootnotePopover';
 import { useReaderBookmarks } from './hooks/useReaderBookmarks';
 import { useReaderChrome } from './hooks/useReaderChrome';
+import { useReaderNavigation } from './hooks/useReaderNavigation';
 import { useReaderSearch } from './hooks/useReaderSearch';
 import { EXCERPT_ACTION_EDGE_GAP, EXCERPT_ACTION_HEIGHT, EXCERPT_ACTION_WIDTH, useReaderSelection } from './hooks/useReaderSelection';
 import { useReaderSheets } from './hooks/useReaderSheets';
@@ -58,12 +55,7 @@ function firstRouteParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function collectTocPageTargets(items: ReaderTocItem[], targets: Map<string, string>) {
-  for (const item of items) {
-    if (item.href) targets.set(item.href, `toc:${item.id ?? item.href}`);
-    if (item.subitems?.length) collectTocPageTargets(item.subitems, targets);
-  }
-}
+// ReaderScreen 巨型组件拆分：collectTocPageTargets 已移至 useReaderNavigation。
 
 function ReaderGlassButton({
   accessibilityLabel,
@@ -403,10 +395,6 @@ export default function ReaderScreen() {
   const readerColors = readerAppearance === 'dark'
     ? { background: '#151517', primary: '#f2f2f7', secondary: '#aeaeb2', glassFallback: 'rgba(44,44,46,0.88)', link: '#64d2ff' }
     : { background: tokens.colors.background, primary: '#171719', secondary: '#8b8b90', glassFallback: 'rgba(250,250,252,0.88)', link: '#007aff' };
-  const displayedPageLocationRef = useRef<ReaderLocation | null>(null);
-  const pageIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pageLocationSequenceRef = useRef(0);
-  const activePageLocationRequestRef = useRef<ReaderPageLocationRequest | null>(null);
   const [reduceMotion, setReduceMotion] = useState(false);
   const {
     tocSheetPresented,
@@ -416,16 +404,6 @@ export default function ReaderScreen() {
     searchSheetPresented,
     setSearchSheetPresented,
   } = useReaderSheets({ bookId });
-  const [pageLocationRequest, setPageLocationRequest] = useState<ReaderPageLocationRequest | null>(null);
-  const [pageByDestination, setPageByDestination] = useState<Record<string, number>>({});
-  // Excerpts Tab Core C (warm path): a pending excerpt navigation request is
-  // consumed when this reader instance is focused and ready.
-  const [excerptNavigationRequest, setExcerptNavigationRequest] = useState<ReaderExternalNavigationRequest | null>(null);
-  // Excerpts Tab Core C: lightweight transient notice for navigation
-  // failures (e.g. an unresolvable excerpt target). There is no app-wide
-  // toast system; this is a local, self-dismissing pill.
-  const [externalNavMessage, setExternalNavMessage] = useState<string | null>(null);
-  const externalNavMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── ReadingSession Core A ─────────────────────────────────────────────
   // Behavioral reading data layer (no formal UI in this phase). The tracker
@@ -617,9 +595,32 @@ export default function ReaderScreen() {
     isReady: controller.state.kind === 'ready',
     settingsSheetPresented,
   });
-  const [displayedPageLocation, setDisplayedPageLocation] = useState<ReaderLocation | null>(null);
   const [readerOpeningVisible, setReaderOpeningVisible] = useState(Boolean(openingTitle));
   const pageIndicatorOpacity = useSharedValue(0);
+  const {
+    pageLocationRequest,
+    pageByDestination,
+    excerptNavigationRequest,
+    externalNavMessage,
+    displayedPageLocation,
+    displayedSearchResults,
+    handlePageLocationUpdate,
+    showExternalNavMessage,
+    handleExcerptNavigationResult,
+  } = useReaderNavigation({
+    bookId,
+    toc,
+    bookmarks,
+    searchComplete,
+    searchResults,
+    currentLocation: controller.currentLocation,
+    pageCountCache: controller.pageCountCache,
+    externalTargetFailed: controller.externalTargetFailed,
+    isReady: controller.state.kind === 'ready',
+    reduceMotion,
+    pageIndicatorOpacity,
+    isFocused,
+  });
   const readerOpeningOpacity = useSharedValue(openingTitle ? 1 : 0);
 
   useEffect(() => {
@@ -640,70 +641,9 @@ export default function ReaderScreen() {
 
   const readerOpeningStyle = useAnimatedStyle(() => ({ opacity: readerOpeningOpacity.get() }));
 
-  useEffect(() => {
-    const nextLocation = controller.currentLocation;
-    const displayedLocation = displayedPageLocationRef.current;
-    const fadeOutDuration = reduceMotion ? 40 : PAGE_INDICATOR_FADE_OUT_MS;
-    const fadeInDuration = reduceMotion ? 60 : PAGE_INDICATOR_FADE_IN_MS;
-    if (pageIndicatorTimerRef.current) {
-      clearTimeout(pageIndicatorTimerRef.current);
-      pageIndicatorTimerRef.current = null;
-    }
-    cancelAnimation(pageIndicatorOpacity);
-
-    if (!nextLocation) {
-      displayedPageLocationRef.current = null;
-      setDisplayedPageLocation(null);
-      pageIndicatorOpacity.set(0);
-      return;
-    }
-
-    if (!displayedLocation) {
-      displayedPageLocationRef.current = nextLocation;
-      setDisplayedPageLocation(nextLocation);
-      pageIndicatorOpacity.set(withTiming(1, {
-        duration: reduceMotion ? 60 : 120,
-        easing: Easing.out(Easing.cubic),
-      }));
-      return;
-    }
-
-    const visiblePageChanged = displayedLocation.currentPage !== nextLocation.currentPage
-      || displayedLocation.totalPages !== nextLocation.totalPages;
-    if (!visiblePageChanged) {
-      displayedPageLocationRef.current = nextLocation;
-      setDisplayedPageLocation(nextLocation);
-      return;
-    }
-
-    pageIndicatorOpacity.set(withTiming(0, {
-      duration: fadeOutDuration,
-      easing: Easing.in(Easing.cubic),
-    }));
-    pageIndicatorTimerRef.current = setTimeout(() => {
-      pageIndicatorTimerRef.current = null;
-      displayedPageLocationRef.current = nextLocation;
-      setDisplayedPageLocation(nextLocation);
-      pageIndicatorOpacity.set(withTiming(1, {
-        duration: fadeInDuration,
-        easing: Easing.out(Easing.cubic),
-      }));
-    }, fadeOutDuration);
-  }, [controller.currentLocation, pageIndicatorOpacity, reduceMotion]);
-
-  useEffect(() => () => {
-    if (pageIndicatorTimerRef.current) clearTimeout(pageIndicatorTimerRef.current);
-    cancelAnimation(pageIndicatorOpacity);
-  }, [pageIndicatorOpacity]);
 
   useEffect(() => {
     if (bookId) markReaderOpen(bookId, 'READER_ROUTE_MOUNTED');
-  }, [bookId]);
-
-  useEffect(() => {
-    activePageLocationRequestRef.current = null;
-    setPageLocationRequest(null);
-    setPageByDestination({});
   }, [bookId]);
 
   const readerInput = useMemo(() => controller.state.kind === 'opening'
@@ -712,44 +652,6 @@ export default function ReaderScreen() {
       ? controller.state
       : null, [controller.state]);
 
-  const activePaginationCache = controller.pageCountCache
-    && controller.currentLocation?.totalPages === controller.pageCountCache.totalPages
-    ? controller.pageCountCache
-    : null;
-  const pageLocationTargets = useMemo(() => {
-    const targetKeys = new Map<string, string>();
-    collectTocPageTargets(toc, targetKeys);
-    for (const bookmark of bookmarks) targetKeys.set(bookmark.cfi, `bookmark:${bookmark.id}`);
-    if (searchComplete) {
-      for (const result of searchResults) targetKeys.set(result.cfi, `search:${result.id}`);
-    }
-    return Array.from(targetKeys, ([destination, key]) => ({ key, destination }));
-  }, [bookmarks, searchComplete, searchResults, toc]);
-  const pageLocationTargetSignature = useMemo(
-    () => pageLocationTargets.map((target) => `${target.key}\u0000${target.destination}`).join('\u0001'),
-    [pageLocationTargets],
-  );
-  const displayedSearchResults = useMemo(() => searchResults.map((result) => ({
-    ...result,
-    pageNumber: pageByDestination[result.cfi] ?? null,
-  })), [pageByDestination, searchResults]);
-
-  useEffect(() => {
-    if (!activePaginationCache || !pageLocationTargets.length) {
-      activePageLocationRequestRef.current = null;
-      setPageLocationRequest(null);
-      setPageByDestination({});
-      return;
-    }
-    const request: ReaderPageLocationRequest = {
-      id: ++pageLocationSequenceRef.current,
-      layoutSignature: activePaginationCache.layoutSignature,
-      targets: pageLocationTargets,
-    };
-    activePageLocationRequestRef.current = request;
-    setPageByDestination({});
-    setPageLocationRequest(request);
-  }, [activePaginationCache?.layoutSignature, pageLocationTargetSignature]);
   useEffect(() => {
     let mounted = true;
     void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
@@ -781,61 +683,9 @@ export default function ReaderScreen() {
   }, [markReaderActivity, cancelSearchRequest]);
 
 
-  const handlePageLocationUpdate = useCallback(async (
-    requestId: number,
-    batch: ReaderPageLocationResult[],
-    done: boolean,
-    message: string | null,
-  ) => {
-    if (activePageLocationRequestRef.current?.id !== requestId) return;
-    if (batch.length) {
-      setPageByDestination((current) => {
-        const next = { ...current };
-        for (const result of batch) next[result.destination] = result.pageNumber;
-        return next;
-      });
-    }
-    if (message) console.warn('[PAGE_LOCATION_FAILED]', JSON.stringify({ requestId, message }));
-    if (done) {
-      activePageLocationRequestRef.current = null;
-      setPageLocationRequest((current) => current?.id === requestId ? null : current);
-    }
-  }, []);
 
   // Excerpts Tab Core C: self-dismissing transient notice. There is no
   // app-wide toast system, so this stays local to the Reader screen.
-  const showExternalNavMessage = useCallback((message: string) => {
-    if (externalNavMessageTimerRef.current) clearTimeout(externalNavMessageTimerRef.current);
-    setExternalNavMessage(message);
-    externalNavMessageTimerRef.current = setTimeout(() => {
-      externalNavMessageTimerRef.current = null;
-      setExternalNavMessage(null);
-    }, 2500);
-  }, []);
-
-  const handleExcerptNavigationResult = useCallback(async (requestId: number, succeeded: boolean, message: string | null) => {
-    setExcerptNavigationRequest((request) => request?.id === requestId ? null : request);
-    if (!succeeded) showExternalNavMessage(message ?? '无法定位到原摘录位置');
-  }, [showExternalNavMessage]);
-
-  // Excerpts Tab Core C (cold path): the engine validated the external target
-  // during open and fell back to the saved progress when it was unresolvable.
-  // Wait for the ready state so the notice is visible, not hidden behind the
-  // opening overlay.
-  const externalTargetFailed = controller.externalTargetFailed;
-  const readerReady = controller.state.kind === 'ready';
-  useEffect(() => {
-    if (externalTargetFailed && readerReady) showExternalNavMessage('无法定位到原摘录位置');
-  }, [externalTargetFailed, readerReady, showExternalNavMessage]);
-
-  // Excerpts Tab Core C (warm path): the book is already open and this reader
-  // instance is focused. A pending request that arrived after the initial
-  // open is consumed here; the store is one-shot so it can never replay.
-  useEffect(() => {
-    if (!isFocused || !readerReady || !bookId) return;
-    const request = takeReaderExternalNavigationRequest(bookId);
-    if (request) setExcerptNavigationRequest(request);
-  }, [isFocused, readerReady, bookId]);
 
   const handleSettingsSheetDismissed = useCallback(() => {
     void controller.commitReaderSettings().catch(() => undefined);
