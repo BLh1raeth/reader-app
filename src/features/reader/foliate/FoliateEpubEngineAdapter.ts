@@ -20,6 +20,12 @@ import type {
   ReaderZipEntry,
 } from '../reader-types';
 import type { ReaderPageCountCache } from '../reader-page-cache-repository';
+// foliate-js is statically imported (not dynamically) so its fetch+eval is
+// paid once with the DOM bundle — pre-warmed at app launch — instead of
+// ~450ms serially on every book open. search.js/text-walker.js stay dynamic:
+// search is not on the open critical path.
+import { EPUB } from 'foliate-js/epub.js';
+import { makeBook } from 'foliate-js/view.js';
 import { getGlobalReaderPage } from '../reader-pagination';
 import {
   FOOTNOTE_EXTERNAL_SCHEME_RE,
@@ -308,7 +314,6 @@ function normalizeBookStyles(book: FoliateBook) {
 
 async function createOnDemandBook(
   input: FoliateOpenInput,
-  epubModulePromise: Promise<typeof import('foliate-js/epub.js')> = import('foliate-js/epub.js'),
 ): Promise<FoliateBook> {
   const entries = new Map((input.entries ?? []).map((entry) => [entry.name, entry]));
   const decoder = new TextDecoder();
@@ -318,7 +323,6 @@ async function createOnDemandBook(
     if (!resource) return null;
     return base64ToBytes(resource.base64);
   };
-  const { EPUB } = await epubModulePromise;
   return new EPUB({
     loadText: async (name: string) => {
       // Opening metadata (container.xml, OPF, encryption.xml, NCX/nav) was
@@ -528,18 +532,12 @@ export class FoliateEpubEngineAdapter {
     this.applyReaderAppearanceToHost();
     this.pageCountInput = { ...input, readerSettings: this.readerSettings };
     this.restoreState = 'opening';
-    // These two modules have no initialization dependency on one another.
-    // Fetching them together removes one whole DOM-module round trip on the
-    // route-local host while preserving foliate's normal open/init lifecycle.
-    const viewModulePromise = import('foliate-js/view.js');
-    const epubModulePromise = input.sourceKind === 'zip-resource-loader'
-      ? import('foliate-js/epub.js')
-      : null;
+    // foliate-js is statically imported at the top of this module; no
+    // per-open dynamic import here.
     this.onDiagnostic({ event: 'BOOK_BUILD_START' });
     const bookPromise = input.sourceKind === 'zip-resource-loader'
-      ? createOnDemandBook(input, epubModulePromise!)
+      ? createOnDemandBook(input)
       : null;
-    const { makeBook } = await viewModulePromise;
     this.onDiagnostic({ event: 'FOLIATE_IMPORT_END' });
 
     const view = document.createElement('foliate-view') as FoliateView;
@@ -2782,7 +2780,6 @@ export class FoliateEpubEngineAdapter {
 
   private async createCounterBook(input: FoliateOpenInput): Promise<FoliateBook> {
     if (input.sourceKind === 'zip-resource-loader') return createOnDemandBook(input);
-    const { makeBook } = await import('foliate-js/view.js');
     return makeBook(new File([base64ToBytes(input.base64 ?? '')], input.fileName, { type: 'application/epub+zip' })) as Promise<FoliateBook>;
   }
 
