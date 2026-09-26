@@ -24,7 +24,8 @@ const PLOT_INSET = 10;
 const BAR_WIDTH = 10;
 /** 区间为 0（样本不足）时的最小可见柱高。 */
 const MIN_BAR_HEIGHT = 6;
-const DOT_RADIUS = 4;
+/** 黑点直径 = 柱宽：左右边界与柱子对齐。 */
+const DOT_SIZE = BAR_WIDTH;
 
 /**
  * “阅读速度”半宽卡（B.6 黑白极简，仿 iOS 健康“双足支撑时间”）。
@@ -100,7 +101,7 @@ export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpee
                     style={[
                       styles.dot,
                       {
-                        top: dotY - DOT_RADIUS,
+                        top: dotY - DOT_SIZE / 2,
                         backgroundColor: theme.chartPrimary,
                       },
                     ]}
@@ -154,12 +155,12 @@ const styles = StyleSheet.create({
     width: BAR_WIDTH,
     borderRadius: BAR_WIDTH / 2,
   },
-  /** 最新速度的黑点。 */
+  /** 最新速度的黑点：直径与柱宽一致，左右边界对齐柱子。 */
   dot: {
     position: 'absolute',
-    width: DOT_RADIUS * 2,
-    height: DOT_RADIUS * 2,
-    borderRadius: DOT_RADIUS,
+    width: DOT_SIZE,
+    height: DOT_SIZE,
+    borderRadius: DOT_SIZE / 2,
   },
   valueRow: {
     flexDirection: 'row',
