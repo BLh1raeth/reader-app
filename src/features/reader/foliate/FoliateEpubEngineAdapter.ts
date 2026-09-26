@@ -2284,12 +2284,9 @@ export class FoliateEpubEngineAdapter {
     this.rendererTouchCleanup?.();
     this.rendererTouchCleanup = null;
     if (!renderer) return;
-    // Keep foliate's `animated` slide: with the attribute present the
-    // paginator turns the page with a 300ms easeOutQuad scroll animation
-    // that starts on the next frame after the tap. foliate drops next()/prev()
-    // issued while its internal lock is held, so rapid taps are serialized
-    // through our own FIFO queue (requestPageTurn) instead.
-    renderer.setAttribute('animated', '');
+    // No `animated`: the paginator jumps to the next page instantly instead
+    // of sliding. Page turns are direct cuts — no scroll, no dissolve.
+    renderer.removeAttribute('animated');
     renderer.style.touchAction = 'none';
     const touchOptions = { capture: true, passive: false } as const;
     renderer.addEventListener('touchstart', this.blockFoliateRendererTouchPipeline, touchOptions);
@@ -2324,10 +2321,6 @@ export class FoliateEpubEngineAdapter {
     // established page-turn pipeline.
     void this.clearSelectedSearchHighlight();
     let nextDirection: 'next' | 'prev' | null = direction;
-    // The first turn slides (foliate's 300ms easeOutQuad, starting on the
-    // next frame after the tap). Turns queued while it runs cut instantly so
-    // fast flipping catches up instead of serializing a slide per tap.
-    let slide = true;
     try {
       // Keep the loop for the entire burst: foliate drops next()/prev()
       // issued while its internal turn lock is held, so only one turn may
@@ -2338,11 +2331,10 @@ export class FoliateEpubEngineAdapter {
         // must not inherit this turn's reason.
         this.pendingNavigationReason = nextDirection === 'next' ? 'reading-forward' : 'reading-backward';
         try {
-          await this.turnWithSlide(nextDirection, slide ? 'slide' : 'instant');
+          await this.turnInstant(nextDirection);
         } finally {
           this.pendingNavigationReason = null;
         }
-        slide = false;
         const pendingTurn = this.takePendingPageTurn();
         if (!pendingTurn) break;
         nextDirection = pendingTurn.direction;
@@ -2455,31 +2447,16 @@ export class FoliateEpubEngineAdapter {
   }
 
   /**
-   * Drive one page turn through foliate's paginator.
-   *
-   * - 'slide': foliate's own 300ms easeOutQuad scroll animation (the
-   *   renderer's `animated` attribute). Starts on the next frame after the
-   *   tap, GPU-friendly, no snapshots involved.
-   * - 'instant': drop `animated` for this turn only so a queued catch-up
-   *   turn cuts straight to the page instead of queueing another 300ms
-   *   slide. The attribute is restored afterwards so the next fresh tap
-   *   slides again.
-   *
-   * Reduced motion always cuts: no animation at all.
+   * One page turn as a direct cut: no slide, no dissolve. foliate jumps the
+   * scroll container to the next page synchronously (plus its internal
+   * settle wait). There is no animation, so reduced motion needs no
+   * special-casing — every user gets this same path.
    */
-  private async turnWithSlide(direction: 'next' | 'prev', mode: 'slide' | 'instant') {
+  private async turnInstant(direction: 'next' | 'prev') {
     const view = this.view;
-    const renderer = view?.renderer;
     if (!view) return;
-    const slide = mode === 'slide' && !this.prefersReducedMotion();
-    if (slide) renderer?.setAttribute('animated', '');
-    else renderer?.removeAttribute('animated');
-    try {
-      await (direction === 'next' ? view.next() : view.prev());
-    } finally {
-      // Restore the sliding default unless the user prefers reduced motion.
-      if (!this.prefersReducedMotion()) renderer?.setAttribute('animated', '');
-    }
+    view.renderer?.removeAttribute('animated');
+    await (direction === 'next' ? view.next() : view.prev());
   }
 
   private fadeOut() {
