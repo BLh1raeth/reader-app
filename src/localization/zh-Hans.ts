@@ -94,7 +94,7 @@ export const zhHans = {
     /** dayKey → 周几：new Date(y, m - 1, d).getDay() 取下标。 */
     weekdayNames: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
     last7Days: '最近 7 天',
-    totalReadingTime: '阅读时长',
+    totalReadingTime: '阅读时段',
     today: '今天',
     readingSpeed: '阅读速度',
     currentStreak: '连续阅读',

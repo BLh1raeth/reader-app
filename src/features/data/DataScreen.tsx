@@ -146,7 +146,6 @@ export default function DataScreen() {
           <View style={styles.cardCell}>
             <ReadingTimeCard
               hourlyActiveSeconds={data?.hourlyActiveSeconds ?? null}
-              todayActiveSeconds={summary?.todayActiveSeconds ?? null}
               style={styles.halfCard}
             />
           </View>
