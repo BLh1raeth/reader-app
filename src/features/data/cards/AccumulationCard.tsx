@@ -246,7 +246,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   totalBlock: {
-    marginTop: 16,
+    marginTop: 0,
   },
   /** B.7：辅助标签 14pt / 500 / #8E8E93。 */
   totalLabel: {
