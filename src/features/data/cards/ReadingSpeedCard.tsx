@@ -51,6 +51,9 @@ export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpee
    * - 胶囊从中间向上下展开（区间语义：不是从 0 涨起来，是区间确立）；
    * - 黑点在柱子展开过半后从上方落定到最新速度位置；
    * - 7 天从左到右每根晚 40ms，历史先铺、今天最后落定。
+   * native driver（transform / opacity）：JS 驱动的 height+top 每帧都要在 JS 线程
+   * 算插值、走 bridge、触发 layout，整页一起跑会挤爆 JS 线程导致所有图一起卡；
+   * native 驱动全程在 UI 线程跑，JS 每帧零工作。视觉与之前完全一致。
    * 大数字不做滚动（与今日大卡一致）：只做图形动画。
    */
   const columnProgress = useRef(
@@ -68,7 +71,7 @@ export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpee
               toValue: 1,
               duration: 900,
               easing: Easing.out(Easing.cubic),
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
           ]),
         ),
@@ -117,7 +120,6 @@ export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpee
             const top =
               rawHeight >= MIN_BAR_HEIGHT ? rawTop : toY((p10 + p90) / 2) - MIN_BAR_HEIGHT / 2;
             const barBottom = top + barHeight;
-            const centerY = top + barHeight / 2;
             const progress =
               columnProgress[Math.min(index, columnProgress.length - 1)];
 
@@ -134,15 +136,11 @@ export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpee
                   style={[
                     styles.bar,
                     {
-                      height: progress.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0, barHeight],
-                      }),
-                      top: progress.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [centerY, top],
-                      }),
+                      height: barHeight,
+                      top,
                       backgroundColor: theme.chartEmpty,
+                      /** 从中心向上下展开：scaleY 天然以中心为锚点（native driver）。 */
+                      transform: [{ scaleY: progress }],
                     },
                   ]}
                 />
