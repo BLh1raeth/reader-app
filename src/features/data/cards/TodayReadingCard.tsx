@@ -208,14 +208,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-  /** 指标名称与数值同色，颜色取自 DEMO_RINGS（与三环一一对应）。 */
+  /** B.7：辅助标签 15pt / 500（之前 17pt / 600 过重）。 */
   metricName: {
-    fontSize: 17,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '500',
   },
   metricValue: {
     fontSize: 17,
-    fontWeight: '700',
+    fontWeight: '600',
   },
   /** 时长行：卡内视觉重心，整行放大到 26pt（名称/数值同大，颜色区分）。 */
   durationName: {

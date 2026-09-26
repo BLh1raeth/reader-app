@@ -90,6 +90,10 @@ export const zhHans = {
     showAll: '全部显示',
     /** 阅读节奏卡加粗结论（“最近 7 天”与界面 section 文案对齐）。 */
     rhythmSummaryRecent: (days: number) => `最近 7 天，你有 ${days} 天进行了阅读。`,
+    /** 阅读节奏卡：7 天内一天都没读时的结论（只陈述事实，不加评价）。 */
+    rhythmSummaryEmpty: '最近 7 天还没有阅读记录。',
+    /** 阅读节奏卡：7 日累计阅读时长的小标题。 */
+    last7DaysTotalLabel: '最近 7 天累计阅读',
     totalExcerptLabel: '累计摘录',
     /** dayKey → 周几：new Date(y, m - 1, d).getDay() 取下标。 */
     weekdayNames: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],

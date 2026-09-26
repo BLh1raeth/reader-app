@@ -41,6 +41,18 @@ export function formatCount(value: number, unit: string): string {
 }
 
 /**
+ * dayKey（YYYY-MM-DD）→ 周几单字标签（一…日），用于图表日期刻度。
+ * 用本地日历解析，不涉及时区转换；解析失败返回空串。
+ */
+export function weekdayShortName(dayKey: string): string {
+  const parts = dayKey.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return '';
+  const date = new Date(parts[0], parts[1] - 1, parts[2]);
+  if (Number.isNaN(date.getTime())) return '';
+  return ['日', '一', '二', '三', '四', '五', '六'][date.getDay()] ?? '';
+}
+
+/**
  * dayKey（YYYY-MM-DD）→ 周几中文名（周日…周六）。
  * 用本地日历解析，不涉及时区转换；解析失败返回空串。
  */

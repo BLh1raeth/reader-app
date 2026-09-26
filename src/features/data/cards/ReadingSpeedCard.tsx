@@ -196,7 +196,7 @@ export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpee
 const styles = StyleSheet.create({
   title: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '600',
     marginBottom: 12,
   },
   plot: {

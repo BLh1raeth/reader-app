@@ -36,6 +36,10 @@ export type DataTheme = {
   chartEmpty: string;
   /** 分割线 #E9E9EC */
   divider: string;
+  /** 7 日趋势图：有阅读的非今天柱子 #B8B8BD（浅色） */
+  trendOther: string;
+  /** 7 日趋势图：零阅读日的极浅短柱 #E9E9EC（浅色） */
+  trendZero: string;
   /** 三同心圆环轨道底色（圆环实现禁止改动，token 保留原值） */
   ringTrack: string;
 };
@@ -53,6 +57,8 @@ const lightTheme: DataTheme = {
   chartLight: '#A1A1A6',
   chartEmpty: '#E5E5EA',
   divider: '#E9E9EC',
+  trendOther: '#B8B8BD',
+  trendZero: '#E9E9EC',
   ringTrack: '#EAEAEA',
 };
 
@@ -69,6 +75,8 @@ const darkTheme: DataTheme = {
   chartLight: '#636366',
   chartEmpty: '#2E2E33',
   divider: '#2E2E33',
+  trendOther: '#636366',
+  trendZero: '#2E2E33',
   ringTrack: '#2E2E33',
 };
 

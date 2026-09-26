@@ -157,6 +157,8 @@ export default function DataScreen() {
 
         <AccumulationCard
           days={last7Days}
+          todayKey={todayKey}
+          last7DaysActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
           streakDays={summary?.currentStreakDays ?? null}
           totalDays={summary?.totalReadingDays ?? null}
           excerptCount={summary?.totalExcerptCount ?? null}
