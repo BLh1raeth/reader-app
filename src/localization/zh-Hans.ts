@@ -86,8 +86,6 @@ export const zhHans = {
     todayMetricExcerpts: '摘录',
     todaySummaryCharsAndExcerpts: (chars: number, count: number) =>
       `今天你已经阅读了 ${chars} 字，并记录了 ${count} 条摘录。`,
-    /** 摘要 section 右侧链接（详情页未实现：纯展示，不可点）。 */
-    showAll: '全部显示',
     /** 阅读节奏卡加粗结论（“最近 7 天”与界面 section 文案对齐）。 */
     rhythmSummaryRecent: (days: number) => `最近 7 天，你有 ${days} 天进行了阅读。`,
     /** 阅读节奏卡：7 天内一天都没读时的结论（只陈述事实，不加评价）。 */

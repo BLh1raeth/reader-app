@@ -1,5 +1,7 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef } from 'react';
+import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
+import { useFocusEffect } from 'expo-router';
 
 import { uiText } from '../../../localization';
 import type { DailyReadingStats } from '../reading-analytics-types';
@@ -73,6 +75,29 @@ export function AccumulationCard({
     last7DaysActiveSeconds === null ? '—' : formatDuration(last7DaysActiveSeconds);
 
   const maxSeconds = Math.max(0, ...list.map((d) => d.activeSeconds));
+
+  /**
+   * 柱子升起动画（与上方时段卡同步：900ms / Easing.out(cubic) / JS 驱动）。
+   * 7 根柱共用一个 progress，同时从底部升到目标高度；
+   * 每次切回 Data 页重播，切走时复位到 0。
+   */
+  const progress = useRef(new Animated.Value(0)).current;
+  useFocusEffect(
+    useCallback(() => {
+      progress.setValue(0);
+      const animation = Animated.timing(progress, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      });
+      animation.start();
+      return () => {
+        animation.stop();
+        progress.setValue(0);
+      };
+    }, [progress]),
+  );
   const trendAccessibility =
     days === null
       ? ''
@@ -111,7 +136,6 @@ export function AccumulationCard({
           <SymbolView name="book" size={22} tintColor={theme.secondaryText} weight="medium" />
           <Text style={[styles.title, { color: theme.primaryText }]}>{uiText.data.readingRhythm}</Text>
         </View>
-        <Text style={[styles.showAll, { color: theme.secondaryText }]}>{uiText.data.showAll}</Text>
       </View>
 
       <Text style={[styles.statement, { color: theme.chartPrimary }]}>{statement}</Text>
@@ -143,10 +167,16 @@ export function AccumulationCard({
               return (
                 <View key={day.dayKey} style={styles.trendCol}>
                   <View style={styles.trendPlot}>
-                    <View
+                    <Animated.View
                       style={[
                         styles.trendBar,
-                        { height: barHeight, backgroundColor: barColor },
+                        {
+                          height: progress.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, barHeight],
+                          }),
+                          backgroundColor: barColor,
+                        },
                       ]}
                     />
                   </View>
@@ -211,11 +241,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     marginLeft: 8,
-  },
-  /** 纯装饰（详情页未实现，不可点）。 */
-  showAll: {
-    fontSize: 17,
-    fontWeight: '700',
   },
   /** B.7：结论句 16pt / 600 / #242424，不再用 17pt / 700 纯黑。 */
   statement: {
