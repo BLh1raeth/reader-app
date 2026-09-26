@@ -2456,12 +2456,11 @@ export class FoliateEpubEngineAdapter {
    * settle wait).
    *
    * When `fade` is set, the outgoing page's content fades out first, the cut
-   * happens while dimmed, then the incoming page's content fades in —
-   * strictly sequential, the two fades never overlap. The dip only goes to
-   * 0.3 (never fully transparent), so it reads as a soft blink rather than
-   * a black flash. Only the paginator (content layer) fades; the view
-   * background stays opaque so there is no background blink. Reduced motion
-   * skips the fades — pure cut.
+   * happens while invisible, then the incoming page's content fades in —
+   * strictly sequential, the two fades never overlap. Only the paginator
+   * (content layer) fades; the view background stays opaque so there is no
+   * background blink, just text fading out/in. Reduced motion skips the
+   * fades — pure cut.
    */
   private async turnInstant(direction: 'next' | 'prev', fade: boolean) {
     const view = this.view;
@@ -2471,7 +2470,7 @@ export class FoliateEpubEngineAdapter {
     const animated = fade && !this.prefersReducedMotion();
     if (animated) {
       renderer.style.transition = 'opacity 80ms ease-out';
-      renderer.style.opacity = '0.3';
+      renderer.style.opacity = '0';
       await this.waitForOpacityTransition(80, renderer);
     }
     try {
