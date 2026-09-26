@@ -2321,6 +2321,9 @@ export class FoliateEpubEngineAdapter {
     // established page-turn pipeline.
     void this.clearSelectedSearchHighlight();
     let nextDirection: 'next' | 'prev' | null = direction;
+    // Only the first turn of a burst is directly felt, so only it gets the
+    // subtle feedback pulse; queued catch-up turns cut silently.
+    let first = true;
     try {
       // Keep the loop for the entire burst: foliate drops next()/prev()
       // issued while its internal turn lock is held, so only one turn may
@@ -2331,10 +2334,13 @@ export class FoliateEpubEngineAdapter {
         // must not inherit this turn's reason.
         this.pendingNavigationReason = nextDirection === 'next' ? 'reading-forward' : 'reading-backward';
         try {
-          await this.turnInstant(nextDirection);
+          // Only the first (directly felt) turn pulses; queued catch-up
+          // turns cut silently.
+          await this.turnInstant(nextDirection, first);
         } finally {
           this.pendingNavigationReason = null;
         }
+        first = false;
         const pendingTurn = this.takePendingPageTurn();
         if (!pendingTurn) break;
         nextDirection = pendingTurn.direction;
@@ -2449,14 +2455,30 @@ export class FoliateEpubEngineAdapter {
   /**
    * One page turn as a direct cut: no slide, no dissolve. foliate jumps the
    * scroll container to the next page synchronously (plus its internal
-   * settle wait). There is no animation, so reduced motion needs no
-   * special-casing — every user gets this same path.
+   * settle wait).
+   *
+   * When `pulse` is set, a subtle opacity dip plays over the turn: it starts
+   * on the next frame after the tap (instant visual feedback) and overlaps
+   * foliate's layout/settle wait, so it adds no latency to the page switch
+   * itself. Reduced motion skips the pulse — pure cut.
    */
-  private async turnInstant(direction: 'next' | 'prev') {
+  private async turnInstant(direction: 'next' | 'prev', pulse: boolean) {
     const view = this.view;
     if (!view) return;
     view.renderer?.removeAttribute('animated');
-    await (direction === 'next' ? view.next() : view.prev());
+    const feedback = pulse && !this.prefersReducedMotion();
+    if (feedback) {
+      view.style.transition = 'opacity 70ms ease-out';
+      view.style.opacity = '0.45';
+    }
+    try {
+      await (direction === 'next' ? view.next() : view.prev());
+    } finally {
+      if (feedback) {
+        view.style.transition = 'opacity 100ms ease-in';
+        view.style.opacity = '1';
+      }
+    }
   }
 
   private fadeOut() {
