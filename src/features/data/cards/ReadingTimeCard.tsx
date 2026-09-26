@@ -46,8 +46,11 @@ export function ReadingTimeCard({ hourlyActiveSeconds, style }: ReadingTimeCardP
     (activeHours.length > 0 ? `活跃时段：${activeHours}。` : '今天还没有阅读记录。');
 
   /**
-   * 柱子升起动画（与今日卡三圆环一致：900ms / Easing.out(cubic) / JS 驱动）。
-   * 柱子底部贴着基线，高度从 0 长到目标值，看起来就是从最底下升起。
+   * 柱子升起动画（与今日卡三圆环一致：900ms / Easing.out(cubic)）。
+   * native driver（transform scaleY + translateY 实现底部锚定生长）：
+   * JS 驱动的 height 每帧都要在 JS 线程算插值、走 bridge、触发 layout，
+   * 整页几十个节点一起跑会挤爆 JS 线程导致所有图一起卡；native 驱动全程
+   * 在 UI 线程跑，JS 每帧零工作。视觉与 height 写法完全一致。
    * 每次切回 Data 页重播；切走时复位到 0，下次首帧不可见不闪。
    */
   const progress = useRef(new Animated.Value(0)).current;
@@ -58,7 +61,7 @@ export function ReadingTimeCard({ hourlyActiveSeconds, style }: ReadingTimeCardP
         toValue: 1,
         duration: 900,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: false,
+        useNativeDriver: true,
       });
       animation.start();
       return () => {
@@ -101,11 +104,18 @@ export function ReadingTimeCard({ hourlyActiveSeconds, style }: ReadingTimeCardP
                       style={[
                         styles.barFill,
                         {
-                          height: progress.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [0, barHeight],
-                          }),
+                          height: barHeight,
                           backgroundColor: theme.chartPrimary,
+                          /** 底部锚定生长（native driver），视觉与 height 写法一致。 */
+                          transform: [
+                            {
+                              translateY: progress.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [barHeight / 2, 0],
+                              }),
+                            },
+                            { scaleY: progress },
+                          ],
                         },
                       ]}
                     />
