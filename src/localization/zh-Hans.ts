@@ -65,21 +65,7 @@ export const zhHans = {
     todayReading: '今天阅读',
     /** Data Tab Core B.3：今日阅读主卡标题与文案。 */
     todayReadingTitle: '今日阅读',
-    todayCharsLabel: '阅读字数',
     characterUnit: '字',
-    todaySummaryChars: (chars: number) => `今天你已经阅读了 ${chars} 字。`,
-    todaySummaryExcerpts: (count: number) => `今天你记录了 ${count} 条摘录。`,
-    todaySummaryDuration: (duration: string) => `今天你已阅读${duration}。`,
-    todaySummaryZero: '开始阅读后，这里会显示你今天的阅读数据。',
-    /**
-     * Data Tab 视觉稿还原：今日阅读主卡状态词（纯时长档位，无评分无评价）。
-     * 0 秒 → todayStatusZero；(0, 60) 秒 → todayStatusJustStarted；
-     * [60, 1800) 秒 → todayStatusSteady；>= 1800 秒 → todayStatusDeep。
-     */
-    todayStatusZero: '今天还没读',
-    todayStatusJustStarted: '刚开始',
-    todayStatusSteady: '稳步进行',
-    todayStatusDeep: '沉浸其中',
     /** 主卡三行指标标签（配色点）：时长 / 字数 / 摘录。 */
     todayMetricDuration: '时长',
     todayMetricChars: '字数',
@@ -89,15 +75,6 @@ export const zhHans = {
     goalDurationLabel: '阅读时长',
     goalCharsLabel: '阅读字数',
     goalExcerptsLabel: '摘录',
-    goalMinuteUnit: '分钟',
-    goalCharUnit: '字',
-    goalExcerptUnit: '条',
-    todaySummaryCharsAndExcerpts: (chars: number, count: number) =>
-      `今天你已经阅读了 ${chars} 字，并记录了 ${count} 条摘录。`,
-    /** 阅读节奏卡加粗结论（“最近 7 天”与界面 section 文案对齐）。 */
-    rhythmSummaryRecent: (days: number) => `最近 7 天，你有 ${days} 天进行了阅读。`,
-    /** 阅读节奏卡：7 天内一天都没读时的结论（只陈述事实，不加评价）。 */
-    rhythmSummaryEmpty: '最近 7 天还没有阅读记录。',
     /** 阅读节奏卡：7 日累计阅读时长的小标题。 */
     last7DaysTotalLabel: '最近 7 天累计阅读',
     totalExcerptLabel: '累计摘录',
@@ -110,21 +87,10 @@ export const zhHans = {
     currentStreak: '连续阅读',
     totalReadingDays: '阅读天数',
     excerpts: '摘录',
-    recentReading: '最近阅读',
-    readingHabits: '阅读习惯',
-    readingAccumulation: '阅读积累',
-    readingActivity: '阅读活跃',
-    overview: '阅读概览',
-    summarySection: '摘要',
     readingRhythm: '阅读节奏',
     past7Days: '过去 7 天',
     activeDays: '活跃天数',
     currentHint: '当前',
-    overviewSummary: (days: number) => `过去 7 天，你有 ${days} 天进行了阅读。`,
-    overviewZero: '开始阅读后，这里会显示你的阅读节奏。',
-    rhythmSummary: (duration: string) => `过去 7 天累计阅读${duration}。`,
-    rhythmZero: '过去 7 天暂无阅读记录。',
-    currentStreakHint: '当前连续',
     totalHint: '累计',
     dayUnit: '天',
     excerptUnit: '条',
@@ -133,16 +99,7 @@ export const zhHans = {
     hourUnit: '小时',
     lessThanOneMinute: '< 1 分钟',
     zeroMinutes: '0 分钟',
-    moreThanAverage: (duration: string) => `比过去 7 天日均多 ${duration}`,
-    lessThanAverage: (duration: string) => `比过去 7 天日均少 ${duration}`,
-    aboutAverage: '与过去 7 天日均基本持平',
-    startTracking: '开始记录你的阅读节奏',
-    startReadingHint: '开始阅读后，这里会显示你的趋势',
     loadFailed: '暂时无法读取阅读数据',
-    chartAccessibility: (parts: string) => `最近 7 天阅读时长，${parts}`,
-  },
-  debug: {
-    readerEngine: '阅读引擎调试',
   },
   excerpts: {
     title: '摘录',
@@ -153,8 +110,6 @@ export const zhHans = {
     monthTitle: (year: number, month: number) => `${year}年${month}月`,
     emptyTitle: '还没有摘录',
     emptyHint: '阅读时选中文字，即可保存摘录或添加笔记。',
-    /** Excerpts Tab Core E：books mode section header 右侧数量，如"12条"/"1条"。 */
-    bookExcerptCount: (count: number) => `${count}条`,
     /**
      * Excerpts Tab Core E：books mode 无 chapterTitle 时的 Source 行文本。
      * section header 已是书名，这里只保住"返回原文"导航入口，不重复书名。

@@ -8,7 +8,6 @@ import { uiText } from '../../localization';
  */
 
 const MINUTE_SECONDS = 60;
-const HOUR_SECONDS = 3600;
 
 /**
  * 阅读时长格式化。
@@ -35,11 +34,6 @@ export function formatReadingSpeed(charsPerMinute: number | null): string {
   return `${Math.round(charsPerMinute)} ${uiText.data.speedUnit}`;
 }
 
-/** 计数：126 → 126 条。 */
-export function formatCount(value: number, unit: string): string {
-  return `${value} ${unit}`;
-}
-
 /**
  * dayKey（YYYY-MM-DD）→ 周几单字标签（一…日），用于图表日期刻度。
  * 用本地日历解析，不涉及时区转换；解析失败返回空串。
@@ -62,13 +56,4 @@ export function weekdayName(dayKey: string): string {
   const date = new Date(parts[0], parts[1] - 1, parts[2]);
   if (Number.isNaN(date.getTime())) return '';
   return uiText.data.weekdayNames[date.getDay()] ?? '';
-}
-
-/**
- * dayKey（YYYY-MM-DD）→ “M/D”短标签，如 9/18。不带年份噪音。
- */
-export function shortMonthDayLabel(dayKey: string): string {
-  const parts = dayKey.split('-').map(Number);
-  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return '';
-  return `${parts[1]}/${parts[2]}`;
 }
