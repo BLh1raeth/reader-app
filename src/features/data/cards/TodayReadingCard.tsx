@@ -116,7 +116,7 @@ function AnimatedRing({
  * （时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73）；
  * 其中时长行整行放大到 26pt，作为卡内视觉重心；
  * 三行冒号前后同字号：时长 26pt / 字数 18pt / 摘录 14pt；
- * 三行标签定宽 78pt，数值左对齐（与时长行数值位置对齐）；
+ * 三行标签定宽 52pt，数值左对齐（与时长行数值位置对齐）；
  * 每次切回数据页三环都从起点同步扫到目标进度
  * （Apple 健康式入场动画）；
  * 真实数据与每日目标完成率下一轮 UI 稳定后再接入。
@@ -163,7 +163,7 @@ export function TodayReadingCard({
         <View style={styles.textCol}>
           <View style={styles.metricRow} accessible={false}>
             <Text style={[styles.durationLabel, { color: DEMO_RINGS[0].color }]}>
-              {uiText.data.todayMetricDuration}：
+              {uiText.data.todayMetricDuration}
             </Text>
             <Text
               style={[styles.durationValue, { color: DEMO_RINGS[0].color }]}
@@ -181,7 +181,7 @@ export function TodayReadingCard({
            */}
           <View style={styles.metricRow} accessible={false}>
             <Text style={[styles.charsName, { color: DEMO_RINGS[1].color }]}>
-              {uiText.data.todayMetricChars}：
+              {uiText.data.todayMetricChars}
             </Text>
             <Text style={[styles.charsValue, { color: DEMO_RINGS[1].color }]}>
               {charsText}
@@ -189,7 +189,7 @@ export function TodayReadingCard({
           </View>
           <View style={styles.metricRow} accessible={false}>
             <Text style={[styles.excerptName, { color: DEMO_RINGS[2].color }]}>
-              {uiText.data.todayMetricExcerpts}：
+              {uiText.data.todayMetricExcerpts}
             </Text>
             <Text style={[styles.excerptValue, { color: DEMO_RINGS[2].color }]}>
               {excerptText}
@@ -202,10 +202,10 @@ export function TodayReadingCard({
 }
 
 /**
- * 三行标签定宽 78pt = “时长：”在 26pt 下的自然宽度（3 个全角字符 × 26pt），
- * 保证三行数值左对齐。字数/摘录标签字号虽小，盒子撑满 78pt。
+ * 三行标签定宽 52pt = “时长”在 26pt 下的自然宽度（2 个全角字符 × 26pt），
+ * 保证三行数值左对齐。字数/摘录标签字号虽小，盒子撑满 52pt。
  */
-const METRIC_LABEL_WIDTH = 78;
+const METRIC_LABEL_WIDTH = 52;
 
 const styles = StyleSheet.create({
   /**
@@ -226,7 +226,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   /**
-   * 三行标签定宽：取最宽的“时长：”（26pt × 3 个全角字符 = 78pt），
+   * 三行标签定宽：取最宽的“时长”（26pt × 2 个全角字符 = 52pt），
    * 三行数值左对齐到同一 x（与时长行数值位置对齐）。
    */
   charsName: {
