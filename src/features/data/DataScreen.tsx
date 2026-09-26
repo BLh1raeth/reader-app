@@ -31,7 +31,7 @@ type DataLoadResult = {
 };
 
 const CARD_GAP = 12;
-const SECTION_SPACING = 24;
+const SECTION_SPACING = 20;
 
 /**
  * Data Tab（B.6 黑白极简视觉：#FAFAFC 底 / 白圆角卡 / 黑灰文字与图表）。
