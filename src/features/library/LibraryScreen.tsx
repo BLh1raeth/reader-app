@@ -1391,7 +1391,10 @@ const styles = StyleSheet.create({
   // 与数据页统一：大标题"书库"底到"继续阅读"顶间隔 16pt。
   // 浮动标题占 insets.top+2 起 40pt 行高（底 = insets.top+42），
   // 内容 paddingTop = insets.top+6，16 = 6 + spacer - 42 → spacer = 52。
-  libraryHeaderSpacer: { height: 52 },
+  /** 浮动标题占位：32 + scrollContent gap 20 = 52，
+      内容顶部 insets.top+6 → "继续阅读" at insets.top+58，
+      标题底部 insets.top+42 → 间距 16pt，与数据/摘录页统一。 */
+  libraryHeaderSpacer: { height: 32 },
   floatingTitle: { left: LIBRARY_SCREEN_MARGIN, position: 'absolute' },
   navigationTitle: { color: tokens.colors.label, fontSize: tokens.typography.largeTitle, fontWeight: '700', letterSpacing: -0.6, lineHeight: 40 },
   floatingMenu: { position: 'absolute', right: tokens.spacing.medium },
