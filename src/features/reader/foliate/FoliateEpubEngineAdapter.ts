@@ -2321,6 +2321,9 @@ export class FoliateEpubEngineAdapter {
     // established page-turn pipeline.
     void this.clearSelectedSearchHighlight();
     let nextDirection: 'next' | 'prev' | null = direction;
+    // Only the first turn of a burst is directly felt, so only it gets the
+    // fade-out/fade-in; queued catch-up turns cut silently.
+    let first = true;
     try {
       // Keep the loop for the entire burst: foliate drops next()/prev()
       // issued while its internal turn lock is held, so only one turn may
@@ -2331,10 +2334,11 @@ export class FoliateEpubEngineAdapter {
         // must not inherit this turn's reason.
         this.pendingNavigationReason = nextDirection === 'next' ? 'reading-forward' : 'reading-backward';
         try {
-          await this.turnInstant(nextDirection);
+          await this.turnInstant(nextDirection, first);
         } finally {
           this.pendingNavigationReason = null;
         }
+        first = false;
         const pendingTurn = this.takePendingPageTurn();
         if (!pendingTurn) break;
         nextDirection = pendingTurn.direction;
@@ -2449,14 +2453,35 @@ export class FoliateEpubEngineAdapter {
   /**
    * One page turn as a direct cut: no slide, no dissolve. foliate jumps the
    * scroll container to the next page synchronously (plus its internal
-   * settle wait). There is no animation, so reduced motion needs no
-   * special-casing — every user gets this same path.
+   * settle wait).
+   *
+   * When `fade` is set, the outgoing page's content fades out first, the cut
+   * happens while invisible, then the incoming page's content fades in —
+   * strictly sequential, the two fades never overlap. Only the paginator
+   * (content layer) fades; the view background stays opaque so there is no
+   * background blink, just text fading out/in. Reduced motion skips the
+   * fades — pure cut.
    */
-  private async turnInstant(direction: 'next' | 'prev') {
+  private async turnInstant(direction: 'next' | 'prev', fade: boolean) {
     const view = this.view;
-    if (!view) return;
-    view.renderer?.removeAttribute('animated');
-    await (direction === 'next' ? view.next() : view.prev());
+    const renderer = view?.renderer as HTMLElement | undefined;
+    if (!view || !renderer) return;
+    renderer.removeAttribute('animated');
+    const animated = fade && !this.prefersReducedMotion();
+    if (animated) {
+      renderer.style.transition = 'opacity 80ms ease-out';
+      renderer.style.opacity = '0';
+      await this.waitForOpacityTransition(80, renderer);
+    }
+    try {
+      await (direction === 'next' ? view.next() : view.prev());
+    } finally {
+      if (animated) {
+        renderer.style.transition = 'opacity 80ms ease-in';
+        renderer.style.opacity = '1';
+        await this.waitForOpacityTransition(80, renderer);
+      }
+    }
   }
 
   private fadeOut() {
@@ -2475,15 +2500,15 @@ export class FoliateEpubEngineAdapter {
     await this.waitForOpacityTransition(duration);
   }
 
-  private waitForOpacityTransition(duration: number) {
-    const view = this.view;
-    if (!view) return Promise.resolve();
+  private waitForOpacityTransition(duration: number, target?: HTMLElement | null) {
+    const el = target ?? this.view;
+    if (!el) return Promise.resolve();
     return new Promise<void>((resolve) => {
       let complete = false;
       const finish = () => {
         if (complete) return;
         complete = true;
-        view.removeEventListener('transitionend', onTransitionEnd);
+        el.removeEventListener('transitionend', onTransitionEnd);
         window.clearTimeout(fallback);
         resolve();
       };
@@ -2491,7 +2516,7 @@ export class FoliateEpubEngineAdapter {
         if (event.propertyName === 'opacity') finish();
       };
       const fallback = window.setTimeout(finish, duration + 60);
-      view.addEventListener('transitionend', onTransitionEnd);
+      el.addEventListener('transitionend', onTransitionEnd);
     });
   }
 
