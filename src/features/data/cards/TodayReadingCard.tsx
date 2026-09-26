@@ -208,7 +208,7 @@ const styles = StyleSheet.create({
   metricRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 20,
   },
   /**
    * 三行标签也跟数值一起渐进：时长 26pt / 字数 18pt / 摘录 14pt，
