@@ -1388,7 +1388,10 @@ function readingStateLabel(book: LibraryBook) {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: tokens.colors.background },
   screen: { flex: 1, backgroundColor: tokens.colors.background },
-  libraryHeaderSpacer: { height: 44 },
+  // 与数据页统一：大标题"书库"底到"继续阅读"顶间隔 16pt。
+  // 浮动标题占 insets.top+2 起 40pt 行高（底 = insets.top+42），
+  // 内容 paddingTop = insets.top+6，16 = 6 + spacer - 42 → spacer = 52。
+  libraryHeaderSpacer: { height: 52 },
   floatingTitle: { left: LIBRARY_SCREEN_MARGIN, position: 'absolute' },
   navigationTitle: { color: tokens.colors.label, fontSize: tokens.typography.largeTitle, fontWeight: '700', letterSpacing: -0.6, lineHeight: 40 },
   floatingMenu: { position: 'absolute', right: tokens.spacing.medium },

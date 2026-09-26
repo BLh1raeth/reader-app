@@ -493,9 +493,9 @@ export default function ExcerptsScreen() {
           // Excerpts Tab Core E：books mode 的 section header = 书名
           // （单行省略）。无 badge / 胶囊 / icon / 封面 / chevron / 条数，
           // 与 time header 同样克制。
-          // 首个 section 顶部收紧：标题"摘录"到下方日期/书名的间隔原来 40pt
-          //（headerRow marginBottom 12 + marginTop 28）太空，首个压到 16，
-          // 合计 28。其他 section 之间的间距不动。
+          // 首个 section 顶部：与数据页统一，大标题"摘录"到下方日期/书名
+          // 的间隔为 16pt（headerRow marginBottom 12 + marginTop 4）。
+          // 其他 section 之间的间距不动。
           const firstHeaderStyle =
             sections[0]?.key === section.key ? styles.firstSectionHeader : undefined;
           if (section.kind === 'book') {
@@ -636,11 +636,12 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   /**
-   * 首个 section header 顶部收紧（见 renderSectionHeader 注释）：
-   * 覆盖 sectionTitle / bookSectionHeader 的 marginTop 28 → 16。
+   * 首个 section header 顶部：与数据页统一，大标题到二级标题间隔 16pt，
+   * 覆盖 sectionTitle / bookSectionHeader 的 marginTop 28 → 4
+   *（headerRow marginBottom 12 + 4 = 16）。
    */
   firstSectionHeader: {
-    marginTop: 16,
+    marginTop: 4,
   },
   item: {
     backgroundColor: tokens.colors.groupedCell,
