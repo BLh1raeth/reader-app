@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 import { backfillLocalDayKeys } from './local-day-backfill';
 
 const DATABASE_NAME = 'reader-library.db';
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -323,6 +323,23 @@ async function bootstrapDatabase() {
           ON reader_speed_samples(local_day_key);
         CREATE INDEX IF NOT EXISTS reader_speed_samples_sampled_idx
           ON reader_speed_samples(sampled_at);
+        PRAGMA user_version = ${SCHEMA_VERSION};
+      `);
+    });
+  }
+  if (currentVersion < 18) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      // Data 目标体系：每日阅读目标（单行，id = 1）。
+      // target_seconds：每日阅读时长目标（秒）；target_chars：每日阅读字数目标；
+      // target_excerpts：每日摘录目标（条）。
+      await transaction.execAsync(`
+        CREATE TABLE IF NOT EXISTS reader_daily_goals (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          target_seconds INTEGER NOT NULL,
+          target_chars INTEGER NOT NULL,
+          target_excerpts INTEGER NOT NULL,
+          updated_at TEXT NOT NULL
+        );
         PRAGMA user_version = ${SCHEMA_VERSION};
       `);
     });

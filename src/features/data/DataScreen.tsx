@@ -12,6 +12,8 @@ import { TodayReadingCard } from './cards/TodayReadingCard';
 import { ReadingTimeCard } from './cards/ReadingTimeCard';
 import { ReadingSpeedCard } from './cards/ReadingSpeedCard';
 import { AccumulationCard } from './cards/AccumulationCard';
+import { GoalSettingSheet } from './cards/GoalSettingSheet';
+import { DEFAULT_DAILY_GOALS, goalRepository, type DailyGoals } from './goal-repository';
 import {
   getDailyReadingStats,
   getReadingAnalyticsSummary,
@@ -72,6 +74,31 @@ export default function DataScreen() {
   });
   const [loadFailed, setLoadFailed] = useState(false);
   const loadingRef = useRef(false);
+  /** 每日目标：demo/真实模式都从 SQLite 读；首帧用默认值避免圆环闪 0。 */
+  const [goals, setGoals] = useState<DailyGoals>({ ...DEFAULT_DAILY_GOALS });
+  const [goalSheetVisible, setGoalSheetVisible] = useState(false);
+
+  const loadGoals = useCallback(async () => {
+    try {
+      const stored = await goalRepository.getDailyGoals();
+      setGoals(stored);
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('[DAILY_GOALS_LOAD_FAILED]');
+      }
+    }
+  }, []);
+
+  const handleGoalsChange = useCallback(async (next: DailyGoals) => {
+    setGoals(next);
+    try {
+      await goalRepository.setDailyGoals(next);
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('[DAILY_GOALS_SAVE_FAILED]');
+      }
+    }
+  }, []);
 
   const loadData = useCallback(async () => {
     // 避免 focus 与并发回调造成重叠请求：简单守卫即可，本地 SQLite 很快。
@@ -116,7 +143,8 @@ export default function DataScreen() {
   useFocusEffect(
     useCallback(() => {
       void loadData();
-    }, [loadData]),
+      void loadGoals();
+    }, [loadData, loadGoals]),
   );
 
   const summary = data?.summary ?? null;
@@ -152,6 +180,8 @@ export default function DataScreen() {
                 forwardCharacters={summary?.todayForwardCharacters ?? null}
                 excerptCount={summary?.todayExcerptCount ?? null}
                 activeDays7={activeDays7}
+                goals={goals}
+                onRingPress={() => setGoalSheetVisible(true)}
               />
             </View>
 
@@ -188,6 +218,15 @@ export default function DataScreen() {
           </>
         )}
       </ScrollView>
+
+      {/* 每日目标设置：圆环点击打开，液态玻璃 Sheet。 */}
+      <GoalSettingSheet
+        isPresented={goalSheetVisible}
+        goals={goals}
+        onChange={handleGoalsChange}
+        onDismissed={() => setGoalSheetVisible(false)}
+        onRequestDismiss={() => setGoalSheetVisible(false)}
+      />
     </View>
   );
 }

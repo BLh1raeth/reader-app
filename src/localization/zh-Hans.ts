@@ -84,6 +84,14 @@ export const zhHans = {
     todayMetricDuration: '时长',
     todayMetricChars: '字数',
     todayMetricExcerpts: '摘录',
+    /** 每日目标设置 Sheet。 */
+    goalSheetTitle: '每日目标',
+    goalDurationLabel: '阅读时长',
+    goalCharsLabel: '阅读字数',
+    goalExcerptsLabel: '摘录',
+    goalMinuteUnit: '分钟',
+    goalCharUnit: '字',
+    goalExcerptUnit: '条',
     todaySummaryCharsAndExcerpts: (chars: number, count: number) =>
       `今天你已经阅读了 ${chars} 字，并记录了 ${count} 条摘录。`,
     /** 阅读节奏卡加粗结论（“最近 7 天”与界面 section 文案对齐）。 */

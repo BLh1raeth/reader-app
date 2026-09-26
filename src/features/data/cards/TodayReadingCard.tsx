@@ -1,12 +1,13 @@
 import { useCallback, useRef } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Circle, G, Svg } from 'react-native-svg';
 
 import { uiText } from '../../../localization';
 import { DataCard } from '../DataCard';
 import { useDataTheme } from '../dataTheme';
 import { formatDuration } from '../analytics-format';
+import type { DailyGoals } from '../goal-repository';
 
 type TodayReadingCardProps = {
   /** summary.todayActiveSeconds；null = 未加载，显示占位。 */
@@ -17,19 +18,23 @@ type TodayReadingCardProps = {
   excerptCount: number | null;
   /** 最近 7 个 local day 中 activeSeconds > 0 的天数；null = 未加载。 */
   activeDays7: number | null;
+  /** 每日目标；null = 未加载时圆环显示 0。 */
+  goals: DailyGoals | null;
+  /** 点击三圆环：打开每日目标设置 Sheet。 */
+  onRingPress: () => void;
 };
 
 const RING_SIZE = 140;
 const RING_STROKE = 18;
 /**
- * 三同心圆环（本轮为固定演示比例，不接真实数据；UI 稳定后接入每日目标完成率）。
- * 外环阅读时长 #111111 / 中环阅读字数 #3A3A3C / 内环摘录数量 #6E6E73。
+ * 三同心圆环：外环阅读时长 #111111 / 中环阅读字数 #3A3A3C / 内环摘录数量 #6E6E73。
  * 半径按线宽 18、环间距 2px 排布：61 / 41 / 21。
+ * 进度 = 今日实际 / 每日目标（超过目标按 1 封顶）。
  */
-const DEMO_RINGS = [
-  { radius: 61, color: '#111111', fraction: 0.65 },
-  { radius: 41, color: '#3A3A3C', fraction: 0.4 },
-  { radius: 21, color: '#6E6E73', fraction: 0.8 },
+const RINGS = [
+  { radius: 61, color: '#111111' },
+  { radius: 41, color: '#3A3A3C' },
+  { radius: 21, color: '#6E6E73' },
 ];
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
@@ -39,7 +44,7 @@ type AnimatedRingProps = {
   radius: number;
   strokeWidth: number;
   color: string;
-  /** 目标进度 0–1（本轮为 DEMO_RINGS 的固定演示比例）。 */
+  /** 目标进度 0–1（今日实际 / 每日目标，超目标封顶 1）。 */
   fraction: number;
   trackColor: string;
 };
@@ -111,15 +116,15 @@ function AnimatedRing({
  * “今日阅读”标题已移到卡片外，由 DataScreen 按 section 标题（21pt / 800）
  * 统一渲染，与“最近 7 天”一致；卡内只剩内容区：
  * 左：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
- * 内环摘录数量（#6E6E73）；本轮固定演示比例 65% / 40% / 80%，中心文字暂空；
+ * 内环摘录数量（#6E6E73）；进度 = 今日实际 / 每日目标（超目标封顶 1），
+ * 点击圆环打开每日目标设置 Sheet；
  * 右：三行指标文字，名称与数值同色，颜色与三环一一对应
  * （时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73）；
  * 其中时长行整行放大到 26pt，作为卡内视觉重心；
  * 三行冒号前后同字号：时长 26pt / 字数 18pt / 摘录 14pt；
  * 三行标签定宽 52pt，数值左对齐（与时长行数值位置对齐）；
  * 每次切回数据页三环都从起点同步扫到目标进度
- * （Apple 健康式入场动画）；
- * 真实数据与每日目标完成率下一轮 UI 稳定后再接入。
+ * （Apple 健康式入场动画）。
  *
  * 所有数字来自 Analytics 实时数据，不写死。
  * zero state 完整显示 0 分钟 / 0 字 / 0 条；圆环全灰、中心 0/7 天。
@@ -129,6 +134,8 @@ export function TodayReadingCard({
   forwardCharacters,
   excerptCount,
   activeDays7,
+  goals,
+  onRingPress,
 }: TodayReadingCardProps) {
   const theme = useDataTheme();
 
@@ -136,6 +143,17 @@ export function TodayReadingCard({
   const charsText =
     forwardCharacters === null ? '—' : `${forwardCharacters}${uiText.data.characterUnit}`;
   const excerptText = excerptCount === null ? '—' : `${excerptCount}${uiText.data.excerptUnit}`;
+
+  /** 三环进度 = 今日实际 / 每日目标，超目标封顶 1；目标未加载时为 0。 */
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+  const ringFractions =
+    goals === null
+      ? [0, 0, 0]
+      : [
+          activeSeconds === null ? 0 : clamp01(activeSeconds / goals.targetSeconds),
+          forwardCharacters === null ? 0 : clamp01(forwardCharacters / goals.targetChars),
+          excerptCount === null ? 0 : clamp01(excerptCount / goals.targetExcerpts),
+        ];
 
   const a11y =
     `今日阅读：时长${durationText}，字数${charsText}，摘录${excerptText}。` +
@@ -145,28 +163,34 @@ export function TodayReadingCard({
     <DataCard accessible accessibilityLabel={a11y}>
       <View style={styles.bodyRow}>
         <View style={styles.ringWrap} accessible={false}>
-          <Svg width={RING_SIZE} height={RING_SIZE}>
-            {DEMO_RINGS.map((ring) => (
-              <AnimatedRing
-                key={ring.color}
-                size={RING_SIZE}
-                radius={ring.radius}
-                strokeWidth={RING_STROKE}
-                color={ring.color}
-                fraction={ring.fraction}
-                trackColor={theme.ringTrack}
-              />
-            ))}
-          </Svg>
+          <Pressable
+            accessibilityLabel={uiText.data.goalSheetTitle}
+            accessibilityRole="button"
+            onPress={onRingPress}
+          >
+            <Svg width={RING_SIZE} height={RING_SIZE}>
+              {RINGS.map((ring, index) => (
+                <AnimatedRing
+                  key={ring.color}
+                  size={RING_SIZE}
+                  radius={ring.radius}
+                  strokeWidth={RING_STROKE}
+                  color={ring.color}
+                  fraction={ringFractions[index]}
+                  trackColor={theme.ringTrack}
+                />
+              ))}
+            </Svg>
+          </Pressable>
         </View>
 
         <View style={styles.textCol}>
           <View style={styles.metricRow} accessible={false}>
-            <Text style={[styles.durationLabel, { color: DEMO_RINGS[0].color }]}>
+            <Text style={[styles.durationLabel, { color: RINGS[0].color }]}>
               {uiText.data.todayMetricDuration}
             </Text>
             <Text
-              style={[styles.durationValue, { color: DEMO_RINGS[0].color }]}
+              style={[styles.durationValue, { color: RINGS[0].color }]}
               numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.6}
@@ -180,18 +204,18 @@ export function TodayReadingCard({
            * 让它们的视觉中心对齐。
            */}
           <View style={styles.metricRow} accessible={false}>
-            <Text style={[styles.charsName, { color: DEMO_RINGS[1].color }]}>
+            <Text style={[styles.charsName, { color: RINGS[1].color }]}>
               {uiText.data.todayMetricChars}
             </Text>
-            <Text style={[styles.charsValue, { color: DEMO_RINGS[1].color }]}>
+            <Text style={[styles.charsValue, { color: RINGS[1].color }]}>
               {charsText}
             </Text>
           </View>
           <View style={styles.metricRow} accessible={false}>
-            <Text style={[styles.excerptName, { color: DEMO_RINGS[2].color }]}>
+            <Text style={[styles.excerptName, { color: RINGS[2].color }]}>
               {uiText.data.todayMetricExcerpts}
             </Text>
-            <Text style={[styles.excerptValue, { color: DEMO_RINGS[2].color }]}>
+            <Text style={[styles.excerptValue, { color: RINGS[2].color }]}>
               {excerptText}
             </Text>
           </View>
