@@ -77,8 +77,11 @@ export function AccumulationCard({
   const maxSeconds = Math.max(0, ...list.map((d) => d.activeSeconds));
 
   /**
-   * 柱子升起动画（与上方时段卡同步：900ms / Easing.out(cubic) / JS 驱动）。
-   * 7 根柱共用一个 progress，同时从底部升到目标高度；
+   * 柱子升起动画（与上方时段卡同步：900ms / Easing.out(cubic)）。
+   * 用 native driver（transform scaleY + translateY 实现底部锚定生长）：
+   * JS 驱动的 height 动画每帧都要在 JS 线程算插值、走 bridge、触发 layout，
+   * 整页几十个节点一起跑会把 JS 线程挤爆导致所有图一起卡；native 驱动全程
+   * 在 UI 线程跑，JS 每帧零工作。视觉效果与 height 写法完全一致。
    * 每次切回 Data 页重播，切走时复位到 0。
    */
   const progress = useRef(new Animated.Value(0)).current;
@@ -89,7 +92,7 @@ export function AccumulationCard({
         toValue: 1,
         duration: 900,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: false,
+        useNativeDriver: true,
       });
       animation.start();
       return () => {
@@ -171,11 +174,22 @@ export function AccumulationCard({
                       style={[
                         styles.trendBar,
                         {
-                          height: progress.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [0, barHeight],
-                          }),
+                          height: barHeight,
                           backgroundColor: barColor,
+                          /**
+                           * 底部锚定生长（native driver）：先 scaleY 再整体下移，
+                           * translateY 取 (1 - progress) * H / 2，保证底边始终
+                           * 贴着基线，视觉上就是从底部升起。
+                           */
+                          transform: [
+                            {
+                              translateY: progress.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [barHeight / 2, 0],
+                              }),
+                            },
+                            { scaleY: progress },
+                          ],
                         },
                       ]}
                     />
