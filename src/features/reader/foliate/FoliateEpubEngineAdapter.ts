@@ -2806,6 +2806,9 @@ export class FoliateEpubEngineAdapter {
     // decision; it safely no-ops at the actual start/end of the whole book.
     this.interactionState = 'turning';
     this.pendingPageTurn = null;
+    // A real turn just started: the optional background page counter must
+    // wait for a new quiet window instead of racing this gesture.
+    this.deferBackgroundPageCount();
     // Removing a temporary search marker must never add input latency to the
     // established page-turn pipeline.
     void this.clearSelectedSearchHighlight();
@@ -3193,6 +3196,19 @@ export class FoliateEpubEngineAdapter {
     }, 900);
   }
 
+  /**
+   * A real page turn just started. The background page counter is optional
+   * display work — if its timer hasn't fired yet, push it out to a fresh
+   * quiet window instead of letting it race this gesture. An already-running
+   * count keeps its own per-section yielding via waitForVisibleTurnIdle.
+   */
+  private deferBackgroundPageCount() {
+    if (this.pageCountCache || this.pageCountTimer === null || this.restoreState !== 'active') return;
+    window.clearTimeout(this.pageCountTimer);
+    this.pageCountTimer = null;
+    this.scheduleBackgroundPageCount();
+  }
+
   private async countPagesInBackground(input: FoliateOpenInput, run: number) {
     if (!this.view || this.restoreState !== 'active' || this.pageCountCache || run !== this.pageCountRun) return;
     const signature = this.layoutSignature;
@@ -3225,6 +3241,10 @@ export class FoliateEpubEngineAdapter {
       measureHost.append(counterView);
       document.body.append(measureHost);
 
+      // The counter book parse is the single heaviest synchronous chunk of
+      // this job. Don't start it mid-gesture even if the timer already fired.
+      if (!await this.waitForVisibleTurnIdle(run)) return;
+      await this.nextIdleFrame();
       const counterBook = await this.createCounterBook(input);
       if (run !== this.pageCountRun || this.restoreState !== 'active') return;
       normalizeBookStyles(counterBook);
