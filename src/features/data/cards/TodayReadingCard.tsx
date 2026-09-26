@@ -115,8 +115,8 @@ function AnimatedRing({
  * 右：三行指标文字，名称与数值同色，颜色与三环一一对应
  * （时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73）；
  * 其中时长行整行放大到 26pt，作为卡内视觉重心；
- * 三行字号：时长 26pt / 字数标签 18pt 数值 22pt / 摘录 14pt；
- * 其中时长行、摘录行冒号前后同字号；
+ * 三行冒号前后同字号：时长 26pt / 字数 18pt / 摘录 14pt；
+ * 三行标签定宽 78pt，数值左对齐（与时长行数值位置对齐）；
  * 每次切回数据页三环都从起点同步扫到目标进度
  * （Apple 健康式入场动画）；
  * 真实数据与每日目标完成率下一轮 UI 稳定后再接入。
@@ -162,16 +162,16 @@ export function TodayReadingCard({
 
         <View style={styles.textCol}>
           <View style={styles.metricRow} accessible={false}>
+            <Text style={[styles.durationLabel, { color: DEMO_RINGS[0].color }]}>
+              {uiText.data.todayMetricDuration}：
+            </Text>
             <Text
-              style={[styles.durationName, { color: DEMO_RINGS[0].color }]}
+              style={[styles.durationValue, { color: DEMO_RINGS[0].color }]}
               numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.6}
             >
-              {uiText.data.todayMetricDuration}：
-              <Text style={[styles.durationValue, { color: DEMO_RINGS[0].color }]}>
-                {durationText}
-              </Text>
+              {durationText}
             </Text>
           </View>
           {/*
@@ -201,6 +201,12 @@ export function TodayReadingCard({
   );
 }
 
+/**
+ * 三行标签定宽 78pt = “时长：”在 26pt 下的自然宽度（3 个全角字符 × 26pt），
+ * 保证三行数值左对齐。字数/摘录标签字号虽小，盒子撑满 78pt。
+ */
+const METRIC_LABEL_WIDTH = 78;
+
 const styles = StyleSheet.create({
   /**
    * 文字列与圆环底对齐：三行文字整体下移（之前是居中对齐，视觉偏高）。
@@ -220,23 +226,25 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   /**
-   * 三行标签也跟数值一起渐进：时长 26pt / 字数 18pt / 摘录 14pt，
-   * 每行标签比它的数值小 4pt（时长行整行 26pt 是例外，作为视觉重心）。
+   * 三行标签定宽：取最宽的“时长：”（26pt × 3 个全角字符 = 78pt），
+   * 三行数值左对齐到同一 x（与时长行数值位置对齐）。
    */
   charsName: {
     fontSize: 18,
     fontWeight: '500',
+    width: METRIC_LABEL_WIDTH,
   },
   excerptName: {
     fontSize: 14,
     fontWeight: '500',
+    width: METRIC_LABEL_WIDTH,
   },
   /**
    * 三行数值字号渐进：时长 26pt 最大 / 字数 22pt / 摘录 18pt 最小，
    * 与三环由外到内的颜色区分呼应（#111111 / #3A3A3C / #6E6E73）。
    */
   charsValue: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '600',
   },
   excerptValue: {
@@ -244,15 +252,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   /** 时长行：卡内视觉重心，整行放大到 26pt（名称/数值同大，颜色区分）。 */
-  durationName: {
+  durationLabel: {
     fontSize: 26,
     fontWeight: '700',
     letterSpacing: -0.5,
+    width: METRIC_LABEL_WIDTH,
   },
   durationValue: {
     fontSize: 26,
     fontWeight: '800',
     letterSpacing: -0.5,
+    flex: 1,
   },
   ringWrap: {
     width: RING_SIZE,
