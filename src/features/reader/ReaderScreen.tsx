@@ -14,7 +14,6 @@ import { tokens } from '../../design-system/tokens';
 import { uiText } from '../../localization';
 import { BookCoverArt } from '../library/BookCoverArt';
 import type { CoverTone } from '../library/library-types';
-import { bookmarkRepository, type ReaderBookmark } from './bookmark-repository';
 import { excerptRepository } from './excerpt-repository';
 import { highlightRepository } from './highlight-repository';
 import { takeReaderExternalNavigationRequest, type ReaderExternalNavigationRequest } from './reader-external-navigation';
@@ -22,8 +21,6 @@ import type { ReaderHighlightSnapshotItem } from './highlight-repository';
 import type {
   FootnotePayload,
   FootnoteRichTextNode,
-  ReaderBookmarkSnapshot,
-  ReaderBookmarkSnapshotRequest,
   ReaderLocation,
   ReaderPageLocationRequest,
   ReaderPageLocationResult,
@@ -46,6 +43,7 @@ import { ReaderSettingsSheet } from './ReaderSettingsSheet';
 import { ReaderTocSheet } from './ReaderTocSheet';
 import { useReaderController } from './use-reader-controller';
 import { useFootnotePopover } from './hooks/useFootnotePopover';
+import { useReaderBookmarks } from './hooks/useReaderBookmarks';
 import { useReaderChrome } from './hooks/useReaderChrome';
 import { useReaderSearch } from './hooks/useReaderSearch';
 import { useReaderSheets } from './hooks/useReaderSheets';
@@ -418,9 +416,7 @@ export default function ReaderScreen() {
     : { background: tokens.colors.background, primary: '#171719', secondary: '#8b8b90', glassFallback: 'rgba(250,250,252,0.88)', link: '#007aff' };
   const displayedPageLocationRef = useRef<ReaderLocation | null>(null);
   const pageIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const bookmarkSnapshotSequenceRef = useRef(0);
   const pageLocationSequenceRef = useRef(0);
-  const activeBookmarkSnapshotRequestRef = useRef<ReaderBookmarkSnapshotRequest | null>(null);
   const activePageLocationRequestRef = useRef<ReaderPageLocationRequest | null>(null);
   const activeSelectionRef = useRef<ReaderSelectionPayload | null>(null);
   const excerptActionPayloadRef = useRef<ReaderSelectionPayload | null>(null);
@@ -431,10 +427,6 @@ export default function ReaderScreen() {
   const excerptVerificationSequenceRef = useRef(0);
   const [highlightSnapshot, setHighlightSnapshot] = useState<ReaderHighlightSnapshotItem[] | null>(null);
   const [reduceMotion, setReduceMotion] = useState(false);
-  const [bookmarks, setBookmarks] = useState<ReaderBookmark[]>([]);
-  const [bookmarksLoaded, setBookmarksLoaded] = useState(false);
-  const [bookmarkBusy, setBookmarkBusy] = useState(false);
-  const [currentBookmarked, setCurrentBookmarked] = useState(false);
   const {
     tocSheetPresented,
     setTocSheetPresented,
@@ -443,7 +435,6 @@ export default function ReaderScreen() {
     searchSheetPresented,
     setSearchSheetPresented,
   } = useReaderSheets({ bookId });
-  const [bookmarkSnapshotRequest, setBookmarkSnapshotRequest] = useState<ReaderBookmarkSnapshotRequest | null>(null);
   const [pageLocationRequest, setPageLocationRequest] = useState<ReaderPageLocationRequest | null>(null);
   const [pageByDestination, setPageByDestination] = useState<Record<string, number>>({});
   // Excerpts Tab Core C (warm path): a pending excerpt navigation request is
@@ -604,6 +595,20 @@ export default function ReaderScreen() {
     setSearchSheetPresented,
     cancelSearchRequest,
   });
+  const {
+    bookmarks,
+    bookmarksLoaded,
+    bookmarkBusy,
+    currentBookmarked,
+    bookmarkSnapshotRequest,
+    toggleCurrentBookmark,
+    handleBookmarkSnapshot,
+  } = useReaderBookmarks({
+    bookId,
+    markReaderActivity,
+    currentLocation: controller.currentLocation,
+    layoutSignature: controller.pageCountCache?.layoutSignature,
+  });
   const [excerptSaving, setExcerptSaving] = useState(false);
   const [selectionCommand, setSelectionCommand] = useState<ReaderSelectionCommand | null>(null);
   const [excerptVerificationRequest, setExcerptVerificationRequest] = useState<ReaderExcerptVerificationRequest | null>(null);
@@ -691,13 +696,7 @@ export default function ReaderScreen() {
   }, [bookId]);
 
   useEffect(() => {
-    activeBookmarkSnapshotRequestRef.current = null;
     activePageLocationRequestRef.current = null;
-    setBookmarks([]);
-    setBookmarksLoaded(false);
-    setBookmarkBusy(false);
-    setCurrentBookmarked(false);
-    setBookmarkSnapshotRequest(null);
     setPageLocationRequest(null);
     setPageByDestination({});
     activeSelectionRef.current = null;
@@ -709,20 +708,6 @@ export default function ReaderScreen() {
     setSelectionCommand(null);
     setExcerptVerificationRequest(null);
     setHighlightSnapshot(null);
-  }, [bookId]);
-
-  useEffect(() => {
-    if (!bookId) return undefined;
-    let active = true;
-    void bookmarkRepository.list(bookId).then((items) => {
-      if (!active) return;
-      setBookmarks(items);
-      setBookmarksLoaded(true);
-    }).catch((error: unknown) => {
-      console.warn('[BOOKMARK_LOAD_FAILED]', error);
-      if (active) setBookmarksLoaded(true);
-    });
-    return () => { active = false; };
   }, [bookId]);
 
   useEffect(() => {
@@ -825,99 +810,6 @@ export default function ReaderScreen() {
       else router.replace('/');
     });
   }, [controller, router]);
-
-  const bookmarkAnchors = useMemo(() => bookmarks
-    .filter((bookmark) => bookmark.spineIndex === controller.currentLocation?.spineIndex)
-    .map((bookmark) => ({
-      id: bookmark.id,
-      cfi: bookmark.cfi,
-      spineIndex: bookmark.spineIndex,
-    })), [bookmarks, controller.currentLocation?.spineIndex]);
-
-  const requestBookmarkSnapshot = useCallback((intent: ReaderBookmarkSnapshotRequest['intent']) => {
-    const request: ReaderBookmarkSnapshotRequest = {
-      id: ++bookmarkSnapshotSequenceRef.current,
-      intent,
-      bookmarks: bookmarkAnchors,
-    };
-    activeBookmarkSnapshotRequestRef.current = request;
-    setBookmarkSnapshotRequest(request);
-  }, [bookmarkAnchors]);
-
-  useEffect(() => {
-    if (!bookmarksLoaded || !controller.currentLocation || bookmarkBusy) return;
-    requestBookmarkSnapshot('status');
-  }, [bookmarkBusy, bookmarksLoaded, controller.currentLocation?.cfi, controller.pageCountCache?.layoutSignature, requestBookmarkSnapshot]);
-
-  const toggleCurrentBookmark = useCallback(() => {
-    if (!bookId || !controller.currentLocation || bookmarkBusy) return;
-    markReaderActivity();
-    setBookmarkBusy(true);
-    requestBookmarkSnapshot('toggle');
-  }, [bookId, bookmarkBusy, controller.currentLocation, markReaderActivity, requestBookmarkSnapshot]);
-
-  const handleBookmarkSnapshot = useCallback(async (
-    requestId: number,
-    snapshot: ReaderBookmarkSnapshot | null,
-    message: string | null,
-  ) => {
-    const request = activeBookmarkSnapshotRequestRef.current;
-    if (!request || request.id !== requestId) return;
-    activeBookmarkSnapshotRequestRef.current = null;
-    setBookmarkSnapshotRequest((current) => current?.id === requestId ? null : current);
-    if (!snapshot || message) {
-      if (message) console.warn('[BOOKMARK_SNAPSHOT_FAILED]', JSON.stringify({ requestId, message }));
-      if (request.intent === 'toggle') setBookmarkBusy(false);
-      return;
-    }
-    if (request.intent === 'status') {
-      setCurrentBookmarked(snapshot.matchedBookmarkId !== null);
-      const matched = snapshot.matchedBookmarkId === null
-        ? null
-        : bookmarks.find((bookmark) => bookmark.id === snapshot.matchedBookmarkId) ?? null;
-      if (
-        bookId
-        && matched
-        && snapshot.pageNumber !== null
-        && snapshot.layoutSignature
-        && (matched.pageNumber !== snapshot.pageNumber || matched.layoutSignature !== snapshot.layoutSignature)
-      ) {
-        await bookmarkRepository.updateLayoutPage(matched.id, bookId, snapshot.pageNumber, snapshot.layoutSignature);
-        setBookmarks((current) => current.map((bookmark) => bookmark.id === matched.id
-          ? { ...bookmark, pageNumber: snapshot.pageNumber, layoutSignature: snapshot.layoutSignature }
-          : bookmark));
-      }
-      return;
-    }
-    if (!bookId) {
-      setBookmarkBusy(false);
-      return;
-    }
-    try {
-      if (snapshot.matchedBookmarkId !== null) {
-        await bookmarkRepository.remove(snapshot.matchedBookmarkId, bookId);
-        setCurrentBookmarked(false);
-      } else {
-        await bookmarkRepository.create({
-          bookId,
-          cfi: snapshot.cfi,
-          spineIndex: snapshot.spineIndex,
-          sectionFraction: snapshot.sectionFraction,
-          pageNumber: snapshot.pageNumber,
-          layoutSignature: snapshot.layoutSignature,
-          chapterTitle: snapshot.chapterTitle,
-          excerpt: snapshot.excerpt,
-        });
-        setCurrentBookmarked(true);
-      }
-      setBookmarks(await bookmarkRepository.list(bookId));
-    } catch (error) {
-      console.warn('[BOOKMARK_TOGGLE_FAILED]', error);
-    } finally {
-      setBookmarkBusy(false);
-    }
-  }, [bookId, bookmarks]);
-
 
   const openSettings = useCallback(() => {
     markReaderActivity();
