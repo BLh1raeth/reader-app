@@ -146,17 +146,12 @@ type ReaderPointerSession = {
   startedWhileTurning: boolean;
 };
 
-type PageViewTransition = {
-  finished: Promise<unknown>;
-};
-
-type ViewTransitionDocument = Document & {
-  startViewTransition?: (update: () => Promise<void> | void) => PageViewTransition;
-};
-
 const TAP_EDGE_RATIO = 0.25;
 const TAP_MAX_DURATION_MS = 350;
 const TAP_MAX_MOVEMENT_PX = 10;
+// FIFO page-turn queue depth. Every tap is honored, but a mash can't build an
+// unbounded backlog: beyond this the oldest queued turn is dropped.
+const PAGE_TURN_QUEUE_CAP = 4;
 const SWIPE_MIN_DISTANCE_PX = 42;
 const SWIPE_DIRECTION_DOMINANCE = 1.25;
 // A fast flick commits the page turn even short of SWIPE_MIN_DISTANCE_PX.
@@ -459,8 +454,8 @@ export class FoliateEpubEngineAdapter {
   private restoreState: ReaderRestoreState = 'opening';
   private interactionState: ReaderInteractionState = 'idle';
   private pointerSession: ReaderPointerSession | null = null;
-  private pageTransitionActive = false;
-  private pendingPageTurn: PendingPageTurn | null = null;
+  private turnLoopActive = false;
+  private pendingPageTurns: PendingPageTurn[] = [];
   // Adjacent-section pre-warm: indexes whose loader cache entry we warmed and
   // still owe exactly one unload() to. Paired on arrival or when stale.
   private prewarmedSectionIndexes = new Set<number>();
@@ -553,9 +548,9 @@ export class FoliateEpubEngineAdapter {
     view.style.height = '100%';
     view.style.backgroundColor = this.getReaderColors().background;
     view.style.visibility = 'hidden';
-    // The browser snapshots only this DOM reader surface. Native title, Chrome,
-    // and the fixed Reader background remain outside the cross-dissolve.
-    view.style.setProperty('view-transition-name', 'reader-page');
+    // Page turns are driven by foliate's own scroll-container slide (see
+    // turnWithSlide). No snapshot animation: the live foliate DOM is the
+    // only page surface, so there is nothing to exclude from a transition.
     view.setAttribute('flow', 'paginated');
     view.addEventListener('relocate', this.handleRelocate);
     view.addEventListener('load', this.handleDocumentLoad as EventListener);
@@ -1437,8 +1432,8 @@ export class FoliateEpubEngineAdapter {
     this.restoreState = 'opening';
     this.interactionState = 'idle';
     this.pointerSession = null;
-    this.pageTransitionActive = false;
-    this.pendingPageTurn = null;
+    this.turnLoopActive = false;
+    this.pendingPageTurns = [];
     this.rendererTouchCleanup?.();
     this.rendererTouchCleanup = null;
     this.pageCountRun += 1;
@@ -1536,13 +1531,10 @@ export class FoliateEpubEngineAdapter {
       // site. Without one this relocate is 'unknown': the session tracker
       // treats it as a segment rebase, never as reading progress.
       location.navigationReason = this.pendingNavigationReason ?? 'unknown';
-      // A same-section turn normally resolves `view.next()` quickly. A
-      // cross-spine turn can render the new section before that promise
-      // settles, however. Relocation is foliate's authoritative signal that
-      // the visible page is ready, so it must release the input lock here.
-      if (this.interactionState === 'turning' && !this.pageTransitionActive) {
-        this.interactionState = 'idle';
-      }
+      // The page-turn loop owns the input lock for the whole burst (slide or
+      // catch-up turns), so relocation must NOT release it early here: a tap
+      // arriving between a cross-spine relocate and the loop's next iteration
+      // would otherwise start a second loop and drive foliate concurrently.
       this.onLocation(location, this.restoreState);
     } catch {
       // A transient relocation without a CFI is not a persisted position.
@@ -2292,7 +2284,12 @@ export class FoliateEpubEngineAdapter {
     this.rendererTouchCleanup?.();
     this.rendererTouchCleanup = null;
     if (!renderer) return;
-    renderer.removeAttribute('animated');
+    // Keep foliate's `animated` slide: with the attribute present the
+    // paginator turns the page with a 300ms easeOutQuad scroll animation
+    // that starts on the next frame after the tap. foliate drops next()/prev()
+    // issued while its internal lock is held, so rapid taps are serialized
+    // through our own FIFO queue (requestPageTurn) instead.
+    renderer.setAttribute('animated', '');
     renderer.style.touchAction = 'none';
     const touchOptions = { capture: true, passive: false } as const;
     renderer.addEventListener('touchstart', this.blockFoliateRendererTouchPipeline, touchOptions);
@@ -2310,15 +2307,16 @@ export class FoliateEpubEngineAdapter {
 
   private async requestPageTurn(direction: 'next' | 'prev') {
     if (!this.view || this.restoreState !== 'active' || this.reflowing) return;
-    if (this.interactionState === 'turning') {
+    if (this.turnLoopActive) {
       this.queuePageTurn({ direction });
       return;
     }
     // `renderer.atStart` / `atEnd` is transiently stale when foliate has just
     // crossed a spine boundary. Let foliate's own next/prev own that boundary
     // decision; it safely no-ops at the actual start/end of the whole book.
+    this.turnLoopActive = true;
     this.interactionState = 'turning';
-    this.pendingPageTurn = null;
+    this.pendingPageTurns = [];
     // A real turn just started: the optional background page counter must
     // wait for a new quiet window instead of racing this gesture.
     this.deferBackgroundPageCount();
@@ -2326,46 +2324,45 @@ export class FoliateEpubEngineAdapter {
     // established page-turn pipeline.
     void this.clearSelectedSearchHighlight();
     let nextDirection: 'next' | 'prev' | null = direction;
-    // Burst detection: the first turn keeps the cross-dissolve, but once a
-    // queued turn exists the user is flipping fast — cut instantly instead
-    // of serializing every turn on `transition.finished`.
-    let instant = false;
+    // The first turn slides (foliate's 300ms easeOutQuad, starting on the
+    // next frame after the tap). Turns queued while it runs cut instantly so
+    // fast flipping catches up instead of serializing a slide per tap.
+    let slide = true;
     try {
-      // Keep the lock for the entire burst. Starting a new View Transition
-      // recursively in the same task that completed the previous one could
-      // race WebKit's snapshot cleanup and intermittently drop frames.
+      // Keep the loop for the entire burst: foliate drops next()/prev()
+      // issued while its internal turn lock is held, so only one turn may
+      // be in flight at a time. The FIFO queue guarantees every tap is
+      // honored exactly once, in order.
       while (nextDirection) {
         // Stamp per turn: a queued opposite direction inside the same burst
         // must not inherit this turn's reason.
         this.pendingNavigationReason = nextDirection === 'next' ? 'reading-forward' : 'reading-backward';
         try {
-          await this.turnWithCrossDissolve(nextDirection, instant);
+          await this.turnWithSlide(nextDirection, slide ? 'slide' : 'instant');
         } finally {
           this.pendingNavigationReason = null;
         }
+        slide = false;
         const pendingTurn = this.takePendingPageTurn();
         if (!pendingTurn) break;
-        instant = true;
-        await this.nextFrame();
         nextDirection = pendingTurn.direction;
       }
     } finally {
-      this.pageTransitionActive = false;
+      this.turnLoopActive = false;
       this.interactionState = 'idle';
-      this.pendingPageTurn = null;
+      this.pendingPageTurns = [];
     }
   }
 
   private queuePageTurn(turn: PendingPageTurn) {
-    // One latest-intent buffer makes rapid swipes feel continuous while still
-    // guaranteeing that a single transition owns exactly one frozen snapshot.
-    this.pendingPageTurn = turn;
+    // FIFO: rapid taps each get their own turn, in order. Past the cap the
+    // oldest queued turn is dropped — the newest intent wins.
+    if (this.pendingPageTurns.length >= PAGE_TURN_QUEUE_CAP) this.pendingPageTurns.shift();
+    this.pendingPageTurns.push(turn);
   }
 
   private takePendingPageTurn() {
-    const pendingTurn: PendingPageTurn | null = this.pendingPageTurn;
-    this.pendingPageTurn = null;
-    return pendingTurn;
+    return this.pendingPageTurns.shift() ?? null;
   }
 
   /**
@@ -2457,39 +2454,31 @@ export class FoliateEpubEngineAdapter {
     for (const index of [...this.prewarmedSectionIndexes]) this.releaseSectionPrewarm(index);
   }
 
-  private async turnWithCrossDissolve(direction: 'next' | 'prev', instant = false) {
+  /**
+   * Drive one page turn through foliate's paginator.
+   *
+   * - 'slide': foliate's own 300ms easeOutQuad scroll animation (the
+   *   renderer's `animated` attribute). Starts on the next frame after the
+   *   tap, GPU-friendly, no snapshots involved.
+   * - 'instant': drop `animated` for this turn only so a queued catch-up
+   *   turn cuts straight to the page instead of queueing another 300ms
+   *   slide. The attribute is restored afterwards so the next fresh tap
+   *   slides again.
+   *
+   * Reduced motion always cuts: no animation at all.
+   */
+  private async turnWithSlide(direction: 'next' | 'prev', mode: 'slide' | 'instant') {
     const view = this.view;
+    const renderer = view?.renderer;
     if (!view) return;
-    const turn = async () => {
-      await (direction === 'next' ? view.next() : view.prev());
-      // Do not await requestAnimationFrame in this callback. iOS WebKit
-      // pauses frame production until a View Transition update callback
-      // resolves, so doing so creates a self-wait and eventually throws
-      // “View transition update callback timed out”. `view.next()` remains
-      // the authoritative settled relocation before the two snapshots are
-      // composed for the simultaneous CSS dissolve.
-    };
-    const transitionDocument = document as ViewTransitionDocument;
-    const startViewTransition = transitionDocument.startViewTransition;
-    // Burst (fast flipping), reduced motion, or no View Transition support:
-    // cut straight to the next page with no snapshot animation.
-    if (instant || this.prefersReducedMotion() || !startViewTransition) {
-      await turn();
-      return;
-    }
-    // The named foliate-view is captured by View Transitions *before* `turn`
-    // runs. `::view-transition-old(reader-page)` is therefore a frozen A-page
-    // bitmap, never a reference to the live foliate DOM that later becomes B.
-    this.pageTransitionActive = true;
-    const transition = startViewTransition.call(document, turn);
+    const slide = mode === 'slide' && !this.prefersReducedMotion();
+    if (slide) renderer?.setAttribute('animated', '');
+    else renderer?.removeAttribute('animated');
     try {
-      await transition.finished;
-    } catch {
-      // The page relocation itself remains authoritative. A WebKit visual
-      // transition may be cancelled by lifecycle changes without invalidating
-      // the completed foliate turn.
+      await (direction === 'next' ? view.next() : view.prev());
     } finally {
-      this.pageTransitionActive = false;
+      // Restore the sliding default unless the user prefers reduced motion.
+      if (!this.prefersReducedMotion()) renderer?.setAttribute('animated', '');
     }
   }
 
