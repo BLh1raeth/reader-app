@@ -174,20 +174,25 @@ export function TodayReadingCard({
               </Text>
             </Text>
           </View>
+          {/*
+           * 标签与数值拆成两个并列 Text（不嵌套）：两种字号混排时嵌套写法按基线走，
+           * 小字看起来往下掉；并列后靠 metricRow 的 alignItems: 'center'
+           * 让它们的视觉中心对齐。
+           */}
           <View style={styles.metricRow} accessible={false}>
             <Text style={[styles.charsName, { color: DEMO_RINGS[1].color }]}>
               {uiText.data.todayMetricChars}：
-              <Text style={[styles.charsValue, { color: DEMO_RINGS[1].color }]}>
-                {charsText}
-              </Text>
+            </Text>
+            <Text style={[styles.charsValue, { color: DEMO_RINGS[1].color }]}>
+              {charsText}
             </Text>
           </View>
           <View style={styles.metricRow} accessible={false}>
             <Text style={[styles.excerptName, { color: DEMO_RINGS[2].color }]}>
               {uiText.data.todayMetricExcerpts}：
-              <Text style={[styles.excerptValue, { color: DEMO_RINGS[2].color }]}>
-                {excerptText}
-              </Text>
+            </Text>
+            <Text style={[styles.excerptValue, { color: DEMO_RINGS[2].color }]}>
+              {excerptText}
             </Text>
           </View>
         </View>
