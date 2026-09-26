@@ -12,9 +12,6 @@ import type {
   ReaderTocItem,
 } from '../reader-types';
 
-const PAGE_INDICATOR_FADE_OUT_MS = 96;
-const PAGE_INDICATOR_FADE_IN_MS = 144;
-
 function collectTocPageTargets(items: ReaderTocItem[], targets: Map<string, string>) {
   for (const item of items) {
     if (item.href) targets.set(item.href, `toc:${item.id ?? item.href}`);
@@ -66,7 +63,6 @@ export function useReaderNavigation({
   const [externalNavMessage, setExternalNavMessage] = useState<string | null>(null);
   const [displayedPageLocation, setDisplayedPageLocation] = useState<ReaderLocation | null>(null);
   const displayedPageLocationRef = useRef<ReaderLocation | null>(null);
-  const pageIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pageLocationSequenceRef = useRef(0);
   const activePageLocationRequestRef = useRef<ReaderPageLocationRequest | null>(null);
   const externalNavMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -170,16 +166,10 @@ export function useReaderNavigation({
     if (externalTargetFailed && isReady) showExternalNavMessage('无法定位到原摘录位置');
   }, [externalTargetFailed, isReady, showExternalNavMessage]);
 
-  // 页码指示器：位置变化时淡出-更新-淡入。
+  // 页码指示器：位置变化时直接切换，不做淡出淡入。
   useEffect(() => {
     const nextLocation = currentLocation;
     const displayedLocation = displayedPageLocationRef.current;
-    const fadeOutDuration = reduceMotion ? 40 : PAGE_INDICATOR_FADE_OUT_MS;
-    const fadeInDuration = reduceMotion ? 60 : PAGE_INDICATOR_FADE_IN_MS;
-    if (pageIndicatorTimerRef.current) {
-      clearTimeout(pageIndicatorTimerRef.current);
-      pageIndicatorTimerRef.current = null;
-    }
     cancelAnimation(pageIndicatorOpacity);
 
     if (!nextLocation) {
@@ -199,31 +189,14 @@ export function useReaderNavigation({
       return;
     }
 
-    const visiblePageChanged = displayedLocation.currentPage !== nextLocation.currentPage
-      || displayedLocation.totalPages !== nextLocation.totalPages;
-    if (!visiblePageChanged) {
-      displayedPageLocationRef.current = nextLocation;
-      setDisplayedPageLocation(nextLocation);
-      return;
-    }
-
-    pageIndicatorOpacity.set(withTiming(0, {
-      duration: fadeOutDuration,
-      easing: Easing.in(Easing.cubic),
-    }));
-    pageIndicatorTimerRef.current = setTimeout(() => {
-      pageIndicatorTimerRef.current = null;
-      displayedPageLocationRef.current = nextLocation;
-      setDisplayedPageLocation(nextLocation);
-      pageIndicatorOpacity.set(withTiming(1, {
-        duration: fadeInDuration,
-        easing: Easing.out(Easing.cubic),
-      }));
-    }, fadeOutDuration);
+    // 直接切换：翻页时立即更新数字。淡出-更新-淡入会让页码变化
+    // 落后于页面切换，与直接切页的观感不一致。
+    pageIndicatorOpacity.set(1);
+    displayedPageLocationRef.current = nextLocation;
+    setDisplayedPageLocation(nextLocation);
   }, [currentLocation, pageIndicatorOpacity, reduceMotion]);
 
   useEffect(() => () => {
-    if (pageIndicatorTimerRef.current) clearTimeout(pageIndicatorTimerRef.current);
     cancelAnimation(pageIndicatorOpacity);
   }, [pageIndicatorOpacity]);
 
