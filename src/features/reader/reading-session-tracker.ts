@@ -11,6 +11,7 @@ import type {
   ReadingSessionStore,
   ReadingSessionUpdate,
 } from './reading-session-repository';
+import { toLocalDayKeyFromMs } from '../../shared/time/local-day';
 
 /**
  * ReadingSession Core A: reading behavior data layer.
@@ -28,6 +29,8 @@ import type {
 export const READING_SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 export const READING_SESSION_CHECKPOINT_MS = 30 * 1000;
 export const READING_SESSION_MEASURE_TIMEOUT_MS = 10 * 1000;
+/** Fixed 1-minute speed-sample window: chars read in the window = chars/min. */
+export const READING_SPEED_SAMPLE_MS = 60 * 1000;
 
 export type ReadingSessionContext = {
   bookId: string | null;
@@ -88,6 +91,12 @@ export class ReadingSessionTracker {
 
   private active: ActiveReadingSession | null = null;
   private measureQueue: Promise<void> = Promise.resolve();
+  /**
+   * Speed sampler baseline: last 60s-window boundary (ms) and the session's
+   * cumulative forwardCharacters then. Reset on every session close; a
+   * partial trailing window is discarded, never prorated.
+   */
+  private speedSampleBaseline: { atMs: number; chars: number } | null = null;
 
   /** Last raw location, whatever its restore state (used for endCfi). */
   private lastLocationCfi: string | null = null;
@@ -146,6 +155,7 @@ export class ReadingSessionTracker {
     const nowMs = this.deps.now();
     this.account(nowMs);
     this.flushCheckpoint(nowMs);
+    this.maybeSampleSpeed(nowMs);
   }
 
   dispose(): void {
@@ -154,6 +164,42 @@ export class ReadingSessionTracker {
     this.flushCheckpoint(nowMs);
     this.closeSession('reader-exit', nowMs);
     this.active = null;
+  }
+
+  /**
+   * 1-minute speed sampler. At each 60s boundary, stores how many forward
+   * characters were read since the previous boundary — that count IS the
+   * speed (chars/min), so no per-window seconds bookkeeping is needed.
+   * Windows with 0 chars (idle) are omitted, never stored as 0.
+   */
+  private maybeSampleSpeed(nowMs: number): void {
+    const session = this.active;
+    if (!session) {
+      this.speedSampleBaseline = null;
+      return;
+    }
+    const baseline = this.speedSampleBaseline;
+    if (!baseline) {
+      this.speedSampleBaseline = { atMs: nowMs, chars: session.forwardCharacters };
+      return;
+    }
+    if (nowMs - baseline.atMs < READING_SPEED_SAMPLE_MS) return;
+    const chars = session.forwardCharacters - baseline.chars;
+    // Advance the baseline even when nothing was read: the next window
+    // starts now, not "when reading resumes".
+    this.speedSampleBaseline = { atMs: nowMs, chars: session.forwardCharacters };
+    if (chars <= 0) return;
+    // Sessions never cross a local day (midnight split in account()), so
+    // the session's start day is the sample's day.
+    const localDayKey = toLocalDayKeyFromMs(session.startedAtMs);
+    void this.deps.store
+      .createSpeedSample({ localDayKey, sampledAt: toIso(nowMs), chars })
+      .catch((error: unknown) => {
+        this.deps.devLog('[READING_SESSION_STORE_FAILED]', {
+          op: 'speed-sample',
+          message: String(error),
+        });
+      });
   }
 
   // ---------------------------------------------------------------- activity
@@ -257,6 +303,7 @@ export class ReadingSessionTracker {
     };
     this.active = session;
     this.measureQueue = Promise.resolve();
+    this.speedSampleBaseline = { atMs: nowMs, chars: 0 };
     this.deps.devLog('[READING_SESSION_START]', {
       bookId,
       sessionId: session.id,
@@ -357,6 +404,9 @@ export class ReadingSessionTracker {
     const session = this.active;
     if (!session) return;
     this.active = null;
+    // Drop the sampler baseline: the trailing partial window is discarded,
+    // never prorated into a sample.
+    this.speedSampleBaseline = null;
     // Invalidate any queued measurements from the old segment.
     session.measureGeneration += 1;
     this.deps.devLog('[READING_SESSION_CLOSE]', {

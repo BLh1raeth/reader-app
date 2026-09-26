@@ -151,7 +151,7 @@ export default function DataScreen() {
           </View>
           <View style={styles.cardCell}>
             <ReadingSpeedCard
-              speed={summary?.last7DaysReadingSpeedCharsPerMinute ?? null}
+              latestSpeedSample={summary?.latestSpeedSample ?? null}
               days={last7Days}
               style={styles.halfCard}
             />

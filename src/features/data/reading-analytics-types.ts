@@ -27,13 +27,19 @@ export type DailyReadingStats = {
    */
   readingSpeedCharsPerMinute: number | null;
   /**
-   * Slowest / fastest single-session speed this day (chars/min), over the
-   * same speed-eligible sessions as `readingSpeedCharsPerMinute`.
-   * null when the day has no speed-eligible data. Drives the Health-style
-   * range bars: min = bar bottom, max = bar top.
+   * P10 / P90 of the day's 1-minute speed samples (chars/min; each sample
+   * is chars read in a fixed 60s window). Linear interpolation; null when
+   * the day has no samples. Drives the Health-style range bars:
+   * P10 = bar bottom, P90 = bar top. Percentiles (not strict min/max) so
+   * one extreme minute can't stretch the bar.
    */
-  readingSpeedMinCharsPerMinute: number | null;
-  readingSpeedMaxCharsPerMinute: number | null;
+  readingSpeedP10CharsPerMinute: number | null;
+  readingSpeedP90CharsPerMinute: number | null;
+  /**
+   * Latest 1-minute sample of this day (chars/min); null when the day has
+   * no samples. The speed card draws its black dot here.
+   */
+  readingSpeedLatestCharsPerMinute: number | null;
   /** Number of reader_excerpts created on this day. */
   excerptCount: number;
 };
@@ -73,6 +79,12 @@ export type ReadingAnalyticsSummary = {
   todayForwardCharacters: number;
   /** All reader_excerpts rows (source of truth; deletions reflect here). */
   totalExcerptCount: number;
+  /**
+   * Latest 1-minute speed sample (chars/min) with its day. The speed
+   * card's big number and black dot come from here — "最新一次检测的速度".
+   * null when no sample exists yet.
+   */
+  latestSpeedSample: { dayKey: string; charsPerMinute: number } | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -93,6 +105,24 @@ export type ReadingAnalyticsSessionRow = {
    * that the backfill could not interpret.
    */
   localDayKey: string | null;
+};
+
+/** Narrow row from reader_speed_samples for analytics. */
+export type ReadingSpeedSampleRow = {
+  localDayKey: string | null;
+  sampledAt: string;
+  /** Forward chars read in the fixed 60s window (= chars/min). */
+  chars: number;
+};
+
+/**
+ * A speed sample validated and attributed to one device-local day.
+ * `chars` is already chars/min (fixed 60s window).
+ */
+export type NormalizedSpeedSample = {
+  dayKey: string;
+  sampledAt: string;
+  chars: number;
 };
 
 /** Narrow row from reader_excerpts for analytics. */

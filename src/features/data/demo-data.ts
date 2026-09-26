@@ -43,17 +43,18 @@ const DEMO_DAYS: Array<{
   seconds: number;
   chars: number;
   speed: number | null;
-  speedMin: number | null;
-  speedMax: number | null;
+  speedP10: number | null;
+  speedP90: number | null;
+  speedLatest: number | null;
   excerpts: number;
 }> = [
-  { seconds: 3200, chars: 26800, speed: 502, speedMin: 468, speedMax: 545, excerpts: 2 },
-  { seconds: 0, chars: 0, speed: null, speedMin: null, speedMax: null, excerpts: 0 },
-  { seconds: 5400, chars: 48600, speed: 540, speedMin: 505, speedMax: 578, excerpts: 4 },
-  { seconds: 1800, chars: 14400, speed: 480, speedMin: 451, speedMax: 512, excerpts: 1 },
-  { seconds: 0, chars: 0, speed: null, speedMin: null, speedMax: null, excerpts: 0 },
-  { seconds: 4600, chars: 41400, speed: 540, speedMin: 498, speedMax: 571, excerpts: 3 },
-  { seconds: 5100, chars: 42500, speed: 500, speedMin: 472, speedMax: 533, excerpts: 5 },
+  { seconds: 3200, chars: 26800, speed: 502, speedP10: 470, speedP90: 542, speedLatest: 505, excerpts: 2 },
+  { seconds: 0, chars: 0, speed: null, speedP10: null, speedP90: null, speedLatest: null, excerpts: 0 },
+  { seconds: 5400, chars: 48600, speed: 540, speedP10: 508, speedP90: 575, speedLatest: 560, excerpts: 4 },
+  { seconds: 1800, chars: 14400, speed: 480, speedP10: 453, speedP90: 510, speedLatest: 488, excerpts: 1 },
+  { seconds: 0, chars: 0, speed: null, speedP10: null, speedP90: null, speedLatest: null, excerpts: 0 },
+  { seconds: 4600, chars: 41400, speed: 540, speedP10: 500, speedP90: 568, speedLatest: 545, excerpts: 3 },
+  { seconds: 5100, chars: 42500, speed: 500, speedP10: 474, speedP90: 531, speedLatest: 512, excerpts: 5 },
 ];
 
 export function buildDemoData(todayKey: string): DemoDataLoadResult {
@@ -67,8 +68,9 @@ export function buildDemoData(todayKey: string): DemoDataLoadResult {
     activeSeconds: day.seconds,
     forwardCharacters: day.chars,
     readingSpeedCharsPerMinute: day.speed,
-    readingSpeedMinCharsPerMinute: day.speedMin,
-    readingSpeedMaxCharsPerMinute: day.speedMax,
+    readingSpeedP10CharsPerMinute: day.speedP10,
+    readingSpeedP90CharsPerMinute: day.speedP90,
+    readingSpeedLatestCharsPerMinute: day.speedLatest,
     excerptCount: day.excerpts,
   }));
 
@@ -86,6 +88,7 @@ export function buildDemoData(todayKey: string): DemoDataLoadResult {
     todayExcerptCount: 5,
     todayForwardCharacters: 42500,
     totalExcerptCount: 428,
+    latestSpeedSample: { dayKey: todayKey, charsPerMinute: 512 },
   };
 
   return { summary, last7Days, todayKey, hourlyActiveSeconds };

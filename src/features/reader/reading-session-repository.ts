@@ -75,6 +75,20 @@ export type ReadingSessionStore = {
   createReadingSession(session: NewReadingSession): Promise<ReadingSession>;
   updateReadingSession(id: string, patch: ReadingSessionUpdate): Promise<void>;
   closeReadingSession(id: string, close: ReadingSessionClose): Promise<void>;
+  createSpeedSample(sample: NewReadingSpeedSample): Promise<void>;
+};
+
+/**
+ * One fixed 60s reading-speed sample: `chars` forward characters read in
+ * that window, so chars IS the speed (chars/min). Only windows with
+ * chars > 0 are stored; idle windows are omitted by the tracker.
+ */
+export type NewReadingSpeedSample = {
+  /** Device-local calendar day the window belonged to (YYYY-MM-DD). */
+  localDayKey: string;
+  /** ISO-8601 UTC timestamp of the window end. */
+  sampledAt: string;
+  chars: number;
 };
 
 type ReadingSessionRow = {
@@ -164,6 +178,17 @@ export const readingSessionRepository = {
     const persisted = await readingSessionRepository.getReadingSessionById(session.id);
     if (!persisted) throw new Error('阅读会话写入后无法重新读取。');
     return persisted;
+  },
+
+  async createSpeedSample(sample: NewReadingSpeedSample): Promise<void> {
+    const database = await getLibraryDatabase();
+    await database.runAsync(
+      `INSERT INTO reader_speed_samples (local_day_key, sampled_at, chars)
+       VALUES (?, ?, ?);`,
+      sample.localDayKey,
+      sample.sampledAt,
+      sample.chars,
+    );
   },
 
   async getReadingSessionById(id: string): Promise<ReadingSession | null> {

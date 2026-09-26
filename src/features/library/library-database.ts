@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 import { backfillLocalDayKeys } from './local-day-backfill';
 
 const DATABASE_NAME = 'reader-library.db';
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -304,6 +304,27 @@ async function bootstrapDatabase() {
       // so re-running never overwrites an existing key.
       await backfillLocalDayKeys(transaction);
       await transaction.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+    });
+  }
+  if (currentVersion < 17) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      // Data Core: 1-minute reading-speed samples. Each row records how
+      // many forward characters were read in one fixed 60s window, so the
+      // row's chars value IS the speed (chars/min) — no seconds column.
+      // Only windows with chars > 0 are stored; idle windows are omitted.
+      await transaction.execAsync(`
+        CREATE TABLE IF NOT EXISTS reader_speed_samples (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          local_day_key TEXT NOT NULL,
+          sampled_at TEXT NOT NULL,
+          chars INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS reader_speed_samples_day_idx
+          ON reader_speed_samples(local_day_key);
+        CREATE INDEX IF NOT EXISTS reader_speed_samples_sampled_idx
+          ON reader_speed_samples(sampled_at);
+        PRAGMA user_version = ${SCHEMA_VERSION};
+      `);
     });
   }
   // Stale-session recovery runs inside bootstrap with the live `database`

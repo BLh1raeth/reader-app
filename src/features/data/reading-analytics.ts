@@ -27,9 +27,11 @@ import type {
   DailyReadingStats,
   NormalizedAnalyticsExcerpt,
   NormalizedAnalyticsSession,
+  NormalizedSpeedSample,
   ReadingAnalyticsExcerptRow,
   ReadingAnalyticsSessionRow,
   ReadingAnalyticsSummary,
+  ReadingSpeedSampleRow,
 } from './reading-analytics-types';
 
 // RN global. Declared locally so this pure module also compiles standalone
@@ -65,7 +67,7 @@ function isFiniteNumber(value: unknown): value is number {
 function resolvePersistedDayKey(
   persistedDayKey: string | null,
   timestamp: string,
-  rowType: 'session' | 'excerpt',
+  rowType: 'session' | 'excerpt' | 'sample',
   rowId: string | number,
 ): string | null {
   if (typeof persistedDayKey === 'string' && isValidDayKey(persistedDayKey)) {
@@ -197,23 +199,24 @@ export function weightedSpeedCharsPerMinute(
 }
 
 /**
- * Min/max single-session speed for a set of sessions (chars/min), over the
- * same speed-eligible sessions used by `weightedSpeedCharsPerMinute`.
- * Returns null when no session is speed-eligible — the day's range bar is
- * then omitted, not drawn as zero.
+ * Linear-interpolation percentile over a pre-sorted ascending array.
+ * `p` in [0, 1]. null for empty input; the single value for length 1.
  */
-export function daySpeedRangeCharsPerMinute(
-  sessions: ReadonlyArray<{ activeSeconds: number; forwardCharacters: number }>,
-): { min: number; max: number } | null {
-  let min: number | null = null;
-  let max: number | null = null;
-  for (const session of sessions) {
-    if (!isSpeedEligibleSession(session)) continue;
-    const speed = (session.forwardCharacters / session.activeSeconds) * 60;
-    if (min === null || speed < min) min = speed;
-    if (max === null || speed > max) max = speed;
-  }
-  return min === null || max === null ? null : { min, max };
+export function percentileSorted(sorted: ReadonlyArray<number>, p: number): number | null {
+  if (sorted.length === 0) return null;
+  if (sorted.length === 1) return sorted[0];
+  const rank = Math.min(1, Math.max(0, p)) * (sorted.length - 1);
+  const lo = Math.floor(rank);
+  const hi = Math.ceil(rank);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (rank - lo);
+}
+
+export function normalizeSpeedSample(row: ReadingSpeedSampleRow): NormalizedSpeedSample | null {
+  const dayKey = resolvePersistedDayKey(row.localDayKey, row.sampledAt, 'sample', 0);
+  if (!dayKey) return null;
+  if (!isFiniteNumber(row.chars) || row.chars <= 0) return null;
+  if (typeof row.sampledAt !== 'string' || Number.isNaN(Date.parse(row.sampledAt))) return null;
+  return { dayKey, sampledAt: row.sampledAt, chars: row.chars };
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +231,7 @@ export function daySpeedRangeCharsPerMinute(
 export function buildDailyStats(
   sessions: ReadonlyArray<NormalizedAnalyticsSession>,
   excerpts: ReadonlyArray<NormalizedAnalyticsExcerpt>,
+  samples: ReadonlyArray<NormalizedSpeedSample>,
   startDay: string,
   endDay: string,
 ): DailyReadingStats[] {
@@ -239,8 +243,9 @@ export function buildDailyStats(
       activeSeconds: 0,
       forwardCharacters: 0,
       readingSpeedCharsPerMinute: null,
-      readingSpeedMinCharsPerMinute: null,
-      readingSpeedMaxCharsPerMinute: null,
+      readingSpeedP10CharsPerMinute: null,
+      readingSpeedP90CharsPerMinute: null,
+      readingSpeedLatestCharsPerMinute: null,
       excerptCount: 0,
     });
   }
@@ -262,14 +267,34 @@ export function buildDailyStats(
     if (!bucket) continue;
     bucket.excerptCount += 1;
   }
+  // 1-minute speed samples grouped by day (chars already = chars/min).
+  const samplesByDay = new Map<string, NormalizedSpeedSample[]>();
+  for (const sample of samples) {
+    if (!statsByDay.has(sample.dayKey)) continue; // outside the requested window
+    let list = samplesByDay.get(sample.dayKey);
+    if (!list) {
+      list = [];
+      samplesByDay.set(sample.dayKey, list);
+    }
+    list.push(sample);
+  }
   for (const dayKey of days) {
     const bucket = statsByDay.get(dayKey);
     if (!bucket) continue;
-    const daySessions = sessionsByDay.get(dayKey) ?? [];
-    bucket.readingSpeedCharsPerMinute = weightedSpeedCharsPerMinute(daySessions);
-    const range = daySpeedRangeCharsPerMinute(daySessions);
-    bucket.readingSpeedMinCharsPerMinute = range?.min ?? null;
-    bucket.readingSpeedMaxCharsPerMinute = range?.max ?? null;
+    bucket.readingSpeedCharsPerMinute = weightedSpeedCharsPerMinute(
+      sessionsByDay.get(dayKey) ?? [],
+    );
+    const daySamples = samplesByDay.get(dayKey) ?? [];
+    if (daySamples.length > 0) {
+      const speeds = daySamples.map((s) => s.chars).sort((a, b) => a - b);
+      bucket.readingSpeedP10CharsPerMinute = percentileSorted(speeds, 0.1);
+      bucket.readingSpeedP90CharsPerMinute = percentileSorted(speeds, 0.9);
+      let latest = daySamples[0];
+      for (const s of daySamples) {
+        if (s.sampledAt >= latest.sampledAt) latest = s;
+      }
+      bucket.readingSpeedLatestCharsPerMinute = latest.chars;
+    }
   }
   return days.map((dayKey) => {
     const bucket = statsByDay.get(dayKey);
@@ -435,6 +460,7 @@ function sumForwardCharacters(
 export function analyzeReadingData(
   sessions: ReadonlyArray<NormalizedAnalyticsSession>,
   excerpts: ReadonlyArray<NormalizedAnalyticsExcerpt>,
+  samples: ReadonlyArray<NormalizedSpeedSample>,
   todayKey: string,
 ): ReadingAnalyticsSummary {
   const last7Start = addLocalCalendarDays(todayKey, -6);
@@ -463,6 +489,16 @@ export function analyzeReadingData(
     if (excerpt.dayKey === todayKey) todayExcerptCount += 1;
   }
 
+  let latestSpeedSample: ReadingAnalyticsSummary['latestSpeedSample'] = null;
+  let latestSampledAt = '';
+  for (const sample of samples) {
+    // ISO-8601 UTC strings compare lexicographically in chronological order.
+    if (sample.sampledAt >= latestSampledAt) {
+      latestSampledAt = sample.sampledAt;
+      latestSpeedSample = { dayKey: sample.dayKey, charsPerMinute: sample.chars };
+    }
+  }
+
   return {
     todayActiveSeconds,
     todayForwardCharacters,
@@ -475,5 +511,6 @@ export function analyzeReadingData(
     allTimeReadingSpeedCharsPerMinute: weightedSpeedCharsPerMinute(sessions),
     todayExcerptCount,
     totalExcerptCount: excerpts.length,
+    latestSpeedSample,
   };
 }

@@ -22,21 +22,25 @@ import {
   buildDailyStats,
   normalizeAnalyticsExcerpt,
   normalizeAnalyticsSession,
+  normalizeSpeedSample,
 } from './reading-analytics';
 import type {
   DailyReadingStats,
   NormalizedAnalyticsExcerpt,
   NormalizedAnalyticsSession,
+  NormalizedSpeedSample,
   ReadingAnalyticsSummary,
 } from './reading-analytics-types';
 
 async function loadNormalizedData(): Promise<{
   sessions: NormalizedAnalyticsSession[];
   excerpts: NormalizedAnalyticsExcerpt[];
+  samples: NormalizedSpeedSample[];
 }> {
-  const [sessionRows, excerptRows] = await Promise.all([
+  const [sessionRows, excerptRows, sampleRows] = await Promise.all([
     readingAnalyticsRepository.listSessionsForAnalytics(),
     readingAnalyticsRepository.listExcerptsForAnalytics(),
+    readingAnalyticsRepository.listSpeedSamplesForAnalytics(),
   ]);
   const sessions: NormalizedAnalyticsSession[] = [];
   for (const row of sessionRows) {
@@ -48,7 +52,12 @@ async function loadNormalizedData(): Promise<{
     const normalized = normalizeAnalyticsExcerpt(row);
     if (normalized) excerpts.push(normalized);
   }
-  return { sessions, excerpts };
+  const samples: NormalizedSpeedSample[] = [];
+  for (const row of sampleRows) {
+    const normalized = normalizeSpeedSample(row);
+    if (normalized) samples.push(normalized);
+  }
+  return { sessions, excerpts, samples };
 }
 
 /**
@@ -59,8 +68,8 @@ async function loadNormalizedData(): Promise<{
 export async function getReadingAnalyticsSummary(
   now: Date = new Date(),
 ): Promise<ReadingAnalyticsSummary> {
-  const { sessions, excerpts } = await loadNormalizedData();
-  return analyzeReadingData(sessions, excerpts, todayLocalDayKey(now));
+  const { sessions, excerpts, samples } = await loadNormalizedData();
+  return analyzeReadingData(sessions, excerpts, samples, todayLocalDayKey(now));
 }
 
 export type DailyReadingStatsRange = {
@@ -84,8 +93,8 @@ export async function getDailyReadingStats(
   if (!isValidDayKey(endDay)) {
     throw new Error(`Invalid endDay (expected local YYYY-MM-DD): ${endDay}`);
   }
-  const { sessions, excerpts } = await loadNormalizedData();
-  return buildDailyStats(sessions, excerpts, startDay, endDay);
+  const { sessions, excerpts, samples } = await loadNormalizedData();
+  return buildDailyStats(sessions, excerpts, samples, startDay, endDay);
 }
 
 /**

@@ -15,6 +15,7 @@ import { getLibraryDatabase } from '../library/library-database';
 import type {
   ReadingAnalyticsExcerptRow,
   ReadingAnalyticsSessionRow,
+  ReadingSpeedSampleRow,
 } from './reading-analytics-types';
 
 type SessionColumns = {
@@ -30,6 +31,12 @@ type ExcerptColumns = {
   id: number;
   created_at: string;
   created_local_day_key: string | null;
+};
+
+type SpeedSampleColumns = {
+  local_day_key: string;
+  sampled_at: string;
+  chars: number;
 };
 
 export const readingAnalyticsRepository = {
@@ -69,5 +76,24 @@ export const readingAnalyticsRepository = {
       'SELECT id, created_at, created_local_day_key FROM reader_excerpts;',
     );
     return rows.map((row) => ({ id: row.id, createdAt: row.created_at, createdLocalDayKey: row.created_local_day_key }));
+  },
+
+  /**
+   * All 1-minute speed samples, oldest first. Each row's chars IS the
+   * speed (chars/min) for its fixed 60s window; only chars > 0 windows
+   * were stored. Personal-app volume: full scan is fine.
+   */
+  async listSpeedSamplesForAnalytics(): Promise<ReadingSpeedSampleRow[]> {
+    const database = await getLibraryDatabase();
+    const rows = await database.getAllAsync<SpeedSampleColumns>(
+      `SELECT local_day_key, sampled_at, chars
+       FROM reader_speed_samples
+       ORDER BY sampled_at ASC;`,
+    );
+    return rows.map((row) => ({
+      localDayKey: row.local_day_key,
+      sampledAt: row.sampled_at,
+      chars: row.chars,
+    }));
   },
 };
