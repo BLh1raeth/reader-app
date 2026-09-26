@@ -139,7 +139,9 @@ export function GoalSettingSheet({
         <Group
           modifiers={[
             frame({ maxWidth: Infinity, maxHeight: Infinity, alignment: 'topLeading' }),
-            presentationDetents(['medium']),
+            // 内容只有标题 + 三行 + 一行预设，用 0.42 屏高贴合内容，
+            // 不用 medium（半屏）避免下面大片空白。
+            presentationDetents([{ fraction: 0.42 }]),
             presentationDragIndicator('hidden'),
             presentationBackground('transparent'),
           ]}
@@ -306,7 +308,10 @@ const styles = StyleSheet.create({
   stepValue: {
     fontSize: 17,
     fontWeight: '700',
-    minWidth: 64,
+    // 固定宽度：数字从 "6" 变到 "100,000" 时 + 按钮不左右抖；
+    // lineHeight 与按钮同高 32，让数字视觉中心与 −/+ 圆钮对齐。
+    width: 88,
+    lineHeight: 32,
     textAlign: 'center',
     fontVariant: ['tabular-nums'],
   },
@@ -323,7 +328,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(120,120,128,0.12)',
   },
   presetSelected: {
-    backgroundColor: 'rgba(120,120,128,0.28)',
+    backgroundColor: 'rgba(120,120,128,0.32)',
   },
   presetText: {
     fontSize: 15,
