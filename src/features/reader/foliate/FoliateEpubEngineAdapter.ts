@@ -146,14 +146,6 @@ type ReaderPointerSession = {
   startedWhileTurning: boolean;
 };
 
-type PageViewTransition = {
-  finished: Promise<unknown>;
-};
-
-type ViewTransitionDocument = Document & {
-  startViewTransition?: (update: () => Promise<void> | void) => PageViewTransition;
-};
-
 const TAP_EDGE_RATIO = 0.25;
 const TAP_MAX_DURATION_MS = 350;
 const TAP_MAX_MOVEMENT_PX = 10;
@@ -556,10 +548,9 @@ export class FoliateEpubEngineAdapter {
     view.style.height = '100%';
     view.style.backgroundColor = this.getReaderColors().background;
     view.style.visibility = 'hidden';
-    // The browser snapshots only this DOM reader surface for the
-    // cross-dissolve. Native title, Chrome, and the fixed Reader background
-    // remain outside the transition.
-    view.style.setProperty('view-transition-name', 'reader-page');
+    // Page turns are driven by foliate's own scroll-container slide (see
+    // turnWithSlide). No snapshot animation: the live foliate DOM is the
+    // only page surface, so there is nothing to exclude from a transition.
     view.setAttribute('flow', 'paginated');
     view.addEventListener('relocate', this.handleRelocate);
     view.addEventListener('load', this.handleDocumentLoad as EventListener);
@@ -2330,10 +2321,6 @@ export class FoliateEpubEngineAdapter {
     // established page-turn pipeline.
     void this.clearSelectedSearchHighlight();
     let nextDirection: 'next' | 'prev' | null = direction;
-    // Burst detection: the first turn keeps the cross-dissolve, but once a
-    // queued turn exists the user is flipping fast — cut instantly instead
-    // of serializing every turn on `transition.finished`.
-    let instant = false;
     try {
       // Keep the loop for the entire burst: foliate drops next()/prev()
       // issued while its internal turn lock is held, so only one turn may
@@ -2344,14 +2331,12 @@ export class FoliateEpubEngineAdapter {
         // must not inherit this turn's reason.
         this.pendingNavigationReason = nextDirection === 'next' ? 'reading-forward' : 'reading-backward';
         try {
-          await this.turnWithCrossDissolve(nextDirection, instant);
+          await this.turnInstant(nextDirection);
         } finally {
           this.pendingNavigationReason = null;
         }
         const pendingTurn = this.takePendingPageTurn();
         if (!pendingTurn) break;
-        instant = true;
-        await this.nextFrame();
         nextDirection = pendingTurn.direction;
       }
     } finally {
@@ -2462,44 +2447,16 @@ export class FoliateEpubEngineAdapter {
   }
 
   /**
-   * One page turn as a View Transition cross-dissolve: the old and new page
-   * snapshots are captured by the browser and crossfade over the UA-default
-   * 250ms. True overlap — both pages visible simultaneously — which requires
-   * the new page to be fully laid out before the first animated frame, i.e.
-   * the tap-to-first-visual latency this experiment is measuring.
-   *
-   * Burst (fast flipping), reduced motion, or no View Transition support:
-   * cut straight to the next page with no snapshot animation.
+   * One page turn as a direct cut: no slide, no dissolve. foliate jumps the
+   * scroll container to the next page synchronously (plus its internal
+   * settle wait). There is no animation, so reduced motion needs no
+   * special-casing — every user gets this same path.
    */
-  private async turnWithCrossDissolve(direction: 'next' | 'prev', instant = false) {
+  private async turnInstant(direction: 'next' | 'prev') {
     const view = this.view;
     if (!view) return;
-    const turn = async () => {
-      await (direction === 'next' ? view.next() : view.prev());
-      // Do not await requestAnimationFrame in this callback. iOS WebKit
-      // pauses frame production until a View Transition update callback
-      // resolves, so doing so creates a self-wait and eventually throws
-      // “View transition update callback timed out”. `view.next()` remains
-      // the authoritative settled relocation before the two snapshots are
-      // composed for the simultaneous CSS dissolve.
-    };
-    const transitionDocument = document as ViewTransitionDocument;
-    const startViewTransition = transitionDocument.startViewTransition;
-    if (instant || this.prefersReducedMotion() || !startViewTransition) {
-      await turn();
-      return;
-    }
-    // The named foliate-view is captured by View Transitions *before* `turn`
-    // runs. `::view-transition-old(reader-page)` is therefore a frozen A-page
-    // bitmap, never a reference to the live foliate DOM that later becomes B.
-    const transition = startViewTransition.call(document, turn);
-    try {
-      await transition.finished;
-    } catch {
-      // The page relocation itself remains authoritative. A WebKit visual
-      // transition may be cancelled by lifecycle changes without invalidating
-      // the completed foliate turn.
-    }
+    view.renderer?.removeAttribute('animated');
+    await (direction === 'next' ? view.next() : view.prev());
   }
 
   private fadeOut() {
