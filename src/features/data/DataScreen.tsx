@@ -51,7 +51,25 @@ const SECTION_SPACING = 24;
 export default function DataScreen() {
   const insets = useSafeAreaInsets();
   const theme = useDataTheme();
-  const [data, setData] = useState<DataLoadResult | null>(null);
+  /**
+   * 首屏文字不能闪：demo 模式下 buildDemoData 是纯同步函数，直接在
+   * useState 初始化时算好，首帧文字就是正确的；真实模式走异步 SQLite，
+   * 首帧 data 为 null 时卡片不渲染（下方案件），数据回来后一次挂载，
+   * 文字正确、只有图（圆环/柱子/胶囊）做入场动画。
+   */
+  const [data, setData] = useState<DataLoadResult | null>(() => {
+    if (USE_DEMO_DATA) {
+      const todayKey = todayLocalDayKey();
+      const demo = buildDemoData(todayKey);
+      return {
+        summary: demo.summary,
+        last7Days: demo.last7Days,
+        todayKey: demo.todayKey,
+        hourlyActiveSeconds: demo.hourlyActiveSeconds,
+      };
+    }
+    return null;
+  });
   const [loadFailed, setLoadFailed] = useState(false);
   const loadingRef = useRef(false);
 
@@ -121,48 +139,54 @@ export default function DataScreen() {
           {uiText.data.title}
         </Text>
 
-        <Text style={[styles.sectionTitle, { color: theme.primaryText }]}>
-          {uiText.data.todayReadingTitle}
-        </Text>
-        <View style={styles.heroBlock}>
-          <TodayReadingCard
-            activeSeconds={summary?.todayActiveSeconds ?? null}
-            forwardCharacters={summary?.todayForwardCharacters ?? null}
-            excerptCount={summary?.todayExcerptCount ?? null}
-            activeDays7={activeDays7}
-          />
-        </View>
+        {/* 真实模式首帧 data 为 null：卡片不挂载，避免“—”占位闪一下；
+            数据回来后一次挂载，文字即正确，只有图做入场动画。 */}
+        {data === null ? null : (
+          <>
+            <Text style={[styles.sectionTitle, { color: theme.primaryText }]}>
+              {uiText.data.todayReadingTitle}
+            </Text>
+            <View style={styles.heroBlock}>
+              <TodayReadingCard
+                activeSeconds={summary?.todayActiveSeconds ?? null}
+                forwardCharacters={summary?.todayForwardCharacters ?? null}
+                excerptCount={summary?.todayExcerptCount ?? null}
+                activeDays7={activeDays7}
+              />
+            </View>
 
-        {loadFailed ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{uiText.data.loadFailed}</Text>
-          </View>
-        ) : null}
+            {loadFailed ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{uiText.data.loadFailed}</Text>
+              </View>
+            ) : null}
 
-        <View style={styles.cardRow}>
-          <View style={styles.cardCell}>
-            <ReadingTimeCard
-              hourlyActiveSeconds={data?.hourlyActiveSeconds ?? null}
-              style={styles.halfCard}
-            />
-          </View>
-          <View style={styles.cardCell}>
-            <ReadingSpeedCard
-              latestSpeedSample={summary?.latestSpeedSample ?? null}
+            <View style={styles.cardRow}>
+              <View style={styles.cardCell}>
+                <ReadingTimeCard
+                  hourlyActiveSeconds={data?.hourlyActiveSeconds ?? null}
+                  style={styles.halfCard}
+                />
+              </View>
+              <View style={styles.cardCell}>
+                <ReadingSpeedCard
+                  latestSpeedSample={summary?.latestSpeedSample ?? null}
+                  days={last7Days}
+                  style={styles.halfCard}
+                />
+              </View>
+            </View>
+
+            <AccumulationCard
               days={last7Days}
-              style={styles.halfCard}
+              todayKey={todayKey}
+              last7DaysActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
+              streakDays={summary?.currentStreakDays ?? null}
+              totalDays={summary?.totalReadingDays ?? null}
+              excerptCount={summary?.totalExcerptCount ?? null}
             />
-          </View>
-        </View>
-
-        <AccumulationCard
-          days={last7Days}
-          todayKey={todayKey}
-          last7DaysActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
-          streakDays={summary?.currentStreakDays ?? null}
-          totalDays={summary?.totalReadingDays ?? null}
-          excerptCount={summary?.totalExcerptCount ?? null}
-        />
+          </>
+        )}
       </ScrollView>
     </View>
   );
