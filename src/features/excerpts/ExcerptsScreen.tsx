@@ -469,14 +469,14 @@ export default function ExcerptsScreen() {
           pointerEvents="none"
           editable
         />
-        {/* 固定头部：标题 + 原生搜索框。模式切换时不参与淡入淡出，常驻顶部；
-            列表滚动时也不跟随滚走，搜索框随时可用。 */}
+        {/* 固定头部：标题 + 原生搜索框。下滑时整行渐隐（与书库页同行为），
+            回到顶部时恢复。 */}
         <View style={[styles.fixedHeader, { paddingTop: insets.top + 2 }]}>
-          <View style={styles.headerRow}>
-            {/* 大标题下滑渐隐（与书库页同行为）：只淡出标题，搜索框保持可用。 */}
-            <Animated.Text accessibilityRole="header" style={[styles.largeTitle, styles.headerTitle, titleFadeStyle]}>
+          {/* 整行下滑渐隐（与书库页同行为）：标题+搜索框一起淡出，顶部全透明。 */}
+          <Animated.View style={[styles.headerRow, titleFadeStyle]}>
+            <Text accessibilityRole="header" style={[styles.largeTitle, styles.headerTitle]}>
               {uiText.excerpts.title}
-            </Animated.Text>
+            </Text>
             {/* 真正的 UIKit UISearchBar（本地原生模块），不是 RN 模拟：
                 放大镜 / placeholder / 清空键 / 键盘 / 深浅色全部系统提供。
                 需要包含该模块的新 Development Build 才能运行（EAS）。
@@ -494,7 +494,7 @@ export default function ExcerptsScreen() {
                 onTextChange={(event) => setQuery(event.nativeEvent.text)}
               />
             </Pressable>
-          </View>
+          </Animated.View>
         </View>
         <AnimatedSectionList<ExcerptFeedItem, ExcerptFeedSection>
           sections={sections}
