@@ -1,6 +1,4 @@
-import { useState } from 'react';
 import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
-import { Circle, Line, Polygon, Polyline, Svg } from 'react-native-svg';
 
 import { uiText } from '../../../localization';
 import type { DailyReadingStats } from '../reading-analytics-types';
@@ -17,63 +15,40 @@ type ReadingSpeedCardProps = {
 };
 
 const PLOT_HEIGHT = 84;
-/** 点/线在绘图区内的上下留白：不贴边、不被裁。 */
-const PLOT_INSET = 10;
-const DOT_RADIUS = 3.5;
-const LINE_WIDTH = 2;
-/** 面积填充不透明度：很淡的灰，iOS 健康 App 式，只为填满 0 基线上的空白。 */
-const FILL_OPACITY = 0.08;
-/** Y 轴 0 起，上限至少 600：固定刻度，不用当周 min/max 归一化，
- *  避免把速度的小抖动视觉放大。 */
-const Y_MIN = 0;
-const Y_FLOOR = 600;
-
-type PlotPoint = { x: number; y: number; key: string };
+const CENTER_Y = PLOT_HEIGHT / 2;
+const BAR_WIDTH = 10;
+/** 柱子离绘图区上下边缘的留白。 */
+const BAR_INSET = 8;
 
 /**
- * “阅读速度”半宽卡（B.6 黑白极简，主打简约）。
+ * “阅读速度”半宽卡（B.6 黑白极简，仿 iOS 健康“双足支撑时间”）。
  *
- * 极简折线：7 天有效速度连成一条细线（#242424），缺数据的天直接断开、
- * 不插值；线下铺一层很淡的灰色面积填充（iOS 健康 App 式，填满 0 基线
- * 上的空白）；一条淡虚线标出 7 天平均值（呼应下方大数字）。
- * Y 轴固定 0 起（上限至少 600），小抖动不会被放大——速度本身方差小，
- * 这张图的作用是展示“稳定在什么水平”，而不是波动。
+ * 双向圆头柱：中线 = 7 天平均速度（淡线），每天一根胶囊柱从中线出发——
+ * 高于平均的朝上、低于平均的朝下，柱长按当天偏离占最大偏离的比例算；
+ * 缺数据的天留空不断开。最新有效天的柱子用 #242424 强调，其余 #E5E5EA。
+ * 下方大数字仍是 7 天平均速度（Analytics 原值，不 clamp）。
  */
 export function ReadingSpeedCard({ speed, days, style }: ReadingSpeedCardProps) {
   const theme = useDataTheme();
-  const [plotWidth, setPlotWidth] = useState(0);
   const list = days ?? [];
-  const validSpeeds = list
-    .map((d) => d.readingSpeedCharsPerMinute)
-    .filter((v): v is number => v !== null);
-  const maxSpeed = validSpeeds.length > 0 ? Math.max(...validSpeeds) : 0;
-  const yMax = Math.max(Y_FLOOR, Math.ceil(maxSpeed / 100) * 100);
-  const yRange = Math.max(1, yMax - Y_MIN);
 
-  const toY = (value: number) =>
-    PLOT_HEIGHT - PLOT_INSET - ((value - Y_MIN) / yRange) * (PLOT_HEIGHT - PLOT_INSET * 2);
-  const toX = (index: number) =>
-    ((index + 0.5) / Math.max(1, list.length)) * plotWidth;
+  /** 每天相对 7 天平均的偏离；缺数据或平均值缺失时为 null。 */
+  const deviations: (number | null)[] = list.map((d) =>
+    d.readingSpeedCharsPerMinute === null || speed === null
+      ? null
+      : d.readingSpeedCharsPerMinute - speed,
+  );
+  const maxAbsDeviation = Math.max(
+    0,
+    ...deviations.filter((d): d is number => d !== null).map((d) => Math.abs(d)),
+  );
+  /** 最后一个有有效速度的下标：该柱用 #242424 强调。 */
+  const latestValidIndex = list.reduce(
+    (acc, d, i) => (d.readingSpeedCharsPerMinute !== null ? i : acc),
+    -1,
+  );
 
-  // 连续有效段：null 的天把线断开，不造假。
-  const segments: PlotPoint[][] = [];
-  const dots: PlotPoint[] = [];
-  if (plotWidth > 0) {
-    list.forEach((day, i) => {
-      const value = day.readingSpeedCharsPerMinute;
-      if (value === null) return;
-      const point = { x: toX(i), y: toY(value), key: day.dayKey };
-      dots.push(point);
-      const prevValue = i > 0 ? list[i - 1].readingSpeedCharsPerMinute : null;
-      const last = segments[segments.length - 1];
-      if (last && prevValue !== null) {
-        last.push(point);
-      } else {
-        segments.push([point]);
-      }
-    });
-  }
-  const drawableSegments = segments.filter((seg) => seg.length >= 2);
+  const maxBarHalf = CENTER_Y - BAR_INSET;
 
   const valueText = speed === null ? '—' : `${Math.round(speed)}`;
   const a11yValue = speed === null ? '—' : `${Math.round(speed)}字每分钟`;
@@ -81,56 +56,41 @@ export function ReadingSpeedCard({ speed, days, style }: ReadingSpeedCardProps) 
   return (
     <DataCard accessible accessibilityLabel={`${uiText.data.readingSpeed}，${a11yValue}`} style={style}>
       <Text style={[styles.title, { color: theme.primaryText }]}>{uiText.data.readingSpeed}</Text>
-      <View
-        style={styles.plot}
-        accessible={false}
-        onLayout={(e) => setPlotWidth(e.nativeEvent.layout.width)}
-      >
-        {plotWidth > 0 ? (
-          <Svg width={plotWidth} height={PLOT_HEIGHT}>
-            {drawableSegments.map((seg, i) => {
-              const first = seg[0];
-              const last = seg[seg.length - 1];
-              const baseY = toY(Y_MIN);
-              const fillPoints =
-                seg.map((p) => `${p.x},${p.y}`).join(' ') +
-                ` ${last.x},${baseY} ${first.x},${baseY}`;
-              return (
-                <Polygon
-                  key={`fill-${i}`}
-                  points={fillPoints}
-                  fill={theme.chartPrimary}
-                  fillOpacity={FILL_OPACITY}
-                />
-              );
-            })}
-            {speed !== null ? (
-              <Line
-                x1={0}
-                y1={toY(speed)}
-                x2={plotWidth}
-                y2={toY(speed)}
-                stroke={theme.chartEmpty}
-                strokeWidth={1}
-                strokeDasharray="4 4"
-              />
-            ) : null}
-            {drawableSegments.map((seg, i) => (
-              <Polyline
-                key={i}
-                points={seg.map((p) => `${p.x},${p.y}`).join(' ')}
-                fill="none"
-                stroke={theme.chartPrimary}
-                strokeWidth={LINE_WIDTH}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            ))}
-            {dots.map((p) => (
-              <Circle key={p.key} cx={p.x} cy={p.y} r={DOT_RADIUS} fill={theme.chartPrimary} />
-            ))}
-          </Svg>
+      <View style={styles.plot} accessible={false}>
+        {speed !== null ? (
+          <View
+            style={[
+              styles.centerLine,
+              { top: CENTER_Y - 1, backgroundColor: theme.chartEmpty },
+            ]}
+          />
         ) : null}
+        <View style={styles.barsRow}>
+          {list.map((day, i) => {
+            const deviation = deviations[i];
+            const barHeight =
+              deviation === null || maxAbsDeviation === 0
+                ? 0
+                : Math.round((Math.abs(deviation) / maxAbsDeviation) * maxBarHalf);
+            return (
+              <View key={day.dayKey} style={styles.barColumn}>
+                {barHeight > 0 ? (
+                  <View
+                    style={[
+                      styles.bar,
+                      {
+                        height: barHeight,
+                        top: deviation !== null && deviation < 0 ? CENTER_Y : CENTER_Y - barHeight,
+                        backgroundColor:
+                          i === latestValidIndex ? theme.chartPrimary : theme.chartEmpty,
+                      },
+                    ]}
+                  />
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
       </View>
       <View style={styles.valueRow}>
         <Text
@@ -160,6 +120,28 @@ const styles = StyleSheet.create({
   plot: {
     height: PLOT_HEIGHT,
     marginBottom: 12,
+  },
+  /** 中线 = 7 天平均速度。 */
+  centerLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 2,
+    borderRadius: 1,
+  },
+  barsRow: {
+    flexDirection: 'row',
+    height: PLOT_HEIGHT,
+  },
+  barColumn: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  /** 双向胶囊柱：从中线向上或向下生长。 */
+  bar: {
+    position: 'absolute',
+    width: BAR_WIDTH,
+    borderRadius: BAR_WIDTH / 2,
   },
   valueRow: {
     flexDirection: 'row',
