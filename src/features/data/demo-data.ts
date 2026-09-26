@@ -6,10 +6,11 @@
  * 恢复真实数据：把 USE_DEMO_DATA 改成 false（或删掉本文件 + 开关引用）。
  *
  * 数值设计（互相自洽，方便看 UI）：
- * - 今天：1小时25分钟（5100 秒），早 8–9 点、午间、晚 21–22 点三个高峰；
- *   24 小时桶加起来正好等于今天总量；
- * - 最近 7 天：5 天有阅读、2 天为 0，速度 480–540 字/分钟；
- * - 节奏：连续阅读 2 天、累计 186 天、摘录 428 条。
+ * - 今天：1小时25分钟（5100 秒），早 7–10 点、午间、下午、晚间多个时段活跃、
+ *   高低起伏大；24 小时桶加起来正好等于今天总量；
+ * - 最近 7 天：7 天都有阅读（柱子多），每天速度区间拉开、位置错开
+ *   （P10 420–505，P90 505–600，起伏大）；
+ * - 节奏：连续阅读 7 天、累计 186 天、摘录 428 条。
  */
 
 import { addLocalCalendarDays } from '../../shared/time/local-day';
@@ -29,16 +30,22 @@ export type DemoDataLoadResult = {
   hourlyActiveSeconds: number[];
 };
 
-/** 今天 24 小时分布：8–9 点、13 点、21–22 点活跃，加总 5100 秒。 */
+/** 今天 24 小时分布：11 个小时有阅读、高低起伏大，加总 5100 秒。 */
 const DEMO_HOURLY: Array<[hour: number, seconds: number]> = [
+  [7, 300],
   [8, 1500],
-  [9, 900],
-  [13, 600],
-  [21, 1400],
-  [22, 700],
+  [9, 600],
+  [10, 250],
+  [12, 450],
+  [13, 800],
+  [15, 200],
+  [18, 350],
+  [20, 150],
+  [21, 300],
+  [22, 200],
 ];
 
-/** 最近 7 天（最旧 → 今天）：阅读秒数 / 字数 / 速度 / 摘录数。 */
+/** 最近 7 天（最旧 → 今天）：阅读秒数 / 字数 / 速度 / 摘录数；区间拉开、位置错开。 */
 const DEMO_DAYS: Array<{
   seconds: number;
   chars: number;
@@ -48,13 +55,13 @@ const DEMO_DAYS: Array<{
   speedLatest: number | null;
   excerpts: number;
 }> = [
-  { seconds: 3200, chars: 26800, speed: 502, speedP10: 470, speedP90: 542, speedLatest: 505, excerpts: 2 },
-  { seconds: 0, chars: 0, speed: null, speedP10: null, speedP90: null, speedLatest: null, excerpts: 0 },
-  { seconds: 5400, chars: 48600, speed: 540, speedP10: 508, speedP90: 575, speedLatest: 560, excerpts: 4 },
-  { seconds: 1800, chars: 14400, speed: 480, speedP10: 453, speedP90: 510, speedLatest: 488, excerpts: 1 },
-  { seconds: 0, chars: 0, speed: null, speedP10: null, speedP90: null, speedLatest: null, excerpts: 0 },
-  { seconds: 4600, chars: 41400, speed: 540, speedP10: 500, speedP90: 568, speedLatest: 545, excerpts: 3 },
-  { seconds: 5100, chars: 42500, speed: 500, speedP10: 474, speedP90: 531, speedLatest: 512, excerpts: 5 },
+  { seconds: 3200, chars: 26800, speed: 502, speedP10: 440, speedP90: 560, speedLatest: 505, excerpts: 2 },
+  { seconds: 2100, chars: 16800, speed: 480, speedP10: 420, speedP90: 505, speedLatest: 470, excerpts: 1 },
+  { seconds: 5400, chars: 48600, speed: 540, speedP10: 490, speedP90: 600, speedLatest: 560, excerpts: 4 },
+  { seconds: 1800, chars: 14400, speed: 480, speedP10: 445, speedP90: 520, speedLatest: 488, excerpts: 1 },
+  { seconds: 3900, chars: 33150, speed: 510, speedP10: 460, speedP90: 590, speedLatest: 530, excerpts: 2 },
+  { seconds: 4600, chars: 41400, speed: 540, speedP10: 505, speedP90: 585, speedLatest: 545, excerpts: 3 },
+  { seconds: 5100, chars: 42500, speed: 500, speedP10: 455, speedP90: 575, speedLatest: 512, excerpts: 5 },
 ];
 
 export function buildDemoData(todayKey: string): DemoDataLoadResult {
@@ -81,9 +88,9 @@ export function buildDemoData(todayKey: string): DemoDataLoadResult {
     last7DaysActiveSeconds,
     previous7CompletedDaysAverageActiveSeconds: 3600,
     totalActiveSeconds: 287400,
-    currentStreakDays: 2,
+    currentStreakDays: 7,
     totalReadingDays: 186,
-    last7DaysReadingSpeedCharsPerMinute: 519,
+    last7DaysReadingSpeedCharsPerMinute: 507,
     allTimeReadingSpeedCharsPerMinute: 505,
     todayExcerptCount: 5,
     todayForwardCharacters: 42500,
