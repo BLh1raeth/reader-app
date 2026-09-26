@@ -444,7 +444,7 @@ export class FoliateEpubEngineAdapter {
   // Highlight paint registry: range CFI -> owning spine section. foliate's
   // View keeps no persistent annotation list, so the adapter re-applies these
   // whenever a section document (re)loads (settings change, chapter turn).
-  private highlightRegistry = new Map<string, { sectionIndex: number; hasNote: boolean }>();
+  private highlightRegistry = new Map<string, { sectionIndex: number }>();
   // Live Range cache per loaded document, captured from the draw-annotation
   // event. Used for synchronous tap hit-testing; cleared on doc release.
   private highlightRanges = new Map<Document, Array<{ rangeCfi: string; range: Range }>>();
@@ -523,13 +523,6 @@ export class FoliateEpubEngineAdapter {
     // A highlight was deleted from its in-doc bubble. The adapter already
     // removed the paint; the host persists the deletion to SQLite.
     private readonly onHighlightDeleteRequest: (rangeCfi: string) => void,
-    // A highlight carrying a note was tapped. The host opens the RN note
-    // popover anchored at the tap point; the delete bubble is NOT shown.
-    private readonly onHighlightNoteTap: (rangeCfi: string, anchor: FootnoteAnchorRect) => void,
-    // Synchronous "a note popover is on screen" signal from the host.
-    // Same modal contract as isFootnotePopoverOpen: while open, taps only
-    // dismiss and never turn pages or toggle chrome.
-    private readonly isNotePopoverOpen: () => boolean,
   ) {}
 
   async open(input: FoliateOpenInput): Promise<ReaderLocation> {
@@ -1294,10 +1287,10 @@ export class FoliateEpubEngineAdapter {
   // overlayer (SVG rects, pointer-events:none) so the book DOM is never
   // mutated and CFI stability is unaffected. The registry is the source of
   // truth for re-painting after section (re)loads.
-  async setHighlights(items: Array<{ rangeCfi: string; sectionIndex: number; hasNote: boolean }>) {
+  async setHighlights(items: Array<{ rangeCfi: string; sectionIndex: number }>) {
     this.highlightRegistry = new Map(
       items.filter((item) => item.rangeCfi.startsWith('epubcfi('))
-        .map((item) => [item.rangeCfi, { sectionIndex: item.sectionIndex, hasNote: item.hasNote }]),
+        .map((item) => [item.rangeCfi, { sectionIndex: item.sectionIndex }]),
     );
     // Re-paint into whatever section is currently loaded; foliate silently
     // skips annotations whose section has no live overlayer.
@@ -1312,9 +1305,9 @@ export class FoliateEpubEngineAdapter {
     }
   }
 
-  async addAnnotation(rangeCfi: string, sectionIndex: number, hasNote = false) {
+  async addAnnotation(rangeCfi: string, sectionIndex: number) {
     if (!rangeCfi.startsWith('epubcfi(')) return;
-    this.highlightRegistry.set(rangeCfi, { sectionIndex, hasNote });
+    this.highlightRegistry.set(rangeCfi, { sectionIndex });
     const view = this.view;
     if (!view?.addAnnotation) return;
     try {
@@ -2249,34 +2242,15 @@ export class FoliateEpubEngineAdapter {
       if (__DEV__) console.log('[FOOTNOTE_MODAL_SUPPRESS]');
       return;
     }
-    if (this.isNotePopoverOpen()) {
-      if (__DEV__) console.log('[NOTE_MODAL_SUPPRESS]');
-      return;
-    }
-    // Highlight tap: a highlight carrying a note opens the RN note popover
-    // anchored at the tap point; a plain highlight keeps the in-doc delete
-    // bubble. Neither turns the page nor toggles chrome. Selection gestures,
+    // Highlight tap: landing on a painted highlight opens the delete bubble
+    // instead of turning the page or toggling chrome. Selection gestures,
     // interactive targets, and reflowing states keep their existing paths.
     if (isTap && !selectionActive && !session.selectionWasActive && !interactiveTarget && !blockedByState
       && this.view && this.restoreState === 'active') {
       const hitRangeCfi = this.hitTestHighlight(doc, event.clientX, event.clientY);
       if (hitRangeCfi) {
         this.interactionState = 'idle';
-        if (this.highlightRegistry.get(hitRangeCfi)?.hasNote) {
-          const anchor = this.mapIframeRectToWebView({
-            left: event.clientX - 2,
-            top: event.clientY - 2,
-            right: event.clientX + 2,
-            bottom: event.clientY + 2,
-          }, doc);
-          try {
-            this.onHighlightNoteTap(hitRangeCfi, anchor);
-          } catch (error) {
-            if (__DEV__) console.warn('[HIGHLIGHT_NOTE_TAP_FAILED]', error);
-          }
-        } else {
-          this.showHighlightDeleteBubble(doc, hitRangeCfi, event.clientX, event.clientY);
-        }
+        this.showHighlightDeleteBubble(doc, hitRangeCfi, event.clientX, event.clientY);
         return;
       }
     }

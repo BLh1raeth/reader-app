@@ -36,7 +36,6 @@ import type {
   ReaderTextMeasureResult,
   ReaderTocItem,
   ReaderTocNavigationRequest,
-  FootnoteAnchorRect,
   FootnotePayload,
 } from './reader-types';
 
@@ -76,9 +75,6 @@ type Props = {
   textMeasureRequest: ReaderTextMeasureRequest | null;
   onTextMeasureResult: (result: ReaderTextMeasureResult) => Promise<void>;
   onHighlightDeleteRequest: (rangeCfi: string) => void;
-  // Optional at the bridge boundary so a DOM bundle refreshed one frame ahead
-  // of the Native/React bundle cannot call an undefined newly-added callback.
-  onHighlightNoteTap?: (rangeCfi: string, anchor: FootnoteAnchorRect) => void;
   onReady: (location: ReaderLocation) => Promise<void>;
   onLocation: (location: ReaderLocation, restoreState: ReaderRestoreState) => Promise<void>;
   onDiagnostic: (diagnostic: ReaderEngineDiagnostic) => Promise<void>;
@@ -101,12 +97,10 @@ type Props = {
   // layer on every pointer-up. While true, taps only dismiss the footnote
   // popover and never turn pages or toggle chrome.
   footnoteModalOpen: boolean;
-  // Same modal contract for the note popover.
-  notePopoverOpen: boolean;
   dom?: ReaderDomProps;
 };
 
-export default function FoliateReaderDom({ source, restoreCfi, externalTargetCfi, excerptNavigationRequest, onExcerptNavigationResult, pageCountCache, readerSettings, settingsSessionActive, tocNavigationRequest, bookmarkSnapshotRequest, bookmarkNavigationRequest, pageLocationRequest, searchRequest, searchNavigationRequest, selectionCommand, excerptVerificationRequest, highlightSnapshot, textMeasureRequest, onTextMeasureResult, onHighlightDeleteRequest, onHighlightNoteTap, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, notePopoverOpen }: Props) {
+export default function FoliateReaderDom({ source, restoreCfi, externalTargetCfi, excerptNavigationRequest, onExcerptNavigationResult, pageCountCache, readerSettings, settingsSessionActive, tocNavigationRequest, bookmarkSnapshotRequest, bookmarkNavigationRequest, pageLocationRequest, searchRequest, searchNavigationRequest, selectionCommand, excerptVerificationRequest, highlightSnapshot, textMeasureRequest, onTextMeasureResult, onHighlightDeleteRequest, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<FoliateEpubEngineAdapter | null>(null);
   const loadedSessionRef = useRef<string | null>(null);
@@ -115,8 +109,8 @@ export default function FoliateReaderDom({ source, restoreCfi, externalTargetCfi
   const highlightSnapshotRef = useRef(highlightSnapshot);
   highlightSnapshotRef.current = highlightSnapshot;
   const settingsApplicationRef = useRef<Promise<void>>(Promise.resolve());
-  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest, onHighlightNoteTap, notePopoverOpen, onExcerptNavigationResult });
-  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest, onHighlightNoteTap, notePopoverOpen, onExcerptNavigationResult };
+  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest, onExcerptNavigationResult });
+  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest, onExcerptNavigationResult };
 
   useEffect(() => {
     document.documentElement.lang = 'zh-CN';
@@ -207,11 +201,6 @@ export default function FoliateReaderDom({ source, restoreCfi, externalTargetCfi
       // modal flag changes over time; callbacksRef always holds the latest.
       () => callbacksRef.current.footnoteModalOpen,
       (rangeCfi) => { callbacksRef.current.onHighlightDeleteRequest(rangeCfi); },
-      (rangeCfi, anchor) => {
-        const callback = callbacksRef.current.onHighlightNoteTap;
-        if (typeof callback === 'function') callback(rangeCfi, anchor);
-      },
-      () => callbacksRef.current.notePopoverOpen,
     );
     adapterRef.current = adapter;
     loadedSessionRef.current = nextSource.sessionId;
@@ -415,13 +404,9 @@ export default function FoliateReaderDom({ source, restoreCfi, externalTargetCfi
       // selection so the iOS edit menu dismisses like the excerpt flow.
       const adapter = adapterRef.current;
       if (adapter) {
-        void adapter.addAnnotation(command.rangeCfi, command.sectionIndex, command.hasNote)
+        void adapter.addAnnotation(command.rangeCfi, command.sectionIndex)
           .then(() => { adapter.clearSelection(); });
       }
-    } else if (command.type === 'remove-highlight') {
-      // Idempotent: the in-doc delete bubble already removed the paint before
-      // reporting; the note popover path relies on this command.
-      void adapterRef.current?.removeAnnotation(command.rangeCfi);
     }
   }, [selectionCommand?.id]);
 

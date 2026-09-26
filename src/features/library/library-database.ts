@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 import { backfillLocalDayKeys } from './local-day-backfill';
 
 const DATABASE_NAME = 'reader-library.db';
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 18;
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -340,16 +340,6 @@ async function bootstrapDatabase() {
           target_excerpts INTEGER NOT NULL,
           updated_at TEXT NOT NULL
         );
-        PRAGMA user_version = ${SCHEMA_VERSION};
-      `);
-    });
-  }
-  if (currentVersion < 19) {
-    await database.withExclusiveTransactionAsync(async (transaction) => {
-      // Notes attach to highlights (1:1): a nullable note column on the
-      // highlight row, no separate table, no orphan rows.
-      await transaction.execAsync(`
-        ALTER TABLE reader_highlights ADD COLUMN note TEXT;
         PRAGMA user_version = ${SCHEMA_VERSION};
       `);
     });

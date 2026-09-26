@@ -31,7 +31,6 @@ import { ReaderSettingsSheet } from './ReaderSettingsSheet';
 import { ReaderTocSheet } from './ReaderTocSheet';
 import { useReaderController } from './use-reader-controller';
 import { useFootnotePopover } from './hooks/useFootnotePopover';
-import { ReaderNotePopover } from './ReaderNotePopover';
 import { useReaderBookmarks } from './hooks/useReaderBookmarks';
 import { useReaderChrome } from './hooks/useReaderChrome';
 import { useReaderNavigation } from './hooks/useReaderNavigation';
@@ -577,14 +576,7 @@ export default function ReaderScreen() {
     searchSelectionInBook,
     onHighlightRequested,
     handleHighlightDeleteRequest,
-    handleHighlightNoteTap,
     onNoteRequested,
-    saveNote,
-    closeNotePopover,
-    startEditNote,
-    deleteNoteHighlight,
-    notePopover,
-    notePopoverOpen,
     handleNativeSelectionAction,
     freezeExcerptSelection,
     releaseExcerptActionPress,
@@ -748,8 +740,6 @@ export default function ReaderScreen() {
           textMeasureRequest={textMeasureRequest}
           onTextMeasureResult={handleTextMeasureResult}
           onHighlightDeleteRequest={handleHighlightDeleteRequest}
-          onHighlightNoteTap={handleHighlightNoteTap}
-          notePopoverOpen={notePopoverOpen}
           onReady={controller.onEngineReady}
           onLocation={handleLocation}
           onDiagnostic={controller.onDiagnostic}
@@ -940,27 +930,6 @@ export default function ReaderScreen() {
           onDismiss={dismissFootnotePopover}
           payload={footnotePopover}
           textColor={readerColors.primary}
-        />
-      ) : null}
-
-      {notePopover ? (
-        <ReaderNotePopover
-          state={notePopover}
-          viewportWidth={readerViewportWidth}
-          viewportHeight={readerViewportHeight}
-          insetTop={insets.top}
-          insetBottom={insets.bottom}
-          colorScheme={readerAppearance}
-          textColor={readerColors.primary}
-          secondaryColor={readerColors.secondary}
-          placeholderColor={readerColors.secondary}
-          destructiveColor="#ff3b30"
-          accentColor={readerColors.link}
-          fallbackColor={readerColors.glassFallback}
-          onDismiss={closeNotePopover}
-          onSave={saveNote}
-          onEdit={startEditNote}
-          onDelete={deleteNoteHighlight}
         />
       ) : null}
 

@@ -60,7 +60,6 @@ export default function ReaderDomPrewarm() {
         onSearchUpdate={noopAsync}
         onSearchNavigationResult={noopAsync}
         footnoteModalOpen={false}
-        notePopoverOpen={false}
       />
     </View>
   );

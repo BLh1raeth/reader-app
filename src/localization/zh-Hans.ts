@@ -18,13 +18,6 @@ export const zhHans = {
     excerptSelection: '摘录所选文字',
     dismissFootnote: '关闭脚注',
     dismissFootnoteHint: '关闭脚注弹窗',
-    notePlaceholder: '写下你的想法…',
-    noteSave: '保存',
-    noteCancel: '取消',
-    noteEdit: '编辑',
-    noteDelete: '删除',
-    dismissNote: '关闭笔记',
-    dismissNoteHint: '关闭笔记弹窗',
   },
   search: {
     title: '在图书中搜索',

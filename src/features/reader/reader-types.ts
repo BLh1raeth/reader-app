@@ -257,12 +257,6 @@ export type ReaderSelectionCommand = {
   type: 'apply-highlight';
   rangeCfi: string;
   sectionIndex: number;
-  /** True when the highlight carries a note (routes taps to the note popover). */
-  hasNote: boolean;
-} | {
-  id: number;
-  type: 'remove-highlight';
-  rangeCfi: string;
 };
 
 export type ReaderSelectionAction = 'excerpt' | 'highlight' | 'note' | 'searchInBook';
