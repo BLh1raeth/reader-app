@@ -15,7 +15,6 @@ import { uiText } from '../../localization';
 import { BookCoverArt } from '../library/BookCoverArt';
 import type { CoverTone } from '../library/library-types';
 import { bookmarkRepository, type ReaderBookmark } from './bookmark-repository';
-import { bookSearchHistoryRepository, type BookSearchHistoryItem } from './book-search-history-repository';
 import { excerptRepository } from './excerpt-repository';
 import { highlightRepository } from './highlight-repository';
 import { takeReaderExternalNavigationRequest, type ReaderExternalNavigationRequest } from './reader-external-navigation';
@@ -30,10 +29,6 @@ import type {
   ReaderPageLocationRequest,
   ReaderPageLocationResult,
   ReaderRestoreState,
-  ReaderSearchNavigationRequest,
-  ReaderSearchRequest,
-  ReaderSearchResult,
-  ReaderSearchInitialQueryRequest,
   ReaderExcerptVerificationRequest,
   ReaderSelectionActionEvent,
   ReaderSelectionCommand,
@@ -54,6 +49,7 @@ import { ReaderTocSheet } from './ReaderTocSheet';
 import { useReaderController } from './use-reader-controller';
 import { useFootnotePopover } from './hooks/useFootnotePopover';
 import { useReaderChrome } from './hooks/useReaderChrome';
+import { useReaderSearch } from './hooks/useReaderSearch';
 import { useReaderSheets } from './hooks/useReaderSheets';
 
 const CONTROL_BAR_WIDTH = 232;
@@ -425,15 +421,10 @@ export default function ReaderScreen() {
   const pageIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingTocItemRef = useRef<ReaderTocItem | null>(null);
   const pendingBookmarkRef = useRef<ReaderBookmark | null>(null);
-  const pendingSearchResultRef = useRef<ReaderSearchResult | null>(null);
   const tocRequestSequenceRef = useRef(0);
   const bookmarkSnapshotSequenceRef = useRef(0);
   const bookmarkNavigationSequenceRef = useRef(0);
   const pageLocationSequenceRef = useRef(0);
-  const searchRequestSequenceRef = useRef(0);
-  const searchNavigationSequenceRef = useRef(0);
-  const searchInitialQuerySequenceRef = useRef(0);
-  const activeSearchRequestRef = useRef<ReaderSearchRequest | null>(null);
   const activeBookmarkSnapshotRequestRef = useRef<ReaderBookmarkSnapshotRequest | null>(null);
   const activePageLocationRequestRef = useRef<ReaderPageLocationRequest | null>(null);
   const activeSelectionRef = useRef<ReaderSelectionPayload | null>(null);
@@ -464,8 +455,6 @@ export default function ReaderScreen() {
   const [bookmarkNavigationRequest, setBookmarkNavigationRequest] = useState<ReaderBookmarkNavigationRequest | null>(null);
   const [pageLocationRequest, setPageLocationRequest] = useState<ReaderPageLocationRequest | null>(null);
   const [pageByDestination, setPageByDestination] = useState<Record<string, number>>({});
-  const [searchNavigationRequest, setSearchNavigationRequest] = useState<ReaderSearchNavigationRequest | null>(null);
-  const [searchRequest, setSearchRequest] = useState<ReaderSearchRequest | null>(null);
   // Excerpts Tab Core C (warm path): a pending excerpt navigation request is
   // consumed when this reader instance is focused and ready.
   const [excerptNavigationRequest, setExcerptNavigationRequest] = useState<ReaderExternalNavigationRequest | null>(null);
@@ -474,12 +463,6 @@ export default function ReaderScreen() {
   // toast system; this is a local, self-dismissing pill.
   const [externalNavMessage, setExternalNavMessage] = useState<string | null>(null);
   const externalNavMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [searchResults, setSearchResults] = useState<ReaderSearchResult[]>([]);
-  const [recentSearches, setRecentSearches] = useState<BookSearchHistoryItem[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchComplete, setSearchComplete] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [searchInitialQueryRequest, setSearchInitialQueryRequest] = useState<ReaderSearchInitialQueryRequest | null>(null);
   const [activeSelection, setActiveSelection] = useState<ReaderSelectionPayload | null>(null);
 
   // ── ReadingSession Core A ─────────────────────────────────────────────
@@ -581,6 +564,34 @@ export default function ReaderScreen() {
     viewportHeight: readerViewportHeight,
     insetTop: insets.top,
     insetBottom: insets.bottom,
+  });
+  const {
+    searchNavigationRequest,
+    searchRequest,
+    searchResults,
+    recentSearches,
+    searching,
+    searchComplete,
+    searchError,
+    searchInitialQueryRequest,
+    openSearch,
+    cancelSearch,
+    cancelSearchRequest,
+    requestSearch,
+    commitSearch,
+    clearRecentSearches,
+    handleSearchUpdate,
+    selectSearchResult,
+    requestSearchSheetDismiss,
+    handleSearchSheetDismissed,
+    handleSearchNavigationResult,
+    requestInitialSearchQuery,
+  } = useReaderSearch({
+    bookId,
+    markReaderActivity,
+    setTocSheetPresented,
+    setSettingsSheetPresented,
+    setSearchSheetPresented,
   });
   const [excerptSaving, setExcerptSaving] = useState(false);
   const [selectionCommand, setSelectionCommand] = useState<ReaderSelectionCommand | null>(null);
@@ -684,15 +695,6 @@ export default function ReaderScreen() {
     setBookmarkNavigationRequest(null);
     setPageLocationRequest(null);
     setPageByDestination({});
-    setSearchNavigationRequest(null);
-    activeSearchRequestRef.current = null;
-    setSearchRequest(null);
-    setSearchResults([]);
-    setRecentSearches([]);
-    setSearching(false);
-    setSearchComplete(false);
-    setSearchError(null);
-    setSearchInitialQueryRequest(null);
     activeSelectionRef.current = null;
     excerptActionPayloadRef.current = null;
     excerptActionPressingRef.current = false;
@@ -918,101 +920,18 @@ export default function ReaderScreen() {
     setTocNavigating(false);
     setSettingsSheetPresented(false);
     setSearchSheetPresented(false);
-    activeSearchRequestRef.current = null;
-    setSearchRequest(null);
+    cancelSearchRequest();
     setTocSheetPresented(true);
-  }, [markReaderActivity]);
+  }, [markReaderActivity, cancelSearchRequest]);
 
   const openSettings = useCallback(() => {
     markReaderActivity();
     setTocSheetPresented(false);
     setSearchSheetPresented(false);
-    activeSearchRequestRef.current = null;
-    setSearchRequest(null);
+    cancelSearchRequest();
     setSettingsSheetPresented(true);
-  }, [markReaderActivity]);
+  }, [markReaderActivity, cancelSearchRequest]);
 
-  const openSearch = useCallback(() => {
-    if (!bookId) return;
-    markReaderActivity();
-    pendingSearchResultRef.current = null;
-    setTocSheetPresented(false);
-    setSettingsSheetPresented(false);
-    setSearchResults([]);
-    setSearching(false);
-    setSearchComplete(false);
-    setSearchError(null);
-    setSearchSheetPresented(true);
-    void bookSearchHistoryRepository.list(bookId).then(setRecentSearches).catch((error: unknown) => {
-      console.warn('[SEARCH_HISTORY_LOAD_FAILED]', error);
-    });
-  }, [bookId]);
-
-  const cancelSearch = useCallback(() => {
-    activeSearchRequestRef.current = null;
-    setSearchRequest(null);
-    setSearchResults([]);
-    setSearching(false);
-    setSearchComplete(false);
-    setSearchError(null);
-  }, []);
-
-  const requestSearch = useCallback((rawQuery: string) => {
-    const query = rawQuery.trim();
-    if (!query) {
-      cancelSearch();
-      return;
-    }
-    const request = { id: ++searchRequestSequenceRef.current, query };
-    activeSearchRequestRef.current = request;
-    setSearchResults([]);
-    setSearching(true);
-    setSearchComplete(false);
-    setSearchError(null);
-    setSearchRequest(request);
-  }, [cancelSearch]);
-
-  const commitSearch = useCallback((query: string) => {
-    requestSearch(query);
-    if (!bookId) return;
-    void bookSearchHistoryRepository.record(bookId, query).then(setRecentSearches).catch((error: unknown) => {
-      console.warn('[SEARCH_HISTORY_WRITE_FAILED]', error);
-    });
-  }, [bookId, requestSearch]);
-
-  const clearRecentSearches = useCallback(() => {
-    if (!bookId) return;
-    setRecentSearches([]);
-    void bookSearchHistoryRepository.clear(bookId).catch((error: unknown) => {
-      console.warn('[SEARCH_HISTORY_CLEAR_FAILED]', error);
-    });
-  }, [bookId]);
-
-  const handleSearchUpdate = useCallback(async (
-    requestId: number,
-    batch: ReaderSearchResult[],
-    _progress: number | null,
-    done: boolean,
-    message: string | null,
-  ) => {
-    if (activeSearchRequestRef.current?.id !== requestId) return;
-    if (batch.length) {
-      setSearchResults((current) => {
-        const seen = new Set(current.map((result) => result.cfi));
-        const uniqueBatch = batch.filter((result) => {
-          if (seen.has(result.cfi)) return false;
-          seen.add(result.cfi);
-          return true;
-        });
-        return uniqueBatch.length ? [...current, ...uniqueBatch] : current;
-      });
-    }
-    if (message) setSearchError(message);
-    if (done) {
-      setSearching(false);
-      setSearchComplete(true);
-    }
-  }, []);
 
   const handlePageLocationUpdate = useCallback(async (
     requestId: number,
@@ -1033,37 +952,6 @@ export default function ReaderScreen() {
       activePageLocationRequestRef.current = null;
       setPageLocationRequest((current) => current?.id === requestId ? null : current);
     }
-  }, []);
-
-  const selectSearchResult = useCallback((result: ReaderSearchResult, query: string) => {
-    pendingSearchResultRef.current = result;
-    activeSearchRequestRef.current = null;
-    setSearchRequest(null);
-    setSearchSheetPresented(false);
-    if (bookId) {
-      void bookSearchHistoryRepository.record(bookId, query).then(setRecentSearches).catch((error: unknown) => {
-        console.warn('[SEARCH_HISTORY_WRITE_FAILED]', error);
-      });
-    }
-  }, [bookId]);
-
-  const requestSearchSheetDismiss = useCallback(() => {
-    activeSearchRequestRef.current = null;
-    setSearchRequest(null);
-    setSearchSheetPresented(false);
-  }, []);
-
-  const handleSearchSheetDismissed = useCallback(() => {
-    const target = pendingSearchResultRef.current;
-    pendingSearchResultRef.current = null;
-    cancelSearch();
-    if (!target) return;
-    setSearchNavigationRequest({ id: ++searchNavigationSequenceRef.current, cfi: target.cfi, reason: 'search' });
-  }, [cancelSearch]);
-
-  const handleSearchNavigationResult = useCallback(async (requestId: number, succeeded: boolean, message: string | null) => {
-    setSearchNavigationRequest((request) => request?.id === requestId ? null : request);
-    if (!succeeded) console.warn('[SEARCH_NAVIGATION_FAILED]', JSON.stringify({ requestId, message }));
   }, []);
 
   // Excerpts Tab Core C: self-dismissing transient notice. There is no
@@ -1240,9 +1128,9 @@ export default function ReaderScreen() {
     const query = payload.text.trim();
     if (!query) return;
     openSearch();
-    setSearchInitialQueryRequest({ id: ++searchInitialQuerySequenceRef.current, query });
+    requestInitialSearchQuery(query);
     clearReaderSelection();
-  }, [clearReaderSelection, openSearch]);
+  }, [clearReaderSelection, openSearch, requestInitialSearchQuery]);
 
   const onHighlightRequested = useCallback(async (payload: ReaderSelectionPayload) => {
     if (highlightSavingRef.current) return;
