@@ -79,6 +79,7 @@ export const zhHans = {
     backupErrorMissingDatabase: '备份文件中缺少数据库',
     backupErrorNotADatabase: '备份文件已损坏',
     backupErrorBackupFromNewerApp: '备份来自更新版本的 App，请先更新 App',
+    backupErrorIncomplete: '备份文件不完整，当前书库未被替换',
     backupErrorGeneric: '备份失败，请重试',
   },
   data: {

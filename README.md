@@ -30,6 +30,15 @@ npx expo start --tunnel   # 手机用 Expo Go 扫码，或装 dev client
 
 Windows 上双击 `启动 Metro（Tunnel）.cmd` 即可（局域网连不上时用 tunnel）。
 
+数据层回归检查（Node.js 24）：
+
+```bash
+npm test
+npm run typecheck
+```
+
+测试覆盖数据库迁移中断与旧版修复、备份导入失败回退、日期归属和 CFI 持久化。真机上的 EPUB Range 重新解析仍需单独验收。
+
 ## 打包
 
 ```bash

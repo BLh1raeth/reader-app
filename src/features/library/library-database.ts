@@ -5,13 +5,88 @@ import { backfillLocalDayKeys } from './local-day-backfill';
 const DATABASE_NAME = 'reader-library.db';
 const SCHEMA_VERSION = 19;
 
+const HIGHLIGHTS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS reader_highlights (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    start_cfi TEXT NOT NULL,
+    end_cfi TEXT NOT NULL,
+    range_cfi TEXT NOT NULL,
+    chapter_title TEXT,
+    section_index INTEGER NOT NULL,
+    color TEXT NOT NULL DEFAULT 'blue',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(book_id, range_cfi)
+  );
+  CREATE INDEX IF NOT EXISTS reader_highlights_book_section_idx
+    ON reader_highlights(book_id, section_index);
+  CREATE INDEX IF NOT EXISTS reader_highlights_book_created_idx
+    ON reader_highlights(book_id, created_at DESC);
+`;
+
+const SESSIONS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS reader_reading_sessions (
+    id TEXT PRIMARY KEY NOT NULL,
+    book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    active_seconds REAL NOT NULL DEFAULT 0,
+    start_cfi TEXT,
+    end_cfi TEXT,
+    start_section_index INTEGER,
+    end_section_index INTEGER,
+    forward_characters INTEGER NOT NULL DEFAULT 0,
+    last_interaction_at TEXT,
+    last_checkpoint_at TEXT,
+    close_reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS reader_reading_sessions_book_started_idx
+    ON reader_reading_sessions(book_id, started_at);
+  CREATE INDEX IF NOT EXISTS reader_reading_sessions_started_idx
+    ON reader_reading_sessions(started_at);
+  CREATE INDEX IF NOT EXISTS reader_reading_sessions_open_idx
+    ON reader_reading_sessions(ended_at) WHERE ended_at IS NULL;
+`;
+
+const SPEED_SAMPLES_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS reader_speed_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    local_day_key TEXT NOT NULL,
+    sampled_at TEXT NOT NULL,
+    chars INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS reader_speed_samples_day_idx
+    ON reader_speed_samples(local_day_key);
+  CREATE INDEX IF NOT EXISTS reader_speed_samples_sampled_idx
+    ON reader_speed_samples(sampled_at);
+`;
+
+const DAILY_GOALS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS reader_daily_goals (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    target_seconds INTEGER NOT NULL,
+    target_chars INTEGER NOT NULL,
+    target_excerpts INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+`;
+
 export { DATABASE_NAME, SCHEMA_VERSION };
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 export async function getLibraryDatabase() {
   if (!databasePromise) {
-    databasePromise = bootstrapDatabase();
+    const opening = bootstrapDatabase();
+    databasePromise = opening;
+    // A failed open must not poison every later repository call forever.
+    void opening.catch(() => {
+      if (databasePromise === opening) databasePromise = null;
+    });
   }
   return databasePromise;
 }
@@ -31,9 +106,23 @@ export async function closeLibraryDatabase() {
 
 async function bootstrapDatabase() {
   const database = await SQLite.openDatabaseAsync(DATABASE_NAME);
+  try {
+    await migrateLibraryDatabase(database);
+    return database;
+  } catch (error) {
+    await database.closeAsync().catch(() => undefined);
+    throw error;
+  }
+}
+
+/** Also used to validate and migrate an isolated backup before import. */
+export async function migrateLibraryDatabase(database: SQLite.SQLiteDatabase) {
   await database.execAsync('PRAGMA foreign_keys = ON;');
 
   const currentVersion = (await database.getFirstAsync<{ user_version: number }>('PRAGMA user_version;'))?.user_version ?? 0;
+  if (currentVersion > SCHEMA_VERSION) {
+    throw new Error(`数据库版本 ${currentVersion} 高于当前支持的 ${SCHEMA_VERSION}。`);
+  }
   if (currentVersion < 1) {
     await database.withExclusiveTransactionAsync(async (transaction) => {
       await transaction.execAsync(`
@@ -244,25 +333,8 @@ async function bootstrapDatabase() {
   if (currentVersion < 14) {
     await database.withExclusiveTransactionAsync(async (transaction) => {
       await transaction.execAsync(`
-        CREATE TABLE IF NOT EXISTS reader_highlights (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-          text TEXT NOT NULL,
-          start_cfi TEXT NOT NULL,
-          end_cfi TEXT NOT NULL,
-          range_cfi TEXT NOT NULL,
-          chapter_title TEXT,
-          section_index INTEGER NOT NULL,
-          color TEXT NOT NULL DEFAULT 'blue',
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          UNIQUE(book_id, range_cfi)
-        );
-        CREATE INDEX IF NOT EXISTS reader_highlights_book_section_idx
-          ON reader_highlights(book_id, section_index);
-        CREATE INDEX IF NOT EXISTS reader_highlights_book_created_idx
-          ON reader_highlights(book_id, created_at DESC);
-        PRAGMA user_version = ${SCHEMA_VERSION};
+        ${HIGHLIGHTS_SCHEMA}
+        PRAGMA user_version = 14;
       `);
     });
   }
@@ -273,30 +345,8 @@ async function bootstrapDatabase() {
       // forwardCharacters is the behavior counter; startCfi/endCfi are just
       // position markers and must never be used to derive characters.
       await transaction.execAsync(`
-        CREATE TABLE IF NOT EXISTS reader_reading_sessions (
-          id TEXT PRIMARY KEY NOT NULL,
-          book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-          started_at TEXT NOT NULL,
-          ended_at TEXT,
-          active_seconds REAL NOT NULL DEFAULT 0,
-          start_cfi TEXT,
-          end_cfi TEXT,
-          start_section_index INTEGER,
-          end_section_index INTEGER,
-          forward_characters INTEGER NOT NULL DEFAULT 0,
-          last_interaction_at TEXT,
-          last_checkpoint_at TEXT,
-          close_reason TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS reader_reading_sessions_book_started_idx
-          ON reader_reading_sessions(book_id, started_at);
-        CREATE INDEX IF NOT EXISTS reader_reading_sessions_started_idx
-          ON reader_reading_sessions(started_at);
-        CREATE INDEX IF NOT EXISTS reader_reading_sessions_open_idx
-          ON reader_reading_sessions(ended_at) WHERE ended_at IS NULL;
-        PRAGMA user_version = ${SCHEMA_VERSION};
+        ${SESSIONS_SCHEMA}
+        PRAGMA user_version = 15;
       `);
     });
   }
@@ -318,7 +368,7 @@ async function bootstrapDatabase() {
       // timezone cannot be reconstructed. Only NULL-key rows are touched,
       // so re-running never overwrites an existing key.
       await backfillLocalDayKeys(transaction);
-      await transaction.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+      await transaction.execAsync('PRAGMA user_version = 16;');
     });
   }
   if (currentVersion < 17) {
@@ -328,17 +378,8 @@ async function bootstrapDatabase() {
       // row's chars value IS the speed (chars/min) — no seconds column.
       // Only windows with chars > 0 are stored; idle windows are omitted.
       await transaction.execAsync(`
-        CREATE TABLE IF NOT EXISTS reader_speed_samples (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          local_day_key TEXT NOT NULL,
-          sampled_at TEXT NOT NULL,
-          chars INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS reader_speed_samples_day_idx
-          ON reader_speed_samples(local_day_key);
-        CREATE INDEX IF NOT EXISTS reader_speed_samples_sampled_idx
-          ON reader_speed_samples(sampled_at);
-        PRAGMA user_version = ${SCHEMA_VERSION};
+        ${SPEED_SAMPLES_SCHEMA}
+        PRAGMA user_version = 17;
       `);
     });
   }
@@ -348,14 +389,8 @@ async function bootstrapDatabase() {
       // target_seconds：每日阅读时长目标（秒）；target_chars：每日阅读字数目标；
       // target_excerpts：每日摘录目标（条）。
       await transaction.execAsync(`
-        CREATE TABLE IF NOT EXISTS reader_daily_goals (
-          id INTEGER PRIMARY KEY CHECK (id = 1),
-          target_seconds INTEGER NOT NULL,
-          target_chars INTEGER NOT NULL,
-          target_excerpts INTEGER NOT NULL,
-          updated_at TEXT NOT NULL
-        );
-        PRAGMA user_version = ${SCHEMA_VERSION};
+        ${DAILY_GOALS_SCHEMA}
+        PRAGMA user_version = 18;
       `);
     });
   }
@@ -368,6 +403,45 @@ async function bootstrapDatabase() {
       // stay truthful. No notes functionality is restored.
       await transaction.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION};`);
     });
+  }
+  if (currentVersion === 19) {
+    // Older releases stamped v19 after each of v14-v18. If the process was
+    // killed between those transactions, user_version says 19 while later
+    // tables/columns are absent. Repair only the missing pieces, in one
+    // transaction, before stale-session recovery touches the sessions table.
+    const tableRows = await database.getAllAsync<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE type = 'table'
+       AND name IN ('reader_highlights', 'reader_reading_sessions',
+                    'reader_speed_samples', 'reader_daily_goals');`,
+    );
+    const tables = new Set(tableRows.map((row) => row.name));
+    const sessionColumns = tables.has('reader_reading_sessions')
+      ? await database.getAllAsync<{ name: string }>('PRAGMA table_info(reader_reading_sessions);')
+      : [];
+    const excerptColumns = await database.getAllAsync<{ name: string }>('PRAGMA table_info(reader_excerpts);');
+    const needsRepair = tables.size !== 4
+      || !sessionColumns.some((column) => column.name === 'local_day_key')
+      || !excerptColumns.some((column) => column.name === 'created_local_day_key');
+    if (needsRepair) {
+      await database.withExclusiveTransactionAsync(async (transaction) => {
+        await transaction.execAsync(
+          `${HIGHLIGHTS_SCHEMA}${SESSIONS_SCHEMA}${SPEED_SAMPLES_SCHEMA}${DAILY_GOALS_SCHEMA}`,
+        );
+        const repairedSessionColumns = await transaction.getAllAsync<{ name: string }>(
+          'PRAGMA table_info(reader_reading_sessions);',
+        );
+        if (!repairedSessionColumns.some((column) => column.name === 'local_day_key')) {
+          await transaction.execAsync('ALTER TABLE reader_reading_sessions ADD COLUMN local_day_key TEXT;');
+        }
+        const repairedExcerptColumns = await transaction.getAllAsync<{ name: string }>(
+          'PRAGMA table_info(reader_excerpts);',
+        );
+        if (!repairedExcerptColumns.some((column) => column.name === 'created_local_day_key')) {
+          await transaction.execAsync('ALTER TABLE reader_excerpts ADD COLUMN created_local_day_key TEXT;');
+        }
+        await backfillLocalDayKeys(transaction);
+      });
+    }
   }
   // Stale-session recovery runs inside bootstrap with the live `database`
   // handle, never via the repository: the repository calls
@@ -384,5 +458,4 @@ async function bootstrapDatabase() {
      WHERE ended_at IS NULL;`,
     [recoveredAt],
   );
-  return database;
 }

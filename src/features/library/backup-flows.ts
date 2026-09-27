@@ -18,6 +18,8 @@ function importErrorMessage(error: unknown): string {
         return uiText.library.backupErrorNotADatabase;
       case 'backup-from-newer-app':
         return uiText.library.backupErrorBackupFromNewerApp;
+      case 'incomplete-backup':
+        return uiText.library.backupErrorIncomplete;
     }
   }
   return uiText.library.backupErrorGeneric;
