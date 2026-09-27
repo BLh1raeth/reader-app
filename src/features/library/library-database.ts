@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 import { backfillLocalDayKeys } from './local-day-backfill';
 
 const DATABASE_NAME = 'reader-library.db';
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 export { DATABASE_NAME, SCHEMA_VERSION };
 
@@ -357,6 +357,16 @@ async function bootstrapDatabase() {
         );
         PRAGMA user_version = ${SCHEMA_VERSION};
       `);
+    });
+  }
+  if (currentVersion < 19) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      // v19 was the notes Phase 1 (reader_highlights.note), fully reverted the
+      // same night it shipped. Devices that ran that code already carry
+      // user_version = 19 (plus a dead note column nobody reads). This no-op
+      // just acknowledges 19 as a real version so version checks elsewhere
+      // stay truthful. No notes functionality is restored.
+      await transaction.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION};`);
     });
   }
   // Stale-session recovery runs inside bootstrap with the live `database`
