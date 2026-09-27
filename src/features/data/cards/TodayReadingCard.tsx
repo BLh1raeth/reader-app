@@ -22,6 +22,8 @@ type TodayReadingCardProps = {
   goals: DailyGoals | null;
   /** 点击三圆环：打开每日目标设置 Sheet。 */
   onRingPress: () => void;
+  /** 点击卡片非圆环区域：进入每日详情二级页。 */
+  onCardPress: () => void;
 };
 
 const RING_SIZE = 140;
@@ -118,6 +120,8 @@ function AnimatedRing({
  * 左：三同心圆环——外环阅读时长（#111111）/ 中环阅读字数（#3A3A3C）/
  * 内环摘录数量（#6E6E73）；进度 = 今日实际 / 每日目标（超目标封顶 1），
  * 点击圆环打开每日目标设置 Sheet；
+ * 点击卡片其他区域进入每日详情二级页（圆环 Pressable 嵌套在内，
+ * 点圆环只触发 onRingPress，不会冒泡到卡片）。
  * 右：三行指标文字，名称与数值同色，颜色与三环一一对应
  * （时长 #111111 / 字数 #3A3A3C / 摘录 #6E6E73）；
  * 其中时长行整行放大到 26pt，作为卡内视觉重心；
@@ -136,6 +140,7 @@ export function TodayReadingCard({
   activeDays7,
   goals,
   onRingPress,
+  onCardPress,
 }: TodayReadingCardProps) {
   const theme = useDataTheme();
 
@@ -161,66 +166,68 @@ export function TodayReadingCard({
 
   return (
     <DataCard accessible accessibilityLabel={a11y}>
-      <View style={styles.bodyRow}>
-        <View style={styles.ringWrap} accessible={false}>
-          <Pressable
-            accessibilityLabel={uiText.data.goalSheetTitle}
-            accessibilityRole="button"
-            onPress={onRingPress}
-          >
-            <Svg width={RING_SIZE} height={RING_SIZE}>
-              {RINGS.map((ring, index) => (
-                <AnimatedRing
-                  key={ring.color}
-                  size={RING_SIZE}
-                  radius={ring.radius}
-                  strokeWidth={RING_STROKE}
-                  color={ring.color}
-                  fraction={ringFractions[index]}
-                  trackColor={theme.ringTrack}
-                />
-              ))}
-            </Svg>
-          </Pressable>
-        </View>
-
-        <View style={styles.textCol}>
-          <View style={styles.metricRow} accessible={false}>
-            <Text style={[styles.durationLabel, { color: RINGS[0].color }]}>
-              {uiText.data.todayMetricDuration}
-            </Text>
-            <Text
-              style={[styles.durationValue, { color: RINGS[0].color }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.6}
+      <Pressable accessibilityRole="button" onPress={onCardPress}>
+        <View style={styles.bodyRow}>
+          <View style={styles.ringWrap} accessible={false}>
+            <Pressable
+              accessibilityLabel={uiText.data.goalSheetTitle}
+              accessibilityRole="button"
+              onPress={onRingPress}
             >
-              {durationText}
-            </Text>
+              <Svg width={RING_SIZE} height={RING_SIZE}>
+                {RINGS.map((ring, index) => (
+                  <AnimatedRing
+                    key={ring.color}
+                    size={RING_SIZE}
+                    radius={ring.radius}
+                    strokeWidth={RING_STROKE}
+                    color={ring.color}
+                    fraction={ringFractions[index]}
+                    trackColor={theme.ringTrack}
+                  />
+                ))}
+              </Svg>
+            </Pressable>
           </View>
-          {/*
-           * 标签与数值拆成两个并列 Text（不嵌套）：两种字号混排时嵌套写法按基线走，
-           * 小字看起来往下掉；并列后靠 metricRow 的 alignItems: 'center'
-           * 让它们的视觉中心对齐。
-           */}
-          <View style={styles.metricRow} accessible={false}>
-            <Text style={[styles.charsName, { color: RINGS[1].color }]}>
-              {uiText.data.todayMetricChars}
-            </Text>
-            <Text style={[styles.charsValue, { color: RINGS[1].color }]}>
-              {charsText}
-            </Text>
-          </View>
-          <View style={styles.metricRow} accessible={false}>
-            <Text style={[styles.excerptName, { color: RINGS[2].color }]}>
-              {uiText.data.todayMetricExcerpts}
-            </Text>
-            <Text style={[styles.excerptValue, { color: RINGS[2].color }]}>
-              {excerptText}
-            </Text>
+
+          <View style={styles.textCol}>
+            <View style={styles.metricRow} accessible={false}>
+              <Text style={[styles.durationLabel, { color: RINGS[0].color }]}>
+                {uiText.data.todayMetricDuration}
+              </Text>
+              <Text
+                style={[styles.durationValue, { color: RINGS[0].color }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.6}
+              >
+                {durationText}
+              </Text>
+            </View>
+            {/*
+             * 标签与数值拆成两个并列 Text（不嵌套）：两种字号混排时嵌套写法按基线走，
+             * 小字看起来往下掉；并列后靠 metricRow 的 alignItems: 'center'
+             * 让它们的视觉中心对齐。
+             */}
+            <View style={styles.metricRow} accessible={false}>
+              <Text style={[styles.charsName, { color: RINGS[1].color }]}>
+                {uiText.data.todayMetricChars}
+              </Text>
+              <Text style={[styles.charsValue, { color: RINGS[1].color }]}>
+                {charsText}
+              </Text>
+            </View>
+            <View style={styles.metricRow} accessible={false}>
+              <Text style={[styles.excerptName, { color: RINGS[2].color }]}>
+                {uiText.data.todayMetricExcerpts}
+              </Text>
+              <Text style={[styles.excerptValue, { color: RINGS[2].color }]}>
+                {excerptText}
+              </Text>
+            </View>
           </View>
         </View>
-      </View>
+      </Pressable>
     </DataCard>
   );
 }

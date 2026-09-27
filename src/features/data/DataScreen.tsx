@@ -7,7 +7,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
 } from 'react-native-reanimated';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { tokens } from '../../design-system/tokens';
@@ -58,6 +58,7 @@ const SECTION_SPACING = 20;
  * useFocusEffect 在初次挂载时也会执行，覆盖首屏加载，不与 mount 重复请求。
  */
 export default function DataScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const theme = useDataTheme();
   /**
@@ -199,6 +200,12 @@ export default function DataScreen() {
                 activeDays7={activeDays7}
                 goals={goals}
                 onRingPress={() => setGoalSheetVisible(true)}
+                onCardPress={() =>
+                  router.push({
+                    pathname: '/data/[dayKey]',
+                    params: { dayKey: todayKey },
+                  })
+                }
               />
             </View>
 

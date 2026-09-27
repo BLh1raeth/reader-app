@@ -100,3 +100,72 @@ export function buildDemoData(todayKey: string): DemoDataLoadResult {
 
   return { summary, last7Days, todayKey, hourlyActiveSeconds };
 }
+
+export type DemoDayDetail = {
+  day: DailyReadingStats;
+  /** 目标天 24 小时 activeSeconds 分桶（0..23），加总 = day.activeSeconds。 */
+  hourlyActiveSeconds: number[];
+};
+
+/** demo 详情页分时用的小时：避开深夜，形状随机但每天固定。 */
+const DEMO_SPREAD_HOURS = [7, 8, 9, 12, 13, 18, 20, 21, 22];
+
+/**
+ * 把一天的阅读秒数按确定性伪随机权重分到 DEMO_SPREAD_HOURS：
+ * 同一天 key 每次结果相同，加总严格等于 totalSeconds。
+ */
+function spreadDaySeconds(totalSeconds: number, dayKey: string): number[] {
+  const buckets = new Array<number>(24).fill(0);
+  if (totalSeconds <= 0) return buckets;
+  let seed = 0;
+  for (const ch of dayKey) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+  const rand = () => {
+    seed = (seed * 1103515245 + 12345) >>> 0;
+    return seed / 0xffffffff;
+  };
+  const weights = DEMO_SPREAD_HOURS.map(() => 0.4 + rand());
+  const weightSum = weights.reduce((a, b) => a + b, 0);
+  let assigned = 0;
+  DEMO_SPREAD_HOURS.forEach((hour, i) => {
+    const value =
+      i === DEMO_SPREAD_HOURS.length - 1
+        ? totalSeconds - assigned
+        : Math.round((weights[i] / weightSum) * totalSeconds);
+    buckets[hour] = value;
+    assigned += value;
+  });
+  return buckets;
+}
+
+/**
+ * 每日详情页的 demo 数据（DEMO ONLY）。
+ * - 今天：复用 buildDemoData 的真实分布；
+ * - 最近 7 天内：DEMO_DAYS 的日统计 + 确定性伪随机分时；
+ * - 更早：全零（与真实 zero-filled 口径一致）。
+ */
+export function buildDemoDayDetail(dayKey: string, todayKey: string): DemoDayDetail {
+  const demo = buildDemoData(todayKey);
+  const found = demo.last7Days.find((d) => d.dayKey === dayKey);
+  if (!found) {
+    return {
+      day: {
+        dayKey,
+        activeSeconds: 0,
+        forwardCharacters: 0,
+        readingSpeedCharsPerMinute: null,
+        readingSpeedP10CharsPerMinute: null,
+        readingSpeedP90CharsPerMinute: null,
+        readingSpeedLatestCharsPerMinute: null,
+        excerptCount: 0,
+      },
+      hourlyActiveSeconds: new Array<number>(24).fill(0),
+    };
+  }
+  return {
+    day: found,
+    hourlyActiveSeconds:
+      dayKey === todayKey
+        ? demo.hourlyActiveSeconds
+        : spreadDaySeconds(found.activeSeconds, dayKey),
+  };
+}

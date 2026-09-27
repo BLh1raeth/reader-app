@@ -121,6 +121,9 @@ export const zhHans = {
     lessThanOneMinute: '< 1 分钟',
     zeroMinutes: '0 分钟',
     loadFailed: '暂时无法读取阅读数据',
+    /** 每日详情页：日期切换。 */
+    prevDay: '前一天',
+    nextDay: '后一天',
   },
   excerpts: {
     title: '摘录',

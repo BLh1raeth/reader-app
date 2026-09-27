@@ -23,6 +23,7 @@ export default function RootLayout() {
       <Stack screenOptions={{ contentStyle: { backgroundColor: tokens.colors.background } }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="reader/[bookId]" options={{ animation: 'none', gestureEnabled: false, headerShown: false }} />
+        <Stack.Screen name="data/[dayKey]" options={{ headerShown: false }} />
       </Stack>
     </ThemeProvider>
   );
