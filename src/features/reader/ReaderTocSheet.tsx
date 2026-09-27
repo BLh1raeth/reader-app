@@ -5,7 +5,6 @@ import {
   presentationDetents,
   presentationDragIndicator,
 } from '@expo/ui/swift-ui/modifiers';
-import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -107,13 +106,6 @@ function ModeButton({ disabled, mode, onPress }: { disabled: boolean; mode: Read
       <SymbolView name={icon} size={21} tintColor={tokens.colors.label} weight="semibold" />
     </Pressable>
   );
-  if (isGlassEffectAPIAvailable()) {
-    return (
-      <GlassView colorScheme="light" glassEffectStyle="regular" isInteractive style={styles.modeButton}>
-        {content}
-      </GlassView>
-    );
-  }
   return <View style={[styles.modeButton, styles.modeButtonFallback]}>{content}</View>;
 }
 
@@ -264,11 +256,7 @@ export function ReaderTocSheet({
         ]}>
           <RNHostView>
             <View style={styles.sheetContent}>
-              {isGlassEffectAPIAvailable() ? (
-                <GlassView colorScheme="light" glassEffectStyle="clear" pointerEvents="none" style={[StyleSheet.absoluteFill, { bottom: -insets.bottom }]} />
-              ) : (
-                <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.sheetGlassFallback, { bottom: -insets.bottom }]} />
-              )}
+              <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: '#FFFFFF', bottom: -insets.bottom }]} />
 
               <Animated.View accessibilityElementsHidden={mode !== 'toc'} importantForAccessibility={mode === 'toc' ? 'auto' : 'no-hide-descendants'} pointerEvents={mode === 'toc' ? 'auto' : 'none'} style={[StyleSheet.absoluteFill, { opacity: tocOpacity }]}>
                 <FlatList
@@ -319,7 +307,6 @@ export function ReaderTocSheet({
 const styles = StyleSheet.create({
   sheetHost: { position: 'absolute' },
   sheetContent: { flexGrow: 1, height: 0 },
-  sheetGlassFallback: { backgroundColor: 'rgba(246,246,250,0.82)' },
   floatingHeader: { height: 68, left: 16, position: 'absolute', right: 16, top: 8, zIndex: 2 },
   headerStack: { height: 68, paddingHorizontal: 56 },
   headerContent: { alignItems: 'center', flex: 1, justifyContent: 'center', paddingHorizontal: 8 },

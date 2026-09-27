@@ -5,7 +5,6 @@ import {
   presentationDetents,
   presentationDragIndicator,
 } from '@expo/ui/swift-ui/modifiers';
-import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -62,24 +61,12 @@ function SearchSurface({
   circular?: boolean;
   style: object;
 }) {
-  if (isGlassEffectAPIAvailable()) {
-    return (
-      <GlassView
-        colorScheme={appearance}
-        glassEffectStyle="regular"
-        isInteractive
-        style={style}
-      >
-        {children}
-      </GlassView>
-    );
-  }
   return (
     <View
       style={[
         style,
         circular ? styles.circularFallback : styles.searchFallback,
-        { backgroundColor: appearance === 'dark' ? 'rgba(44,44,46,0.92)' : 'rgba(250,250,252,0.92)' },
+        { backgroundColor: appearance === 'dark' ? '#2C2C2E' : '#FFFFFF' },
       ]}
     >
       {children}
@@ -282,22 +269,13 @@ export function ReaderSearchSheet({
         ]}>
           <RNHostView>
             <View style={styles.sheetContent}>
-              {isGlassEffectAPIAvailable() ? (
-                <GlassView
-                  colorScheme={appearance}
-                  glassEffectStyle="clear"
-                  pointerEvents="none"
-                  style={[StyleSheet.absoluteFill, { bottom: -insets.bottom }]}
-                />
-              ) : (
-                <View
-                  pointerEvents="none"
-                  style={[
-                    StyleSheet.absoluteFill,
-                    { backgroundColor: appearance === 'dark' ? 'rgba(28,28,30,0.88)' : 'rgba(246,246,250,0.84)', bottom: -insets.bottom },
-                  ]}
-                />
-              )}
+              <View
+                pointerEvents="none"
+                style={[
+                  StyleSheet.absoluteFill,
+                  { backgroundColor: appearance === 'dark' ? '#1C1C1E' : '#FFFFFF', bottom: -insets.bottom },
+                ]}
+              />
 
               <FlatList
                 contentContainerStyle={listData.length

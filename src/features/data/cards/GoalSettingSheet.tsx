@@ -1,8 +1,7 @@
 /**
  * 每日目标设置 Sheet（Data 目标体系）。
  *
- * 液态玻璃：@expo/ui/swift-ui BottomSheet + expo-glass-effect GlassView，
- * 与 ReaderSettingsSheet 同一模式；iOS 26 以下用半透明 View 兜底。
+ * 纯白不透明背景，无液态玻璃。
  *
  * 三行目标：阅读时长（分钟）/ 阅读字数（字）/ 摘录（条）。
  * 每行 stepper（− / +）即时生效（onChange 直接持久化）；时长行另有
@@ -16,7 +15,6 @@ import {
   presentationDetents,
   presentationDragIndicator,
 } from '@expo/ui/swift-ui/modifiers';
-import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -141,24 +139,13 @@ export function GoalSettingSheet({
         >
           <RNHostView>
             <View style={styles.sheetContent}>
-              {isGlassEffectAPIAvailable() ? (
-                <GlassView
-                  glassEffectStyle="clear"
-                  pointerEvents="none"
-                  style={[StyleSheet.absoluteFill, { bottom: -insets.bottom }]}
-                />
-              ) : (
-                <View
-                  pointerEvents="none"
-                  style={[
-                    StyleSheet.absoluteFill,
-                    {
-                      backgroundColor: 'rgba(246,246,250,0.82)',
-                      bottom: -insets.bottom,
-                    },
-                  ]}
-                />
-              )}
+              <View
+                pointerEvents="none"
+                style={[
+                  StyleSheet.absoluteFill,
+                  { backgroundColor: '#FFFFFF', bottom: -insets.bottom },
+                ]}
+              />
 
               <View style={[styles.content, { paddingBottom: Math.max(insets.bottom, 12) }]}>
                 <Text style={[styles.title, { color: primaryColor }]}>

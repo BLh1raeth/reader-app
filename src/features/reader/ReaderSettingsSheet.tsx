@@ -7,7 +7,6 @@ import {
   presentationDetents,
   presentationDragIndicator,
 } from '@expo/ui/swift-ui/modifiers';
-import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
@@ -87,26 +86,17 @@ function SettingSlider({
 function SettingsControlSurface({
   appearance,
   children,
-  interactive = true,
   style,
 }: {
   appearance: ReaderAppearance;
   children: ReactNode;
-  interactive?: boolean;
   style: StyleProp<ViewStyle>;
 }) {
-  if (isGlassEffectAPIAvailable()) {
-    return (
-      <GlassView colorScheme={appearance} glassEffectStyle="regular" isInteractive={interactive} style={style}>
-        {children}
-      </GlassView>
-    );
-  }
   return (
     <View
       style={[
         style,
-        { backgroundColor: appearance === 'dark' ? 'rgba(58,58,60,0.78)' : 'rgba(250,250,252,0.78)' },
+        { backgroundColor: appearance === 'dark' ? '#2C2C2E' : '#FFFFFF' },
       ]}
     >
       {children}
@@ -216,30 +206,20 @@ export function ReaderSettingsSheet({
         ]}>
           <RNHostView>
             <View style={styles.sheetContent}>
-              {isGlassEffectAPIAvailable() ? (
-                <GlassView
-                  colorScheme={settings.appearance}
-                  glassEffectStyle="clear"
-                  pointerEvents="none"
-                  style={[StyleSheet.absoluteFill, { bottom: -insets.bottom }]}
-                />
-              ) : (
-                <View
-                  pointerEvents="none"
-                  style={[
-                    StyleSheet.absoluteFill,
-                    styles.sheetGlassFallback,
-                    { backgroundColor: isDark ? 'rgba(24,24,27,0.88)' : 'rgba(246,246,250,0.82)', bottom: -insets.bottom },
-                  ]}
-                />
-              )}
+              <View
+                pointerEvents="none"
+                style={[
+                  StyleSheet.absoluteFill,
+                  { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', bottom: -insets.bottom },
+                ]}
+              />
 
               <View style={[styles.content, { paddingBottom: Math.max(insets.bottom, 12) }]}>
                 <Text style={[styles.title, { color: primaryColor }]}>{uiText.settings.title}</Text>
 
                 <View style={styles.quickControls}>
                   <View style={styles.fontSizeStack}>
-                    <SettingsControlSurface appearance={settings.appearance} interactive={false} style={styles.fontSizeControl}>
+                    <SettingsControlSurface appearance={settings.appearance} style={styles.fontSizeControl}>
                       <Pressable
                         accessibilityLabel={uiText.settings.decreaseFont}
                         accessibilityRole="button"
@@ -403,7 +383,6 @@ export function ReaderSettingsSheet({
 const styles = StyleSheet.create({
   sheetHost: { position: 'absolute' },
   sheetContent: { flexGrow: 1, height: 0 },
-  sheetGlassFallback: {},
   content: { flex: 1, paddingHorizontal: 26, paddingTop: 18 },
   title: { color: tokens.colors.label, fontSize: 20, fontWeight: '700', lineHeight: 26, marginBottom: 14 },
   quickControls: { alignItems: 'flex-start', flexDirection: 'row', gap: 14, marginBottom: 6 },
