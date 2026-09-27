@@ -5,6 +5,7 @@ import {
   presentationDetents,
   presentationDragIndicator,
 } from '@expo/ui/swift-ui/modifiers';
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -61,6 +62,18 @@ function SearchSurface({
   circular?: boolean;
   style: object;
 }) {
+  if (isGlassEffectAPIAvailable()) {
+    return (
+      <GlassView
+        colorScheme={appearance}
+        glassEffectStyle="regular"
+        isInteractive
+        style={style}
+      >
+        {children}
+      </GlassView>
+    );
+  }
   return (
     <View
       style={[

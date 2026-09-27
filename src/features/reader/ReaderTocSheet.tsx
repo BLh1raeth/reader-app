@@ -5,6 +5,7 @@ import {
   presentationDetents,
   presentationDragIndicator,
 } from '@expo/ui/swift-ui/modifiers';
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -106,6 +107,13 @@ function ModeButton({ disabled, mode, onPress }: { disabled: boolean; mode: Read
       <SymbolView name={icon} size={21} tintColor={tokens.colors.label} weight="semibold" />
     </Pressable>
   );
+  if (isGlassEffectAPIAvailable()) {
+    return (
+      <GlassView colorScheme="light" glassEffectStyle="regular" isInteractive style={styles.modeButton}>
+        {content}
+      </GlassView>
+    );
+  }
   return <View style={[styles.modeButton, styles.modeButtonFallback]}>{content}</View>;
 }
 

@@ -7,6 +7,7 @@ import {
   presentationDetents,
   presentationDragIndicator,
 } from '@expo/ui/swift-ui/modifiers';
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
@@ -86,12 +87,21 @@ function SettingSlider({
 function SettingsControlSurface({
   appearance,
   children,
+  interactive = true,
   style,
 }: {
   appearance: ReaderAppearance;
   children: ReactNode;
+  interactive?: boolean;
   style: StyleProp<ViewStyle>;
 }) {
+  if (isGlassEffectAPIAvailable()) {
+    return (
+      <GlassView colorScheme={appearance} glassEffectStyle="regular" isInteractive={interactive} style={style}>
+        {children}
+      </GlassView>
+    );
+  }
   return (
     <View
       style={[
@@ -219,7 +229,7 @@ export function ReaderSettingsSheet({
 
                 <View style={styles.quickControls}>
                   <View style={styles.fontSizeStack}>
-                    <SettingsControlSurface appearance={settings.appearance} style={styles.fontSizeControl}>
+                    <SettingsControlSurface appearance={settings.appearance} interactive={false} style={styles.fontSizeControl}>
                       <Pressable
                         accessibilityLabel={uiText.settings.decreaseFont}
                         accessibilityRole="button"
