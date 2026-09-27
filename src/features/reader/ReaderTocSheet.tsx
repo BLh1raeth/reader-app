@@ -330,7 +330,7 @@ const styles = StyleSheet.create({
   tocRow: { alignItems: 'center', borderBottomColor: 'rgba(60,60,67,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', gap: 12, height: TOC_ROW_HEIGHT, justifyContent: 'center', paddingLeft: 22, paddingRight: 18 },
   rowPressed: { backgroundColor: 'rgba(60,60,67,0.08)', borderRadius: 12 },
   tocLabel: { color: tokens.colors.label, flex: 1, fontSize: 16, fontWeight: '500', lineHeight: 20 },
-  tocCurrent: { color: tokens.colors.blue, opacity: 0.82 },
+  tocCurrent: { color: '#636366' },
   tocLabelCurrent: { fontWeight: '600' },
   tocPage: { color: tokens.colors.secondaryLabel, fontSize: 15, fontVariant: ['tabular-nums'], fontWeight: '500' },
   bookmarkRow: { borderBottomColor: 'rgba(60,60,67,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, minHeight: 86, paddingHorizontal: 22, paddingVertical: 12 },
