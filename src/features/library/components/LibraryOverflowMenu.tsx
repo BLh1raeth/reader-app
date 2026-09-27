@@ -2,11 +2,12 @@ import { MenuView, type MenuAction } from '@expo/ui/community/menu';
 import type { SFSymbol } from 'sf-symbols-typescript';
 import type { SharedValue } from 'react-native-reanimated';
 
+import { uiText } from '../../../localization';
 import { filterLabels, sortLabels } from './library-shared';
 import type { FilterMode, SortMode } from './library-shared';
 import { LibraryMenuTrigger } from './LibraryMenuTrigger';
 
-export function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport, onSelect, onSort, onFilter, onAdjustOrder, selectionProgress, importProgress }: {
+export function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport, onSelect, onSort, onFilter, onAdjustOrder, onExportBackup, onImportBackup, selectionProgress, importProgress }: {
   booksExist: boolean;
   filterMode: FilterMode;
   sortMode: SortMode;
@@ -15,6 +16,8 @@ export function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport
   onSort: (sortMode: SortMode) => void;
   onFilter: (filterMode: FilterMode) => void;
   onAdjustOrder: () => void;
+  onExportBackup: () => void;
+  onImportBackup: () => void;
   selectionProgress: SharedValue<number>;
   /** 0..1 while importing, null when idle. */
   importProgress: number | null;
@@ -48,11 +51,24 @@ export function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport
   const actions: MenuAction[] = [
     { id: 'import', title: '导入图书', image: 'square.and.arrow.down' as SFSymbol },
     ...bookActions,
+    {
+      id: 'backup',
+      title: uiText.library.backupMenuItem,
+      image: 'externaldrive' as SFSymbol,
+      subactions: [
+        { id: 'backup:export', title: uiText.library.exportBackup, image: 'square.and.arrow.up' as SFSymbol },
+        { id: 'backup:import', title: uiText.library.importBackup, image: 'square.and.arrow.down' as SFSymbol },
+      ],
+    },
   ];
 
   const handleMenuAction = (actionId: string) => {
     if (actionId === 'import') {
       onImport();
+    } else if (actionId === 'backup:export') {
+      onExportBackup();
+    } else if (actionId === 'backup:import') {
+      onImportBackup();
     } else if (actionId === 'select') {
       onSelect();
     } else if (actionId === 'adjust-order') {

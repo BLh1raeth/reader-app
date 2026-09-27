@@ -5,6 +5,8 @@ import { backfillLocalDayKeys } from './local-day-backfill';
 const DATABASE_NAME = 'reader-library.db';
 const SCHEMA_VERSION = 18;
 
+export { DATABASE_NAME, SCHEMA_VERSION };
+
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 export async function getLibraryDatabase() {
@@ -12,6 +14,19 @@ export async function getLibraryDatabase() {
     databasePromise = bootstrapDatabase();
   }
   return databasePromise;
+}
+
+/**
+ * Close the cached database connection and drop it, so the next
+ * getLibraryDatabase() re-opens (and re-migrates) the file on disk.
+ * Used by backup import, which replaces the database file wholesale.
+ */
+export async function closeLibraryDatabase() {
+  if (databasePromise) {
+    const database = await databasePromise;
+    databasePromise = null;
+    await database.closeAsync();
+  }
 }
 
 async function bootstrapDatabase() {

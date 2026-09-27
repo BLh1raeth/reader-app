@@ -43,6 +43,7 @@ import { ContinueReading } from './components/ContinueReading';
 import { EmptyLibrary } from './components/EmptyLibrary';
 import { GridBook } from './components/GridBook';
 import { LibraryOverflowMenu } from './components/LibraryOverflowMenu';
+import { exportBackupFlow, importBackupFlow } from './backup-flows';
 import { ListBook } from './components/ListBook';
 import { ReaderOpeningTransitionOverlay } from './components/ReaderOpeningTransitionOverlay';
 import { ReorderableBook } from './components/ReorderableBook';
@@ -595,6 +596,14 @@ export default function LibraryScreen() {
                   onSort={chooseSortMode}
                   onFilter={setFilterMode}
                   onAdjustOrder={enterManualOrderingMode}
+                  onExportBackup={() => {
+                    void exportBackupFlow();
+                  }}
+                  onImportBackup={() => {
+                    importBackupFlow(() => {
+                      void reloadBooks().catch(() => undefined);
+                    });
+                  }}
                   selectionProgress={selectionUiProgress}
                   importProgress={importProgress}
                 />
