@@ -4,8 +4,8 @@
  * 纯白不透明背景，无液态玻璃。
  *
  * 三行目标：阅读时长（分钟）/ 阅读字数（字）/ 摘录（条）。
- * 每行 stepper（− / +）即时生效（onChange 直接持久化）；时长行另有
- * 15 / 30 / 60 分钟快捷预设。入口：今日阅读卡三圆环点击。
+ * 每行 stepper（− / +）即时生效（onChange 直接持久化）。
+ * 入口：今日阅读卡三圆环点击。
  */
 
 import { BottomSheet, Group, Host, RNHostView } from '@expo/ui/swift-ui';
@@ -34,8 +34,6 @@ const CHARS_MIN = 1000;
 const CHARS_MAX = 100000;
 const EXCERPT_MIN = 1;
 const EXCERPT_MAX = 50;
-
-const DURATION_PRESETS_MIN = [15, 30, 60];
 
 type Props = {
   isPresented: boolean;
@@ -130,9 +128,9 @@ export function GoalSettingSheet({
         <Group
           modifiers={[
             frame({ maxWidth: Infinity, maxHeight: Infinity, alignment: 'topLeading' }),
-            // 内容只有标题 + 三行 + 一行预设，用 0.42 屏高贴合内容，
+            // 内容只有标题 + 三行，用 0.37 屏高贴合内容，
             // 不用 medium（半屏）避免下面大片空白。
-            presentationDetents([{ fraction: 0.42 }]),
+            presentationDetents([{ fraction: 0.37 }]),
             presentationDragIndicator('hidden'),
             presentationBackground('transparent'),
           ]}
@@ -163,34 +161,6 @@ export function GoalSettingSheet({
                   }
                   primaryColor={primaryColor}
                 />
-
-                <View style={styles.presetsRow}>
-                  {DURATION_PRESETS_MIN.map((preset) => {
-                    const selected = durationMin === preset;
-                    return (
-                      <Pressable
-                        key={preset}
-                        accessibilityRole="button"
-                        onPress={() =>
-                          onChange({ ...goals, targetSeconds: preset * 60 })
-                        }
-                        style={[
-                          styles.preset,
-                          selected && styles.presetSelected,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.presetText,
-                            { color: selected ? primaryColor : secondaryColor },
-                          ]}
-                        >
-                          {preset}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
 
                 <StepperRow
                   label={uiText.data.goalCharsLabel}
@@ -278,26 +248,6 @@ const styles = StyleSheet.create({
     width: 88,
     lineHeight: 32,
     textAlign: 'center',
-    fontVariant: ['tabular-nums'],
-  },
-  presetsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 8,
-    marginTop: -4,
-  },
-  preset: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 16,
-    backgroundColor: 'rgba(120,120,128,0.12)',
-  },
-  presetSelected: {
-    backgroundColor: 'rgba(120,120,128,0.32)',
-  },
-  presetText: {
-    fontSize: 15,
-    fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
 });
