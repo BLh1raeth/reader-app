@@ -482,7 +482,7 @@ export function DayDetailScreen({ dayKey }: { dayKey: string }) {
   );
 }
 
-const SECTION_SPACING = 20;
+const SECTION_SPACING = 12;
 
 const styles = StyleSheet.create({
   screen: {
