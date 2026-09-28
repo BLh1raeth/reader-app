@@ -325,6 +325,11 @@ export default function ExcerptsScreen() {
   const titleFadeStyle = useAnimatedStyle(() => ({
     opacity: interpolate(scrollOffset.get(), [0, 8, 22, 42], [1, 0.82, 0.12, 0], Extrapolation.CLAMP),
   }));
+  // 列表首次淡入：数据到了整屏文字瞬间弹出会被感知为"闪一下"（数据页的
+  // 图表有入场动画所以不闪）。只跑一次，之后 focus 刷新 / 搜索过滤不重播。
+  const listOpacitySV = useSharedValue(0);
+  const listFadeStyle = useAnimatedStyle(() => ({ opacity: listOpacitySV.value }));
+  const didFirstListFadeIn = useRef(false);
   // Excerpts Tab Core E：按时间 / 按书籍浏览模式（内存态，与书库 Grid/List 对齐）。
   const { viewMode } = useExcerptsView();
   // null = loading（与 empty 区分开，避免 empty → 列表一闪而过）
@@ -408,6 +413,14 @@ export default function ExcerptsScreen() {
         : groupExcerptFeedItems(feed, GROUP_LABELS),
     );
   }, [feed, viewMode, query]);
+
+  // 首次 sections 就绪（null → 非 null）时把列表淡入；只触发一次。
+  useEffect(() => {
+    if (sections !== null && !didFirstListFadeIn.current) {
+      didFirstListFadeIn.current = true;
+      listOpacitySV.value = withTiming(1, { duration: 250 });
+    }
+  }, [sections, listOpacitySV]);
 
   // Excerpts Tab Core C: Source 行是唯一的原文入口。点按时先做 stale 检查
   // （书可能在 Feed 建好后被删除），再发布 one-shot 内存导航请求并打开
@@ -497,7 +510,9 @@ export default function ExcerptsScreen() {
             </Pressable>
           </View>
         </View>
+        <Animated.View style={[styles.listWrap, listFadeStyle]}>
         <AnimatedSectionList<ExcerptFeedItem, ExcerptFeedSection>
+          style={{ flex: 1 }}
           sections={visibleSections}
           keyExtractor={(item) => item.id}
           stickySectionHeadersEnabled={false}
@@ -580,6 +595,7 @@ export default function ExcerptsScreen() {
           )
         }
         />
+        </Animated.View>
       </View>
     </TouchableWithoutFeedback>
   );
@@ -589,6 +605,10 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: tokens.colors.groupedBackground,
+  },
+  // 列表淡入容器：撑满除浮动头部外区域，opacity 由 listFadeStyle 驱动。
+  listWrap: {
+    flex: 1,
   },
   // 收键盘中转输入框：不可见、不占布局、不拦截触摸
   hiddenInput: {
