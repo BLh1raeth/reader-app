@@ -452,10 +452,11 @@ export default function ExcerptsScreen() {
     }, [loadFeed]),
   );
 
-  if (sections === null) {
-    // 本地 SQLite 查询通常几十毫秒：宁可短暂空白，不闪 spinner。
-    return <View style={styles.screen} />;
-  }
+  // sections === null = loading：首帧直接渲染静态 chrome（大标题 + 搜索框），
+  // 列表区留白等数据；数据到了只填充列表，头部不闪。
+  // ListEmptyComponent 在 loading 时压住，避免 empty → 列表一闪而过。
+  // （之前是整页空白 View 等数据，一次性挂载全部 UI，首开闪一下。）
+  const visibleSections = sections ?? [];
 
   return (
     // 点空白处收起搜索键盘：未被子元素处理的 tap 冒泡到这里 dismiss。
@@ -497,7 +498,7 @@ export default function ExcerptsScreen() {
           </View>
         </View>
         <AnimatedSectionList<ExcerptFeedItem, ExcerptFeedSection>
-          sections={sections}
+          sections={visibleSections}
           keyExtractor={(item) => item.id}
           stickySectionHeadersEnabled={false}
           keyboardDismissMode="on-drag"
@@ -521,7 +522,7 @@ export default function ExcerptsScreen() {
           // 的间隔为 16pt（headerRow marginBottom 12 + marginTop 4）。
           // 其他 section 之间的间距不动。
           const firstHeaderStyle =
-            sections[0]?.key === section.key ? styles.firstSectionHeader : undefined;
+            visibleSections[0]?.key === section.key ? styles.firstSectionHeader : undefined;
           if (section.kind === 'book') {
             return (
               <View style={[styles.bookSectionHeader, firstHeaderStyle]}>
@@ -562,6 +563,7 @@ export default function ExcerptsScreen() {
         )}
         SectionSeparatorComponent={() => <View style={styles.sectionGap} />}
         ListEmptyComponent={
+          sections === null ? null : (
           <View style={styles.emptyContainer}>
             <SymbolView
               name="text.quote"
@@ -575,6 +577,7 @@ export default function ExcerptsScreen() {
               {query.trim() ? uiText.excerpts.searchEmptyHint : uiText.excerpts.emptyHint}
             </Text>
           </View>
+          )
         }
         />
       </View>
