@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   AccessibilityInfo,
   Alert,
@@ -36,8 +36,8 @@ import {
   type ExcerptFeedSection,
 } from './excerpt-feed-grouping';
 import { useExcerptsView, type ExcerptsViewMode } from './excerpts-view-context';
+import { getExcerptFeedSnapshot, refreshExcerptFeed, subscribeExcerptFeed } from './excerpt-feed-cache';
 import {
-  listExcerptFeedItems,
   type ExcerptFeedItem,
 } from './excerpt-feed-repository';
 import { NativeExcerptSearchBar } from '../../../modules/excerpt-search-bar';
@@ -95,38 +95,31 @@ function accessibilityLabelFor(item: ExcerptFeedItem): string {
 }
 
 /**
- * 可展开的正文：纯窗帘式高度动画。
- *
- * 每一行在展开前就已固定：正文永远渲染全文（无 numberOfLines、无"…"），
- * 收起态只是容器裁到 44 高。动画全程只有容器高度在变（400ms easeInOut，
- * UI 线程），文字本体零变化、零重排——已显示的行像素级不动，
- * 新行像窗帘一样一行一行露出来。刻意不加渐隐罩/省略号：
- * 任何覆盖在已显示行上的东西，出现和消失时都会"改变"它们。
- *
- * 关键：Text 高度冻结为全文自然高度（contentHeight）。iOS 排版时会以
- * 容器的当前高度为约束——不冻结的话，每次点击/动画帧都会触发重排，
- * 断行随容器高度漂移（2026-09-21 真机 + onTextLayout 日志实锤）。
- * 冻结后排版只由 (文本, 样式, 宽度) 决定，点击不再触发任何重排。
+ * 折叠正文从列表首帧起就是同一个 Text。隐藏测量完成只启用点击，
+ * 不再把已显示的两行文字替换成另一个组件（首开闪烁的来源之一）。
+ * 第一次展开后保留全文 Text，用 maxHeight 做窗帘动画；全文高度冻结，
+ * 避免动画期间 iOS 随父容器高度变化重新断行。
  */
 function ExpandableQuote({
   item,
   isExpanded,
+  isTruncated,
   fullHeight,
   onToggleExpand,
 }: {
   item: ExcerptFeedItem;
   isExpanded: boolean;
+  isTruncated: boolean | undefined;
   /** 隐藏测量 Text 量出的全文自然高度（动画目标值）；0 表示尚未量出 */
   fullHeight: number;
   onToggleExpand: (itemId: string) => void;
 }) {
   const heightSV = useSharedValue(COLLAPSED_QUOTE_HEIGHT);
+  const previousTargetHeightRef = useRef(COLLAPSED_QUOTE_HEIGHT);
   const reduceMotionRef = useRef(false);
-  // 正文高度冻结为全文自然高度（ceil 防亚像素裁剪）：Text 的排版只由
-  // (文本, 样式, 宽度, 固定高度) 决定，与外层动画容器的高度彻底解耦。
-  // 否则 iOS 会以容器当前高度为约束重排文本——onTextLayout 日志实锤：
-  // 每次点击展开/收起都会触发 3→4→5→6（或反向）多次重排，断行随高度漂移。
-  // 2026-09-21 真机复现，修完后点击应不再触发任何重排。
+  const [hasExpanded, setHasExpanded] = useState(false);
+  const canExpand = isTruncated === true;
+  const showFullText = isExpanded || hasExpanded;
   const contentHeight = Math.ceil(fullHeight);
 
   useEffect(() => {
@@ -138,13 +131,19 @@ function ExpandableQuote({
   }, []);
 
   const animatedStyle = useAnimatedStyle(() => ({
-    height: heightSV.value,
+    maxHeight: heightSV.value,
   }));
 
   useEffect(() => {
-    const targetHeight = isExpanded
+    if (isExpanded) setHasExpanded(true);
+  }, [isExpanded]);
+
+  useEffect(() => {
+    const targetHeight = isExpanded && canExpand
       ? Math.max(contentHeight, COLLAPSED_QUOTE_HEIGHT)
       : COLLAPSED_QUOTE_HEIGHT;
+    if (targetHeight === previousTargetHeightRef.current) return;
+    previousTargetHeightRef.current = targetHeight;
     if (reduceMotionRef.current) {
       heightSV.value = targetHeight;
     } else {
@@ -154,20 +153,26 @@ function ExpandableQuote({
         easing: Easing.inOut(Easing.ease),
       });
     }
-  }, [isExpanded, contentHeight, heightSV]);
+  }, [isExpanded, canExpand, contentHeight, heightSV]);
 
   return (
     <Pressable
+      disabled={!canExpand}
       onPress={() => onToggleExpand(item.id)}
       // 无 pressed 视觉反馈：opacity 跳变会与正文切换叠在同一帧，
       // 在真机上被感知为文字闪烁。保持视觉极简。
-      accessibilityRole="button"
-      accessibilityState={{ expanded: isExpanded }}
-      accessibilityHint={isExpanded ? '轻点收起摘录' : '轻点展开完整摘录'}
-      accessibilityLabel={item.quoteText}
+      accessible={canExpand}
+      accessibilityRole={canExpand ? 'button' : undefined}
+      accessibilityState={canExpand ? { expanded: isExpanded } : undefined}
+      accessibilityHint={canExpand ? (isExpanded ? '轻点收起摘录' : '轻点展开完整摘录') : undefined}
+      accessibilityLabel={canExpand ? item.quoteText : undefined}
     >
       <Animated.View style={[styles.quoteClip, animatedStyle]}>
-        <Text style={[styles.quote, { height: contentHeight }]}>
+        <Text
+          style={[styles.quote, showFullText && { height: contentHeight }]}
+          numberOfLines={showFullText ? undefined : 2}
+          ellipsizeMode="clip"
+        >
           {item.quoteText}
         </Text>
       </Animated.View>
@@ -228,16 +233,6 @@ function ExcerptFeedItemRow({
     [item.id, item.quoteText, onTruncationMeasured],
   );
 
-  const quote = (
-    <Text
-      style={styles.quote}
-      numberOfLines={isExpanded ? undefined : 2}
-      ellipsizeMode="tail"
-    >
-      {item.quoteText}
-    </Text>
-  );
-
   return (
     <View
       // 可展开时容器不再整体 accessible：让 quote 的 button 语义生效，
@@ -250,16 +245,13 @@ function ExcerptFeedItemRow({
         isLast && styles.itemLast,
       ]}
     >
-      {isTruncated ? (
-        <ExpandableQuote
-          item={item}
-          isExpanded={isExpanded}
-          fullHeight={fullHeight}
-          onToggleExpand={onToggleExpand}
-        />
-      ) : (
-        <View style={styles.quoteStaticWrap}>{quote}</View>
-      )}
+      <ExpandableQuote
+        item={item}
+        isExpanded={isExpanded}
+        isTruncated={isTruncated}
+        fullHeight={fullHeight}
+        onToggleExpand={onToggleExpand}
+      />
       {isTruncated === undefined ? (
         // 一次性不可见测量：同款式、同宽度、无行数限制，absolute 不占布局。
         // 测出结果后即卸载，不再重测（文本变化时自动失效重测）。
@@ -313,6 +305,7 @@ function ExcerptFeedItemRow({
 const AnimatedSectionList = Animated.createAnimatedComponent(
   SectionList,
 ) as unknown as typeof SectionList;
+const EMPTY_SECTIONS: ExcerptFeedSection[] = [];
 
 export default function ExcerptsScreen() {
   const insets = useSafeAreaInsets();
@@ -325,17 +318,17 @@ export default function ExcerptsScreen() {
   const titleFadeStyle = useAnimatedStyle(() => ({
     opacity: interpolate(scrollOffset.get(), [0, 8, 22, 42], [1, 0.82, 0.12, 0], Extrapolation.CLAMP),
   }));
-  // 列表首次淡入：数据到了整屏文字瞬间弹出会被感知为"闪一下"（数据页的
-  // 图表有入场动画所以不闪）。只跑一次，之后 focus 刷新 / 搜索过滤不重播。
-  const listOpacitySV = useSharedValue(0);
-  const listFadeStyle = useAnimatedStyle(() => ({ opacity: listOpacitySV.value }));
-  const didFirstListFadeIn = useRef(false);
   // Excerpts Tab Core E：按时间 / 按书籍浏览模式（内存态，与书库 Grid/List 对齐）。
   const { viewMode } = useExcerptsView();
-  // null = loading（与 empty 区分开，避免 empty → 列表一闪而过）
+  // null = loading（与 empty 区分开，避免 empty → 列表一闪而过）。
   // 全量 Feed read model：viewMode 切换时在内存里重分组，不再查 DB。
-  const [feed, setFeed] = useState<ExcerptFeedItem[] | null>(null);
-  const [sections, setSections] = useState<ExcerptFeedSection[] | null>(null);
+  // Native Tabs 可能在后台先挂载本页。直接订阅预取快照：即使它在挂载后
+  // 才完成，列表也会在隐藏状态下准备好，而不是首次点击 Tab 时才从 null 跳出。
+  const feed = useSyncExternalStore(
+    subscribeExcerptFeed,
+    getExcerptFeedSnapshot,
+    getExcerptFeedSnapshot,
+  );
   // 搜索 query：非空时在内存里过滤 feed，扁平展示，不按 viewMode 分组。
   const [query, setQuery] = useState('');
   // 收键盘用的隐藏 RN TextInput：原生 UISearchBar 不是 RN TextInput，
@@ -343,6 +336,7 @@ export default function ExcerptsScreen() {
   // 先 focus 这个隐藏输入把 first responder 从原生搜索框抢过来（UIKit 同一时间只允许一个），
   // 再 blur，键盘就能正常收起。
   const hiddenInputRef = useRef<TextInput>(null);
+  const didLogFirstFocusRef = useRef(false);
   const dismissSearchKeyboard = useCallback(() => {
     const input = hiddenInputRef.current;
     if (!input) return;
@@ -377,11 +371,11 @@ export default function ExcerptsScreen() {
 
   const loadFeed = useCallback(async () => {
     try {
-      const items = await listExcerptFeedItems();
+      const items = await refreshExcerptFeed();
       const ids = new Set(items.map((i) => i.id));
       // refresh 后展开项若已不存在（删书/删 annotation），清空悬空 id
       setExpandedItemId((prev) => (prev !== null && ids.has(prev) ? prev : null));
-      setFeed(items);
+      // refreshExcerptFeed 将真正变化的快照通知页面；相同数据不重绘。
     } catch (error) {
       if (__DEV__) console.error('[EXCERPT_FEED_LOAD_FAILED]', error);
       // 加载失败时保持旧数据，不闪成 empty state
@@ -391,11 +385,8 @@ export default function ExcerptsScreen() {
   // Excerpts Tab Core E：按 viewMode 分组。time = 现有时间分组（逻辑不动）；
   // books = 按 bookId 分组。同一个 feed 做 presentation 层重组，不重查 DB。
   // query 非空时：在内存里过滤，扁平展示（不分组），两种 viewMode 下一致。
-  useEffect(() => {
-    if (feed === null) {
-      setSections(null);
-      return;
-    }
+  const sections = useMemo<ExcerptFeedSection[] | null>(() => {
+    if (feed === null) return null;
     const trimmed = query.trim().toLowerCase();
     if (trimmed.length > 0) {
       const filtered = feed.filter((item) =>
@@ -404,23 +395,12 @@ export default function ExcerptsScreen() {
         item.bookTitle.toLowerCase().includes(trimmed) ||
         (item.chapterTitle?.toLowerCase().includes(trimmed) ?? false),
       );
-      setSections(filtered.length > 0 ? [{ key: 'search', title: '', data: filtered }] : []);
-      return;
+      return filtered.length > 0 ? [{ key: 'search', title: '', data: filtered }] : [];
     }
-    setSections(
-      viewMode === 'books'
-        ? groupExcerptFeedByBook(feed)
-        : groupExcerptFeedItems(feed, GROUP_LABELS),
-    );
+    return viewMode === 'books'
+      ? groupExcerptFeedByBook(feed)
+      : groupExcerptFeedItems(feed, GROUP_LABELS);
   }, [feed, viewMode, query]);
-
-  // 首次 sections 就绪（null → 非 null）时把列表淡入；只触发一次。
-  useEffect(() => {
-    if (sections !== null && !didFirstListFadeIn.current) {
-      didFirstListFadeIn.current = true;
-      listOpacitySV.value = withTiming(1, { duration: 250 });
-    }
-  }, [sections, listOpacitySV]);
 
   // Excerpts Tab Core C: Source 行是唯一的原文入口。点按时先做 stale 检查
   // （书可能在 Feed 建好后被删除），再发布 one-shot 内存导航请求并打开
@@ -461,15 +441,21 @@ export default function ExcerptsScreen() {
   // useFocusEffect 在初次挂载时也会执行，覆盖首屏加载。
   useFocusEffect(
     useCallback(() => {
+      if (__DEV__ && !didLogFirstFocusRef.current) {
+        didLogFirstFocusRef.current = true;
+        const firstSnapshot = getExcerptFeedSnapshot();
+        console.log('[EXCERPT_FIRST_FOCUS]', JSON.stringify({
+          snapshotReady: firstSnapshot !== null,
+          itemCount: firstSnapshot?.length ?? null,
+        }));
+      }
       void loadFeed();
     }, [loadFeed]),
   );
 
-  // sections === null = loading：首帧直接渲染静态 chrome（大标题 + 搜索框），
-  // 列表区留白等数据；数据到了只填充列表，头部不闪。
-  // ListEmptyComponent 在 loading 时压住，避免 empty → 列表一闪而过。
-  // （之前是整页空白 View 等数据，一次性挂载全部 UI，首开闪一下。）
-  const visibleSections = sections ?? [];
+  // SectionList 从首帧起保持挂载；Feed 到达时同步算好 sections，
+  // 不再经过 feed → effect → sections 的中间空白帧。
+  const visibleSections = sections ?? EMPTY_SECTIONS;
 
   return (
     // 点空白处收起搜索键盘：未被子元素处理的 tap 冒泡到这里 dismiss。
@@ -510,7 +496,6 @@ export default function ExcerptsScreen() {
             </Pressable>
           </View>
         </View>
-        <Animated.View style={[styles.listWrap, listFadeStyle]}>
         <AnimatedSectionList<ExcerptFeedItem, ExcerptFeedSection>
           style={{ flex: 1 }}
           sections={visibleSections}
@@ -595,7 +580,6 @@ export default function ExcerptsScreen() {
           )
         }
         />
-        </Animated.View>
       </View>
     </TouchableWithoutFeedback>
   );
@@ -605,10 +589,6 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: tokens.colors.groupedBackground,
-  },
-  // 列表淡入容器：撑满除浮动头部外区域，opacity 由 listFadeStyle 驱动。
-  listWrap: {
-    flex: 1,
   },
   // 收键盘中转输入框：不可见、不占布局、不拦截触摸
   hiddenInput: {
@@ -750,13 +730,6 @@ const styles = StyleSheet.create({
    */
   quoteClip: {
     overflow: 'hidden',
-    paddingRight: QUOTE_RIGHT_INSET,
-  },
-  /**
-   * 短摘录（不截断、不可展开）的正文容器：只吃右 inset，
-   * 与可展开卡片的正文右边界对齐；无裁剪、无动画。
-   */
-  quoteStaticWrap: {
     paddingRight: QUOTE_RIGHT_INSET,
   },
   note: {

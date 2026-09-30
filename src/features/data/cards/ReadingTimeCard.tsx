@@ -12,6 +12,7 @@ type ReadingTimeCardProps = {
   hourlyActiveSeconds: number[] | null;
   /** 外层可覆盖 DataCard 样式（如半宽卡内边距）。 */
   style?: ViewStyle;
+  onPress: () => void;
 };
 
 const CHART_HEIGHT = 88;
@@ -30,7 +31,7 @@ const AXIS_LABEL_WIDTH = 44;
  * 只剩 0/6/12/18 时淡网格线 + 刻度）。
  * 所有柱子高度来自真实 session 数据按小时分桶，不写死。
  */
-export function ReadingTimeCard({ hourlyActiveSeconds, style }: ReadingTimeCardProps) {
+export function ReadingTimeCard({ hourlyActiveSeconds, style, onPress }: ReadingTimeCardProps) {
   const theme = useDataTheme();
   const buckets = hourlyActiveSeconds ?? new Array<number>(24).fill(0);
   const maxSeconds = Math.max(0, ...buckets);
@@ -72,7 +73,7 @@ export function ReadingTimeCard({ hourlyActiveSeconds, style }: ReadingTimeCardP
   );
 
   return (
-    <DataCard accessible accessibilityLabel={accessibilityLabel} style={style}>
+    <DataCard accessible accessibilityLabel={accessibilityLabel} style={style} onPress={onPress}>
       <Text style={[styles.title, { color: theme.primaryText }]}>
         {uiText.data.totalReadingTime}
       </Text>

@@ -22,6 +22,7 @@ type RhythmCardProps = {
   totalDays: number | null;
   /** summary.totalExcerptCount；null = 未加载。 */
   excerptCount: number | null;
+  onPress: () => void;
 };
 
 /** 7 日趋势图绘图区高度。 */
@@ -54,6 +55,7 @@ export function AccumulationCard({
   streakDays,
   totalDays,
   excerptCount,
+  onPress,
 }: RhythmCardProps) {
   const theme = useDataTheme();
   const list = days ?? [];
@@ -122,6 +124,7 @@ export function AccumulationCard({
   return (
     <DataCard
       accessible
+      onPress={onPress}
       accessibilityLabel={`${uiText.data.readingRhythm}：` +
         `${uiText.data.currentStreak}${streakText}，${uiText.data.totalReadingDays}${daysText}，${uiText.data.totalExcerptLabel}${excerptText}`}
     >

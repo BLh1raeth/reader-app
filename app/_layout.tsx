@@ -24,6 +24,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="reader/[bookId]" options={{ animation: 'none', gestureEnabled: false, headerShown: false }} />
         <Stack.Screen name="data/[dayKey]" options={{ headerShown: false }} />
+        <Stack.Screen name="data/metric/[metric]" options={{ headerShown: false }} />
       </Stack>
     </ThemeProvider>
   );

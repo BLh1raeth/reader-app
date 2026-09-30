@@ -18,6 +18,7 @@ type ReadingSpeedCardProps = {
   days: DailyReadingStats[] | null;
   /** 外层可覆盖 DataCard 样式（如半宽卡内边距）。 */
   style?: ViewStyle;
+  onPress: () => void;
 };
 
 const PLOT_HEIGHT = 84;
@@ -42,7 +43,7 @@ const DOT_DROP_DISTANCE = 28;
  * 在今天的柱子上用一个黑色小圆点标出真实位置（可超出胶囊）。
  * 下方大数字 = 今天最新一次检测的速度（字/分钟），不是 7 天平均。
  */
-export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpeedCardProps) {
+export function ReadingSpeedCard({ latestSpeedSample, days, style, onPress }: ReadingSpeedCardProps) {
   const theme = useDataTheme();
   const list = days ?? [];
 
@@ -106,7 +107,7 @@ export function ReadingSpeedCard({ latestSpeedSample, days, style }: ReadingSpee
     latestSpeedSample === null ? '—' : `最新${Math.round(latestSpeedSample.charsPerMinute)}字每分钟`;
 
   return (
-    <DataCard accessible accessibilityLabel={`${uiText.data.readingSpeed}，${a11yValue}`} style={style}>
+    <DataCard accessible accessibilityLabel={`${uiText.data.readingSpeed}，${a11yValue}`} style={style} onPress={onPress}>
       <Text style={[styles.title, { color: theme.primaryText }]}>{uiText.data.readingSpeed}</Text>
       <View style={styles.plot} accessible={false}>
         <View style={styles.barsRow}>

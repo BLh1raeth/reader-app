@@ -220,6 +220,7 @@ export default function DataScreen() {
                 <ReadingTimeCard
                   hourlyActiveSeconds={data?.hourlyActiveSeconds ?? null}
                   style={styles.halfCard}
+                  onPress={() => router.push('/data/metric/time')}
                 />
               </View>
               <View style={styles.cardCell}>
@@ -227,6 +228,7 @@ export default function DataScreen() {
                   latestSpeedSample={summary?.latestSpeedSample ?? null}
                   days={last7Days}
                   style={styles.halfCard}
+                  onPress={() => router.push('/data/metric/speed')}
                 />
               </View>
             </View>
@@ -238,6 +240,7 @@ export default function DataScreen() {
               streakDays={summary?.currentStreakDays ?? null}
               totalDays={summary?.totalReadingDays ?? null}
               excerptCount={summary?.totalExcerptCount ?? null}
+              onPress={() => router.push('/data/metric/rhythm')}
             />
           </>
         )}

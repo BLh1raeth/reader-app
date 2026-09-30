@@ -1,12 +1,22 @@
+import { useEffect } from 'react';
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import { usePathname } from 'expo-router';
 import { PlatformColor } from 'react-native';
 
 import { LibraryViewProvider, useLibraryView } from '../../src/features/library/library-view-context';
 import { ExcerptsViewProvider, useExcerptsView } from '../../src/features/excerpts/excerpts-view-context';
+import { prefetchExcerptFeed } from '../../src/features/excerpts/excerpt-feed-cache';
 import { uiText } from '../../src/localization';
 
 export default function TabLayout() {
+  useEffect(() => {
+    // Native Tabs 首次选中摘录才会挂载页面。提前读取 Feed，避免首次进入
+    // 经历“空列表 → 全部文字出现”的一帧；页面获得焦点后仍会刷新数据。
+    void prefetchExcerptFeed().catch((error) => {
+      if (__DEV__) console.error('[EXCERPT_FEED_PREFETCH_FAILED]', error);
+    });
+  }, []);
+
   return (
     <LibraryViewProvider>
       <ExcerptsViewProvider>
