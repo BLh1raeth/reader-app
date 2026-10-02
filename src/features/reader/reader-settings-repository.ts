@@ -14,13 +14,14 @@ type ReaderSettingsRow = {
   line_height: number;
   letter_spacing: number;
   page_margin: number;
+  color_temp: number | null;
 };
 
 export const readerSettingsRepository = {
   async get(): Promise<ReaderSettings> {
     const database = await getLibraryDatabase();
     const row = await database.getFirstAsync<ReaderSettingsRow>(
-      'SELECT font_size, page_transition, reader_appearance, line_height, letter_spacing, page_margin FROM reader_settings WHERE id = 1;',
+      'SELECT font_size, page_transition, reader_appearance, line_height, letter_spacing, page_margin, color_temp FROM reader_settings WHERE id = 1;',
     );
     if (!row) return DEFAULT_READER_SETTINGS;
     return normalizeReaderSettings({
@@ -30,6 +31,8 @@ export const readerSettingsRepository = {
       lineHeight: row.line_height,
       letterSpacing: row.letter_spacing,
       pageMargin: row.page_margin,
+      // 旧库在 v20 migration 之前没有 color_temp 列（null），归一化回默认 0。
+      colorTemp: row.color_temp ?? undefined,
     });
   },
 
@@ -38,8 +41,8 @@ export const readerSettingsRepository = {
     const database = await getLibraryDatabase();
     await database.runAsync(
       `INSERT INTO reader_settings (
-        id, font_size, page_transition, reader_appearance, line_height, letter_spacing, page_margin, updated_at
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+        id, font_size, page_transition, reader_appearance, line_height, letter_spacing, page_margin, color_temp, updated_at
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         font_size = excluded.font_size,
         page_transition = excluded.page_transition,
@@ -47,6 +50,7 @@ export const readerSettingsRepository = {
         line_height = excluded.line_height,
         letter_spacing = excluded.letter_spacing,
         page_margin = excluded.page_margin,
+        color_temp = excluded.color_temp,
         updated_at = excluded.updated_at;`,
       normalized.fontSize,
       normalized.pageTransition,
@@ -54,6 +58,7 @@ export const readerSettingsRepository = {
       normalized.lineHeight,
       normalized.letterSpacing,
       normalized.pageMargin,
+      normalized.colorTemp,
       new Date().toISOString(),
     );
   },

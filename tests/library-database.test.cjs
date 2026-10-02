@@ -15,7 +15,7 @@ function version(database) {
   return database.native.prepare('PRAGMA user_version;').get().user_version;
 }
 
-test('interrupted migration records the last completed step and resumes to v19', async () => {
+test('interrupted migration records the last completed step and resumes to v20', async () => {
   const database = createDatabase();
   const migrate = loadMigrations();
   database.interruptBefore(15);
@@ -27,7 +27,7 @@ test('interrupted migration records the last completed step and resumes to v19',
 
   database.interruptBefore(null);
   await migrate(database);
-  assert.equal(version(database), 19);
+  assert.equal(version(database), 20);
   for (const name of ['reader_highlights', 'reader_reading_sessions', 'reader_speed_samples', 'reader_daily_goals']) {
     assert.equal(database.native.prepare(
       'SELECT count(*) AS n FROM sqlite_master WHERE name = ?;',
@@ -59,7 +59,7 @@ test('repairs a legacy partial schema already mislabeled v19, including local-da
   database.interruptBefore(null);
   await migrate(database);
 
-  assert.equal(version(database), 19);
+  assert.equal(version(database), 20);
   assert.match(database.native.prepare(
     "SELECT local_day_key FROM reader_reading_sessions WHERE id = 'session-1';",
   ).get().local_day_key, /^\d{4}-\d{2}-\d{2}$/);
@@ -69,5 +69,26 @@ test('repairs a legacy partial schema already mislabeled v19, including local-da
   assert.equal(database.native.prepare(
     "SELECT count(*) AS n FROM sqlite_master WHERE name = 'reader_daily_goals';",
   ).get().n, 1);
+  await database.closeAsync();
+});
+
+test('v20 adds color_temp to reader_settings with default 0', async () => {
+  const database = createDatabase();
+  const migrate = loadMigrations();
+  await migrate(database);
+  assert.equal(version(database), 20);
+  const columns = database.native.prepare('PRAGMA table_info(reader_settings);').all();
+  const colorTemp = columns.find((column) => column.name === 'color_temp');
+  assert.ok(colorTemp, 'color_temp column exists');
+  assert.equal(colorTemp.dflt_value, '0');
+  // Round-trip: write a non-default value and read it back.
+  database.native.exec(`
+    INSERT INTO reader_settings (id, font_size, page_transition, line_height, page_margin, updated_at, color_temp)
+    VALUES (1, 19, 'dissolve', 1.72, 7, '2026-10-02T00:00:00.000Z', 0.5);
+  `);
+  assert.equal(
+    database.native.prepare('SELECT color_temp FROM reader_settings WHERE id = 1;').get().color_temp,
+    0.5,
+  );
   await database.closeAsync();
 });

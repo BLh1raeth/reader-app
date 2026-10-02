@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 import { backfillLocalDayKeys } from './local-day-backfill';
 
 const DATABASE_NAME = 'reader-library.db';
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 const HIGHLIGHTS_SCHEMA = `
   CREATE TABLE IF NOT EXISTS reader_highlights (
@@ -442,6 +442,15 @@ export async function migrateLibraryDatabase(database: SQLite.SQLiteDatabase) {
         await backfillLocalDayKeys(transaction);
       });
     }
+  }
+  if (currentVersion < 20) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      // v20：阅读设置加冷暖色温（-1 冷 ~ 0 标准 ~ +1 暖），默认 0。
+      await transaction.execAsync(`
+        ALTER TABLE reader_settings ADD COLUMN color_temp REAL NOT NULL DEFAULT 0;
+        PRAGMA user_version = 20;
+      `);
+    });
   }
   // Stale-session recovery runs inside bootstrap with the live `database`
   // handle, never via the repository: the repository calls
