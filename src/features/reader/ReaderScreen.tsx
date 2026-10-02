@@ -931,7 +931,7 @@ export default function ReaderScreen() {
           >
             <Text numberOfLines={1} style={[styles.bookTitle, { color: readerColors.secondary }]}>{readerInput.book.title}</Text>
           </View>
-          <View pointerEvents="none" style={{ bottom: Math.max(insets.bottom + 10, 10), left: tokens.spacing.screen, position: 'absolute' }}>
+          <View pointerEvents="box-none" style={{ bottom: Math.max(insets.bottom + 10, 10), left: tokens.spacing.screen, position: 'absolute' }}>
             <Animated.View style={pageIndicatorStyle}>
               <ReaderPageIndicator
                 color={readerColors.secondary}
