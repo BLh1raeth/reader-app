@@ -1,5 +1,7 @@
 export type ReaderPageTransition = 'dissolve';
 export type ReaderAppearance = 'light' | 'dark';
+/** 页码指示器显示模式：页码 / 本章剩余时间 / 全书剩余时间（点按循环切换）。 */
+export type ReaderPageIndicatorMode = 'pages' | 'chapter' | 'book';
 
 export type ReaderSettings = {
   fontSize: number;
@@ -12,6 +14,7 @@ export type ReaderSettings = {
   pageMargin: number;
   /** 色温：-1（最冷）~ 0（标准）~ +1（最暖）。只影响 tint 遮罩，不触发布局。 */
   colorTemp: number;
+  pageIndicatorMode: ReaderPageIndicatorMode;
 };
 
 export const DEFAULT_READER_SETTINGS: ReaderSettings = {
@@ -22,6 +25,7 @@ export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   letterSpacing: 0.01,
   pageMargin: 7,
   colorTemp: 0,
+  pageIndicatorMode: 'pages',
 };
 
 export const READER_SETTINGS_LIMITS = {
@@ -58,6 +62,10 @@ export function normalizeReaderSettings(value: Partial<ReaderSettings> | null | 
   const colorTemp = typeof value?.colorTemp === 'number' && Number.isFinite(value.colorTemp)
     ? value.colorTemp
     : DEFAULT_READER_SETTINGS.colorTemp;
+  const pageIndicatorMode: ReaderPageIndicatorMode =
+    value?.pageIndicatorMode === 'chapter' || value?.pageIndicatorMode === 'book'
+      ? value.pageIndicatorMode
+      : 'pages';
   return {
     fontSize: clampStep(fontSize, READER_SETTINGS_LIMITS.fontSize.min, READER_SETTINGS_LIMITS.fontSize.max, READER_SETTINGS_LIMITS.fontSize.step),
     // Cross-dissolve is the only supported page-turn treatment for now.
@@ -68,6 +76,7 @@ export function normalizeReaderSettings(value: Partial<ReaderSettings> | null | 
     letterSpacing: clampPrecision(letterSpacing, READER_SETTINGS_LIMITS.letterSpacing.min, READER_SETTINGS_LIMITS.letterSpacing.max, 3),
     pageMargin: clampPrecision(pageMargin, READER_SETTINGS_LIMITS.pageMargin.min, READER_SETTINGS_LIMITS.pageMargin.max, 2),
     colorTemp: clampPrecision(colorTemp, READER_SETTINGS_LIMITS.colorTemp.min, READER_SETTINGS_LIMITS.colorTemp.max, 2),
+    pageIndicatorMode,
   };
 }
 
@@ -82,5 +91,6 @@ export function readerSettingsEqual(left: ReaderSettings, right: ReaderSettings)
   return readerLayoutSettingsEqual(left, right)
     && left.pageTransition === right.pageTransition
     && left.appearance === right.appearance
-    && left.colorTemp === right.colorTemp;
+    && left.colorTemp === right.colorTemp
+    && left.pageIndicatorMode === right.pageIndicatorMode;
 }

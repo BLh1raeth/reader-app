@@ -25,10 +25,11 @@ import { markReaderOpen } from './reader-open-performance';
 import { READING_SESSION_MEASURE_TIMEOUT_MS } from './reading-session-tracker';
 import { useReadingSessionTracker } from './use-reading-session-tracker';
 import { DEFAULT_READER_SETTINGS, READER_SETTINGS_LIMITS } from './reader-settings';
+import type { ReaderPageIndicatorMode } from './reader-settings';
 import FoliateReaderDom from './FoliateReaderDom';
 import { ReaderSearchSheet } from './ReaderSearchSheet';
 import { ReaderSettingsSheet } from './ReaderSettingsSheet';
-import { ReaderTocSheet } from './ReaderTocSheet';
+import { ReaderTocSheet, flattenToc } from './ReaderTocSheet';
 import { useReaderController } from './use-reader-controller';
 import { useFootnotePopover } from './hooks/useFootnotePopover';
 import { useReaderBookmarks } from './hooks/useReaderBookmarks';
@@ -65,6 +66,42 @@ function colorTempOverlay(colorTemp: number): { backgroundColor: string } | null
     return { backgroundColor: `rgba(255, 170, 60, ${(strength * 0.28).toFixed(3)})` };
   }
   return { backgroundColor: `rgba(90, 160, 255, ${(strength * 0.18).toFixed(3)})` };
+}
+
+// 章节剩余时间：翻页速度跟踪（内存态，每次打开阅读器重新学习）。
+const PAGE_TURN_RATE_WINDOW = 20; // 保留最近 20 次向前翻页间隔
+const PAGE_TURN_RATE_MIN_SAMPLES = 3; // 至少 3 个间隔才估算速度
+const PAGE_TURN_IDLE_CUTOFF_SEC = 300; // 超过 5 分钟视为放下手机，不计入速度
+
+/** 翻页间隔（秒）→ 每分钟页数。中位数抗抖动；样本不足返回 null。 */
+function pagesPerMinuteFromIntervals(intervals: number[]): number | null {
+  if (intervals.length < PAGE_TURN_RATE_MIN_SAMPLES) return null;
+  const sorted = [...intervals].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  if (median <= 0) return null;
+  return 60 / median;
+}
+
+/**
+ * 本章剩余页数 = 下一章节起始页 - 当前页；末章用总页数。
+ * 当前页之前没有章节起始页时（卷首）按第一章算。
+ */
+function chapterRemainingPages(chapterStartPages: number[], currentPage: number, totalPages: number): number {
+  let nextStart: number | null = null;
+  for (const start of chapterStartPages) {
+    if (start > currentPage && (nextStart === null || start < nextStart)) nextStart = start;
+  }
+  if (nextStart === null) return Math.max(1, totalPages - currentPage + 1);
+  return Math.max(0, nextStart - currentPage);
+}
+
+/** 剩余页数 + 速度 → 显示文案；速度未知时返回 '–'。 */
+function remainingMinutesText(pages: number, pagesPerMinute: number | null, isChapter: boolean): string {
+  if (pagesPerMinute === null || pagesPerMinute <= 0) return uiText.reader.pageIndicatorTimeUnknown;
+  const minutes = Math.max(1, Math.round(pages / pagesPerMinute));
+  return isChapter
+    ? uiText.reader.pageIndicatorChapterRemaining(minutes)
+    : uiText.reader.pageIndicatorBookRemaining(minutes);
 }
 
 // ReaderScreen 巨型组件拆分：collectTocPageTargets 已移至 useReaderNavigation。
@@ -216,10 +253,17 @@ function ReaderPageIndicator({
   location,
   totalOpacityStyle,
   color,
+  mode,
+  timeText,
+  onPress,
 }: {
   location: ReaderLocation | null;
   totalOpacityStyle: AnimatedStyle<TextStyle>;
   color: string;
+  mode: ReaderPageIndicatorMode;
+  /** chapter/book 模式下的时间文案；pages 模式或无需显示时为 null。 */
+  timeText: string | null;
+  onPress: () => void;
 }) {
   // `renderer.page` is useful as the current reading page, but it is only
   // chapter-local until the completed whole-book cache supplies a total. Keep
@@ -231,13 +275,23 @@ function ReaderPageIndicator({
     || location?.currentPage === undefined
     || location.totalPages === null
   ) return null;
+  // 点按循环切换：页码 → 本章剩余时间 → 全书剩余时间（Kindle 式）。
   return (
-    <View pointerEvents="none" style={styles.positionContainer}>
-      <Text style={[styles.positionText, { color }]}>{location.currentPage}</Text>
-      {location.totalPages !== null ? (
-        <Animated.Text style={[styles.positionText, { color }, totalOpacityStyle]}> / {location.totalPages}</Animated.Text>
-      ) : null}
-    </View>
+    <Pressable
+      accessibilityRole="button"
+      hitSlop={12}
+      onPress={onPress}
+      style={styles.positionContainer}
+    >
+      {mode === 'pages' || timeText === null ? (
+        <>
+          <Text style={[styles.positionText, { color }]}>{location.currentPage}</Text>
+          <Animated.Text style={[styles.positionText, { color }, totalOpacityStyle]}> / {location.totalPages}</Animated.Text>
+        </>
+      ) : (
+        <Text style={[styles.positionText, { color }]}>{timeText}</Text>
+      )}
+    </Pressable>
   );
 }
 
@@ -406,6 +460,14 @@ export default function ReaderScreen() {
   const readerAppearance = controller.appliedReaderSettings.appearance;
   // 色温遮罩：-1（冷）~ 0（标准）~ +1（暖）。0 时不渲染遮罩。
   const colorTempOverlayStyle = colorTempOverlay(controller.appliedReaderSettings.colorTemp);
+
+  // 页码指示器显示模式：点按循环 页码 → 本章剩余 → 全书剩余，持久化。
+  const pageIndicatorMode: ReaderPageIndicatorMode = controller.readerSettings.pageIndicatorMode;
+  const cyclePageIndicatorMode = useCallback(() => {
+    const order: ReaderPageIndicatorMode[] = ['pages', 'chapter', 'book'];
+    const next = order[(order.indexOf(controller.readerSettings.pageIndicatorMode) + 1) % order.length];
+    controller.updateReaderSettings({ ...controller.readerSettings, pageIndicatorMode: next });
+  }, [controller]);
   const readerColors = readerAppearance === 'dark'
     ? { background: '#151517', primary: '#f2f2f7', secondary: '#aeaeb2', glassFallback: 'rgba(44,44,46,0.88)', link: '#64d2ff' }
     : { background: tokens.colors.background, primary: '#171719', secondary: '#8b8b90', glassFallback: 'rgba(250,250,252,0.88)', link: '#007aff' };
@@ -476,10 +538,29 @@ export default function ReaderScreen() {
 
   // Feed every engine location to the session tracker before the controller
   // consumes it. The tracker only reads; it never mutates location state.
+  // 同时跟踪向前翻页间隔，供页码指示器的章节/全书剩余时间用（内存态）。
+  const lastPageTurnAtRef = useRef<number | null>(null);
+  const pageTurnIntervalsRef = useRef<number[]>([]);
   const handleLocation = useCallback(async (
     location: ReaderLocation,
     restoreState: ReaderRestoreState,
   ) => {
+    if (location.navigationReason === 'reading-forward') {
+      const nowMs = Date.now();
+      const last = lastPageTurnAtRef.current;
+      lastPageTurnAtRef.current = nowMs;
+      if (last !== null) {
+        const intervalSec = (nowMs - last) / 1000;
+        if (intervalSec > 0 && intervalSec <= PAGE_TURN_IDLE_CUTOFF_SEC) {
+          const intervals = pageTurnIntervalsRef.current;
+          intervals.push(intervalSec);
+          if (intervals.length > PAGE_TURN_RATE_WINDOW) intervals.shift();
+        }
+      }
+    } else if (location.navigationReason) {
+      // 跳转（目录/搜索/书签等）打断连续阅读，重置间隔基准，保留已有样本。
+      lastPageTurnAtRef.current = null;
+    }
     readingSessionTrackerRef.current.handleLocation(location, restoreState);
     await controller.onLocation(location, restoreState);
   }, [controller.onLocation, readingSessionTrackerRef]);
@@ -636,6 +717,30 @@ export default function ReaderScreen() {
     isFocused,
   });
   const readerOpeningOpacity = useSharedValue(openingTitle ? 1 : 0);
+
+  // 各章节起始页（阅读顺序），用于算本章剩余页数。
+  const chapterStartPages = useMemo(() => {
+    const starts: number[] = [];
+    for (const item of flattenToc(toc ?? [], pageByDestination)) {
+      if (item.startPage !== null) starts.push(item.startPage);
+    }
+    return starts;
+  }, [toc, pageByDestination]);
+
+  // 指示器时间文案：速度来自本节的翻页间隔跟踪；样本不足时显示 '–'。
+  // intervals ref 只在翻页时变，而翻页一定带来 displayedPageLocation 变化，
+  // 所以依赖 displayedPageLocation 就够了。
+  const pageIndicatorTimeText = useMemo(() => {
+    const location = displayedPageLocation;
+    if (pageIndicatorMode === 'pages' || !location || location.currentPage == null || location.totalPages == null) {
+      return null;
+    }
+    const pagesPerMinute = pagesPerMinuteFromIntervals(pageTurnIntervalsRef.current);
+    const remainingPages = pageIndicatorMode === 'chapter'
+      ? chapterRemainingPages(chapterStartPages, location.currentPage, location.totalPages)
+      : Math.max(1, location.totalPages - location.currentPage + 1);
+    return remainingMinutesText(remainingPages, pagesPerMinute, pageIndicatorMode === 'chapter');
+  }, [displayedPageLocation, pageIndicatorMode, chapterStartPages]);
 
   useEffect(() => {
     const hasOpeningCover = Boolean(openingTitle);
@@ -828,7 +933,14 @@ export default function ReaderScreen() {
           </View>
           <View pointerEvents="none" style={{ bottom: Math.max(insets.bottom + 10, 10), left: tokens.spacing.screen, position: 'absolute' }}>
             <Animated.View style={pageIndicatorStyle}>
-              <ReaderPageIndicator color={readerColors.secondary} location={displayedPageLocation} totalOpacityStyle={totalPageStyle} />
+              <ReaderPageIndicator
+                color={readerColors.secondary}
+                location={displayedPageLocation}
+                mode={pageIndicatorMode}
+                onPress={cyclePageIndicatorMode}
+                timeText={pageIndicatorTimeText}
+                totalOpacityStyle={totalPageStyle}
+              />
             </Animated.View>
           </View>
           {chromeMounted ? (

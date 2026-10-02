@@ -18,6 +18,11 @@ export const zhHans = {
     excerptSelection: '摘录所选文字',
     dismissFootnote: '关闭脚注',
     dismissFootnoteHint: '关闭脚注弹窗',
+    pageIndicatorChapterRemaining: (minutes: number) => `本章还剩 ${minutes} 分钟`,
+    pageIndicatorBookRemaining: (minutes: number) => minutes >= 60
+      ? `全书还剩 ${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`
+      : `全书还剩 ${minutes} 分钟`,
+    pageIndicatorTimeUnknown: '–',
   },
   search: {
     title: '在图书中搜索',

@@ -72,7 +72,7 @@ test('repairs a legacy partial schema already mislabeled v19, including local-da
   await database.closeAsync();
 });
 
-test('v20 adds color_temp to reader_settings with default 0', async () => {
+test('v20 adds color_temp and page_indicator_mode to reader_settings', async () => {
   const database = createDatabase();
   const migrate = loadMigrations();
   await migrate(database);
@@ -81,14 +81,16 @@ test('v20 adds color_temp to reader_settings with default 0', async () => {
   const colorTemp = columns.find((column) => column.name === 'color_temp');
   assert.ok(colorTemp, 'color_temp column exists');
   assert.equal(colorTemp.dflt_value, '0');
-  // Round-trip: write a non-default value and read it back.
+  const indicatorMode = columns.find((column) => column.name === 'page_indicator_mode');
+  assert.ok(indicatorMode, 'page_indicator_mode column exists');
+  assert.equal(indicatorMode.dflt_value, "'pages'");
+  // Round-trip: write non-default values and read them back.
   database.native.exec(`
-    INSERT INTO reader_settings (id, font_size, page_transition, line_height, page_margin, updated_at, color_temp)
-    VALUES (1, 19, 'dissolve', 1.72, 7, '2026-10-02T00:00:00.000Z', 0.5);
+    INSERT INTO reader_settings (id, font_size, page_transition, line_height, page_margin, updated_at, color_temp, page_indicator_mode)
+    VALUES (1, 19, 'dissolve', 1.72, 7, '2026-10-02T00:00:00.000Z', 0.5, 'chapter');
   `);
-  assert.equal(
-    database.native.prepare('SELECT color_temp FROM reader_settings WHERE id = 1;').get().color_temp,
-    0.5,
-  );
+  const row = database.native.prepare('SELECT color_temp, page_indicator_mode FROM reader_settings WHERE id = 1;').get();
+  assert.equal(row.color_temp, 0.5);
+  assert.equal(row.page_indicator_mode, 'chapter');
   await database.closeAsync();
 });

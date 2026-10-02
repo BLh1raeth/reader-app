@@ -42,7 +42,7 @@ type Props = {
   toc: ReaderTocItem[];
 };
 
-function flattenToc(items: ReaderTocItem[], pageByDestination: Record<string, number>, depth = 0, parentKey = 'root'): FlatTocItem[] {
+export function flattenToc(items: ReaderTocItem[], pageByDestination: Record<string, number>, depth = 0, parentKey = 'root'): FlatTocItem[] {
   return items.flatMap((item, index) => {
     const key = item.id !== null ? `toc-${item.id}` : `${parentKey}-${index}-${item.href}`;
     const startPage = pageByDestination[item.href] ?? null;

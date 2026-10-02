@@ -445,9 +445,12 @@ export async function migrateLibraryDatabase(database: SQLite.SQLiteDatabase) {
   }
   if (currentVersion < 20) {
     await database.withExclusiveTransactionAsync(async (transaction) => {
-      // v20：阅读设置加冷暖色温（-1 冷 ~ 0 标准 ~ +1 暖），默认 0。
+      // v20：阅读设置加冷暖色温（-1 冷 ~ 0 标准 ~ +1 暖），默认 0；
+      // 加页码指示器显示模式（pages 页码 / chapter 本章剩余 / book 全书剩余），默认 pages。
       await transaction.execAsync(`
         ALTER TABLE reader_settings ADD COLUMN color_temp REAL NOT NULL DEFAULT 0;
+        ALTER TABLE reader_settings ADD COLUMN page_indicator_mode TEXT NOT NULL DEFAULT 'pages'
+          CHECK (page_indicator_mode IN ('pages', 'chapter', 'book'));
         PRAGMA user_version = 20;
       `);
     });
