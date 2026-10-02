@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 import { backfillLocalDayKeys } from './local-day-backfill';
 
 const DATABASE_NAME = 'reader-library.db';
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 const HIGHLIGHTS_SCHEMA = `
   CREATE TABLE IF NOT EXISTS reader_highlights (
@@ -445,13 +445,23 @@ export async function migrateLibraryDatabase(database: SQLite.SQLiteDatabase) {
   }
   if (currentVersion < 20) {
     await database.withExclusiveTransactionAsync(async (transaction) => {
-      // v20：阅读设置加冷暖色温（-1 冷 ~ 0 标准 ~ +1 暖），默认 0；
-      // 加页码指示器显示模式（pages 页码 / chapter 本章剩余 / book 全书剩余），默认 pages。
+      // v20：阅读设置加冷暖色温（-1 冷 ~ 0 标准 ~ +1 暖），默认 0。
       await transaction.execAsync(`
         ALTER TABLE reader_settings ADD COLUMN color_temp REAL NOT NULL DEFAULT 0;
+        PRAGMA user_version = 20;
+      `);
+    });
+  }
+  if (currentVersion < 21) {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      // v21：阅读设置加页码指示器显示模式（pages 页码 / chapter 本章剩余 /
+      // book 全书剩余），默认 pages。注意：v21 之前 v20 在开发期间被改过一次，
+      // 已有设备可能 user_version 已是 20 但缺 page_indicator_mode 列，所以
+      // 这一列必须放在独立的 v21 里，不能再塞回 v20。
+      await transaction.execAsync(`
         ALTER TABLE reader_settings ADD COLUMN page_indicator_mode TEXT NOT NULL DEFAULT 'pages'
           CHECK (page_indicator_mode IN ('pages', 'chapter', 'book'));
-        PRAGMA user_version = 20;
+        PRAGMA user_version = 21;
       `);
     });
   }

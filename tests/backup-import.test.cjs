@@ -50,7 +50,7 @@ async function fixture() {
     zip.file('reader-library.db', databaseBytes);
     zip.file('manifest.json', JSON.stringify({
       app: 'reader', backupFormatVersion: 1,
-      exportedAt: '2026-09-27T00:00:00.000Z', schemaVersion: 20,
+      exportedAt: '2026-09-27T00:00:00.000Z', schemaVersion: 21,
       books: [{
         id: 'book-new', fileHash: newHash,
         hasFile: true, hasCover: false, coverExtension: null,
