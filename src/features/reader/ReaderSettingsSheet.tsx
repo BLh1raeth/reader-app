@@ -42,7 +42,7 @@ type Props = {
 
 type SettingSliderProps = {
   accessibilityLabel: string;
-  icon: 'line.3.horizontal' | 'rectangle.portrait' | 'textformat';
+  icon: 'line.3.horizontal' | 'rectangle.portrait' | 'textformat' | 'thermometer';
   maximumValue: number;
   minimumValue: number;
   onValueChange: (value: number) => void;
@@ -366,6 +366,30 @@ export function ReaderSettingsSheet({
                       trackColor={trackColor}
                       value={settings.pageMargin}
                       valueLabel={`${settings.pageMargin.toFixed(1).replace('.0', '')}%`}
+                    />
+                  </View>
+
+                  <View style={[styles.metricSeparator, { backgroundColor: separatorColor }]} />
+
+                  <View style={styles.metricRow}>
+                    <Text style={[styles.settingLabel, { color: primaryColor }]}>{uiText.settings.colorTemp}</Text>
+                    <SettingSlider
+                      accessibilityLabel={uiText.settings.colorTemp}
+                      icon="thermometer"
+                      maximumValue={READER_SETTINGS_LIMITS.colorTemp.max}
+                      minimumValue={READER_SETTINGS_LIMITS.colorTemp.min}
+                      onValueChange={(value) => update('colorTemp', value)}
+                      primaryColor={primaryColor}
+                      secondaryColor={secondaryColor}
+                      trackColor={trackColor}
+                      value={settings.colorTemp}
+                      valueLabel={
+                        settings.colorTemp === 0
+                          ? uiText.settings.colorTempNeutral
+                          : settings.colorTemp > 0
+                            ? `${uiText.settings.colorTempWarm} ${Math.round(settings.colorTemp * 100)}%`
+                            : `${uiText.settings.colorTempCool} ${Math.round(-settings.colorTemp * 100)}%`
+                      }
                     />
                   </View>
                 </View>

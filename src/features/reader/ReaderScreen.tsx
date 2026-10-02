@@ -53,6 +53,20 @@ function firstRouteParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
+/**
+ * 色温 → tint 遮罩。-1（冷）~ 0（标准）~ +1（暖）。
+ * 暖用琥珀色、冷用蓝色，透明度随强度线性放大；0 返回 null（不渲染遮罩）。
+ * 暖上限 0.28、冷上限 0.18：蓝色在白色纸面上显色更强，给低一点。
+ */
+function colorTempOverlay(colorTemp: number): { backgroundColor: string } | null {
+  if (colorTemp === 0) return null;
+  const strength = Math.min(1, Math.abs(colorTemp));
+  if (colorTemp > 0) {
+    return { backgroundColor: `rgba(255, 170, 60, ${(strength * 0.28).toFixed(3)})` };
+  }
+  return { backgroundColor: `rgba(90, 160, 255, ${(strength * 0.18).toFixed(3)})` };
+}
+
 // ReaderScreen 巨型组件拆分：collectTocPageTargets 已移至 useReaderNavigation。
 
 function ReaderGlassButton({
@@ -390,6 +404,8 @@ export default function ReaderScreen() {
   const insets = useSafeAreaInsets();
   const controller = useReaderController(bookId);
   const readerAppearance = controller.appliedReaderSettings.appearance;
+  // 色温遮罩：-1（冷）~ 0（标准）~ +1（暖）。0 时不渲染遮罩。
+  const colorTempOverlayStyle = colorTempOverlay(controller.appliedReaderSettings.colorTemp);
   const readerColors = readerAppearance === 'dark'
     ? { background: '#151517', primary: '#f2f2f7', secondary: '#aeaeb2', glassFallback: 'rgba(44,44,46,0.88)', link: '#64d2ff' }
     : { background: tokens.colors.background, primary: '#171719', secondary: '#8b8b90', glassFallback: 'rgba(250,250,252,0.88)', link: '#007aff' };
@@ -768,6 +784,12 @@ export default function ReaderScreen() {
         />
       ) : null}
 
+      {/* 冷暖色调：WebView 内容上方的 tint 遮罩（内容之下、chrome 之下）。
+          pointerEvents="none" 不挡翻页/点按；只改颜色不触发布局。 */}
+      {colorTempOverlayStyle ? (
+        <View pointerEvents="none" style={[styles.colorTempOverlay, colorTempOverlayStyle]} />
+      ) : null}
+
       {controller.state.kind === 'loading' ? (
         <View style={[styles.centerState, { backgroundColor: openingBackground }]} />
       ) : null}
@@ -956,6 +978,8 @@ const styles = StyleSheet.create({
   domReader: { flex: 1, backgroundColor: tokens.colors.background },
   centerState: { alignItems: 'center', backgroundColor: tokens.colors.background, flex: 1, gap: 12, justifyContent: 'center', paddingHorizontal: 32 },
   readerOpeningOverlay: { alignItems: 'center', backgroundColor: tokens.colors.background, bottom: 0, justifyContent: 'center', left: 0, position: 'absolute', right: 0, top: 0 },
+  // 冷暖色调遮罩：盖满阅读区，backgroundColor 由 colorTempOverlay 计算。
+  colorTempOverlay: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
   readerLaunchTransition: { alignItems: 'center', bottom: 0, justifyContent: 'center', left: 0, position: 'absolute', right: 0, top: 0, zIndex: 100 },
   readerLaunchCover: {
     borderCurve: 'continuous',

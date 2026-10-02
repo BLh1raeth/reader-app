@@ -43,6 +43,10 @@ export const zhHans = {
     lineHeight: '行间距',
     letterSpacing: '字符间距',
     pageMargin: '页边空白',
+    colorTemp: '冷暖色调',
+    colorTempNeutral: '标准',
+    colorTempWarm: '暖',
+    colorTempCool: '冷',
     reset: '恢复默认设置',
   },
   navigation: {

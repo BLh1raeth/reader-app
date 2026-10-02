@@ -10,6 +10,8 @@ export type ReaderSettings = {
   letterSpacing: number;
   /** foliate paginator gap percentage; controls horizontal reading margins. */
   pageMargin: number;
+  /** 色温：-1（最冷）~ 0（标准）~ +1（最暖）。只影响 tint 遮罩，不触发布局。 */
+  colorTemp: number;
 };
 
 export const DEFAULT_READER_SETTINGS: ReaderSettings = {
@@ -19,6 +21,7 @@ export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   lineHeight: 1.72,
   letterSpacing: 0.01,
   pageMargin: 7,
+  colorTemp: 0,
 };
 
 export const READER_SETTINGS_LIMITS = {
@@ -26,6 +29,7 @@ export const READER_SETTINGS_LIMITS = {
   lineHeight: { min: 1.48, max: 2.04 },
   letterSpacing: { min: -0.02, max: 0.08 },
   pageMargin: { min: 4, max: 12 },
+  colorTemp: { min: -1, max: 1 },
 } as const;
 
 function clampStep(value: number, min: number, max: number, step: number) {
@@ -51,6 +55,9 @@ export function normalizeReaderSettings(value: Partial<ReaderSettings> | null | 
   const pageMargin = typeof value?.pageMargin === 'number' && Number.isFinite(value.pageMargin)
     ? value.pageMargin
     : DEFAULT_READER_SETTINGS.pageMargin;
+  const colorTemp = typeof value?.colorTemp === 'number' && Number.isFinite(value.colorTemp)
+    ? value.colorTemp
+    : DEFAULT_READER_SETTINGS.colorTemp;
   return {
     fontSize: clampStep(fontSize, READER_SETTINGS_LIMITS.fontSize.min, READER_SETTINGS_LIMITS.fontSize.max, READER_SETTINGS_LIMITS.fontSize.step),
     // Cross-dissolve is the only supported page-turn treatment for now.
@@ -60,6 +67,7 @@ export function normalizeReaderSettings(value: Partial<ReaderSettings> | null | 
     lineHeight: clampPrecision(lineHeight, READER_SETTINGS_LIMITS.lineHeight.min, READER_SETTINGS_LIMITS.lineHeight.max, 3),
     letterSpacing: clampPrecision(letterSpacing, READER_SETTINGS_LIMITS.letterSpacing.min, READER_SETTINGS_LIMITS.letterSpacing.max, 3),
     pageMargin: clampPrecision(pageMargin, READER_SETTINGS_LIMITS.pageMargin.min, READER_SETTINGS_LIMITS.pageMargin.max, 2),
+    colorTemp: clampPrecision(colorTemp, READER_SETTINGS_LIMITS.colorTemp.min, READER_SETTINGS_LIMITS.colorTemp.max, 2),
   };
 }
 
@@ -73,5 +81,6 @@ export function readerLayoutSettingsEqual(left: ReaderSettings, right: ReaderSet
 export function readerSettingsEqual(left: ReaderSettings, right: ReaderSettings) {
   return readerLayoutSettingsEqual(left, right)
     && left.pageTransition === right.pageTransition
-    && left.appearance === right.appearance;
+    && left.appearance === right.appearance
+    && left.colorTemp === right.colorTemp;
 }
