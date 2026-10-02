@@ -35,6 +35,19 @@ export function formatReadingSpeed(charsPerMinute: number | null): string {
 }
 
 /**
+ * 累计阅读分钟数格式化（底部大卡片第一列）。
+ * - <10000 分钟 → N 分钟
+ * - >=10000 分钟 → X.X万分钟（去 .0；>=100万分钟时取整）
+ */
+export function formatTotalMinutes(minutes: number): string {
+  const total = Math.max(0, Math.round(minutes));
+  if (total < 10000) return `${total}${uiText.data.minuteUnit}`;
+  const wan = total / 10000;
+  const text = wan >= 100 ? String(Math.round(wan)) : wan.toFixed(1).replace(/\.0$/, '');
+  return `${text}万${uiText.data.minuteUnit}`;
+}
+
+/**
  * dayKey（YYYY-MM-DD）→ 周几单字标签（一…日），用于图表日期刻度。
  * 用本地日历解析，不涉及时区转换；解析失败返回空串。
  */

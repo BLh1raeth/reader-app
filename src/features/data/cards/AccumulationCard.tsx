@@ -7,7 +7,7 @@ import { uiText } from '../../../localization';
 import type { DailyReadingStats } from '../reading-analytics-types';
 import { DataCard } from '../DataCard';
 import { useDataTheme } from '../dataTheme';
-import { formatDuration, weekdayName, weekdayShortName } from '../analytics-format';
+import { formatDuration, formatTotalMinutes, weekdayName, weekdayShortName } from '../analytics-format';
 
 type RhythmCardProps = {
   /** 最近 7 个 local calendar day（含今天），最旧 → 今天；null = 未加载。 */
@@ -60,7 +60,7 @@ export function AccumulationCard({
   const theme = useDataTheme();
   const list = days ?? [];
 
-  const totalMinutesText = totalActiveSeconds === null ? '—' : `${Math.round(totalActiveSeconds / 60)}${uiText.data.minuteUnit}`;
+  const totalMinutesText = totalActiveSeconds === null ? '—' : formatTotalMinutes(totalActiveSeconds / 60);
   const daysText = totalDays === null ? '—' : `${totalDays}${uiText.data.dayUnit}`;
   const excerptText = excerptCount === null ? '—' : `${excerptCount}${uiText.data.excerptUnit}`;
 
