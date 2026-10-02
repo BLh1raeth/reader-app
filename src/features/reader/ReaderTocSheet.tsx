@@ -189,13 +189,15 @@ export function ReaderTocSheet({
     setModeSwitching(false);
   }, [isPresented, modeProgress]);
 
-  // 简单版：打开时滚到当前章节，不居中。不需要量高度，也就没有空白等待。
+  // 钳制居中：打开时把当前章节滚到列表可视区中央（viewPosition 0.5）。
+  // 书中部章节精确居中；开头/结尾章节滚不到那么远时自然停在顶部/底部，
+  // 不加 padding、不产生空白等待。getItemLayout 已固定行高，无需量高度。
   const scrollToCurrent = useCallback(() => {
     if (!isPresented || mode !== 'toc' || currentIndex < 0 || didAutoScrollRef.current) return;
     const list = listRef.current;
     if (!list) return;
     didAutoScrollRef.current = true;
-    list.scrollToIndex({ animated: false, index: currentIndex });
+    list.scrollToIndex({ animated: false, index: currentIndex, viewPosition: 0.5 });
   }, [currentIndex, isPresented, mode]);
 
   useEffect(() => {
