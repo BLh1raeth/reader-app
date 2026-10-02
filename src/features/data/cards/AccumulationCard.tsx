@@ -16,8 +16,8 @@ type RhythmCardProps = {
   todayKey: string;
   /** summary.last7DaysActiveSeconds（今天 + 前 6 天）；null = 未加载。 */
   last7DaysActiveSeconds: number | null;
-  /** summary.currentStreakDays；null = 未加载。 */
-  streakDays: number | null;
+  /** summary.totalActiveSeconds（全书库累计有效阅读秒数）；null = 未加载。 */
+  totalActiveSeconds: number | null;
   /** summary.totalReadingDays；null = 未加载。 */
   totalDays: number | null;
   /** summary.totalExcerptCount；null = 未加载。 */
@@ -43,7 +43,7 @@ const TREND_MIN_VISIBLE_BAR_HEIGHT = 8;
  * “最近 7 天累计阅读” + formatDuration(summary.last7DaysActiveSeconds)；
  * 7 日阅读时长趋势柱状图（最旧在左、今天在右，圆润胶囊柱）；
  * 轻量分割线；
- * 三列摘要：连续阅读 / 阅读天数 / 累计摘录，列之间很淡的竖分隔线。
+ * 三列摘要：累计阅读 / 阅读天数 / 累计摘录，列之间很淡的竖分隔线。
  *
  * 所有数字来自 Analytics 实时数据，不写死。
  * 只消费 Analytics 已有输出，不重算口径、不碰统计逻辑。
@@ -52,7 +52,7 @@ export function AccumulationCard({
   days,
   todayKey,
   last7DaysActiveSeconds,
-  streakDays,
+  totalActiveSeconds,
   totalDays,
   excerptCount,
   onPress,
@@ -60,7 +60,7 @@ export function AccumulationCard({
   const theme = useDataTheme();
   const list = days ?? [];
 
-  const streakText = streakDays === null ? '—' : `${streakDays}${uiText.data.dayUnit}`;
+  const totalMinutesText = totalActiveSeconds === null ? '—' : `${Math.round(totalActiveSeconds / 60)}${uiText.data.minuteUnit}`;
   const daysText = totalDays === null ? '—' : `${totalDays}${uiText.data.dayUnit}`;
   const excerptText = excerptCount === null ? '—' : `${excerptCount}${uiText.data.excerptUnit}`;
 
@@ -105,9 +105,9 @@ export function AccumulationCard({
 
   const columns = [
     {
-      label: uiText.data.currentStreak,
-      value: streakText,
-      hint: uiText.data.currentHint,
+      label: uiText.data.totalReadingMinutes,
+      value: totalMinutesText,
+      hint: uiText.data.totalHint,
     },
     {
       label: uiText.data.totalReadingDays,
@@ -126,7 +126,7 @@ export function AccumulationCard({
       accessible
       onPress={onPress}
       accessibilityLabel={`${uiText.data.readingRhythm}：` +
-        `${uiText.data.currentStreak}${streakText}，${uiText.data.totalReadingDays}${daysText}，${uiText.data.totalExcerptLabel}${excerptText}`}
+        `${uiText.data.totalReadingMinutes}${totalMinutesText}，${uiText.data.totalReadingDays}${daysText}，${uiText.data.totalExcerptLabel}${excerptText}`}
     >
       <View style={styles.headerRow}>
         <View style={styles.titleLeft}>

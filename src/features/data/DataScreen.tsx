@@ -237,7 +237,7 @@ export default function DataScreen() {
               days={last7Days}
               todayKey={todayKey}
               last7DaysActiveSeconds={summary?.last7DaysActiveSeconds ?? null}
-              streakDays={summary?.currentStreakDays ?? null}
+              totalActiveSeconds={summary?.totalActiveSeconds ?? null}
               totalDays={summary?.totalReadingDays ?? null}
               excerptCount={summary?.totalExcerptCount ?? null}
               onPress={() => router.push('/data/metric/rhythm')}

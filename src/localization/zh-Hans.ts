@@ -117,6 +117,7 @@ export const zhHans = {
     readingSpeed: '阅读速度',
     currentStreak: '连续阅读',
     totalReadingDays: '阅读天数',
+    totalReadingMinutes: '累计阅读',
     excerpts: '摘录',
     readingRhythm: '阅读节奏',
     past7Days: '过去 7 天',
@@ -146,7 +147,7 @@ export const zhHans = {
     aboutMetric: (title: string) => `关于${title}`,
     aboutReadingTime: '阅读时段按设备本地时间归入每个小时，仅统计有效阅读会话。点击每日柱子可查看当天详情。',
     aboutReadingSpeed: '阅读速度以有效阅读的字数和时长计算。区间显示每天每分钟样本的第 10 至 90 百分位；点击某天可查看详情。',
-    aboutReadingRhythm: '最近 7 天包含今天和之前 6 个本地日历日。连续阅读、累计阅读天数和摘录总数来自当前书库的阅读记录。',
+    aboutReadingRhythm: '最近 7 天包含今天和之前 6 个本地日历日。累计阅读时长、累计阅读天数和摘录总数来自当前书库的阅读记录。',
     /** 每日详情页：日期切换。 */
     prevDay: '前一天',
     nextDay: '后一天',
