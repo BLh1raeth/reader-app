@@ -32,15 +32,21 @@ function directoryOf(path: string) {
   return slash < 0 ? '' : path.slice(0, slash + 1);
 }
 
-function resolveZipPath(basePath: string, href: string) {
-  const segments = `${directoryOf(basePath)}${href}`.split('/');
+function resolveZipPath(basePath: string, href: string, includeFragment = true) {
+  const suffixAt = href.search(/[?#]/);
+  const pathname = suffixAt < 0 ? href : href.slice(0, suffixAt);
+  const suffix = suffixAt < 0 ? '' : href.slice(suffixAt);
+  let decoded: string;
+  try { decoded = decodeURI(pathname.replace(/%2c/gi, ',')); }
+  catch { throw new Error('EPUB 资源路径编码无效。'); }
+  const segments = `${directoryOf(basePath)}${decoded}`.split('/');
   const resolved: string[] = [];
   for (const segment of segments) {
     if (!segment || segment === '.') continue;
     if (segment === '..') resolved.pop();
     else resolved.push(segment);
   }
-  return resolved.join('/');
+  return resolved.join('/') + (includeFragment ? suffix : '');
 }
 
 function fileExtension(path: string) {
@@ -97,7 +103,8 @@ export function parseEpub(bytes: Uint8Array): ParsedEpub {
 
   const container = parser.parse(strFromU8(containerBytes)) as { container?: { rootfiles?: { rootfile?: { '@_full-path'?: string } | Array<{ '@_full-path'?: string }> } } };
   const rootfile = asArray(container.container?.rootfiles?.rootfile)[0];
-  const opfPath = rootfile?.['@_full-path'];
+  const rootPath = rootfile?.['@_full-path'];
+  const opfPath = rootPath ? resolveZipPath('', rootPath, false) : null;
   if (!opfPath || !readEntry(opfPath)) throw new Error('EPUB 缺少 package 文档。');
 
   const packageDocument = parser.parse(strFromU8(readEntry(opfPath)!)) as {
@@ -120,7 +127,7 @@ export function parseEpub(bytes: Uint8Array): ParsedEpub {
   const spine = asArray(epubPackage.spine?.itemref);
   if (!spine.length || spine.some((reference) => {
     const item = manifestItems.find((candidate) => candidate['@_id'] === reference['@_idref']);
-    return !item?.['@_href'] || !entries.has(resolveZipPath(opfPath, item['@_href']));
+    return !item?.['@_href'] || !entries.has(resolveZipPath(opfPath, item['@_href'], false));
   })) throw new Error('EPUB 缺少有效的正文资源。');
 
   const coverMetadata = asArray(metadata.meta).find((item) => {
@@ -129,13 +136,13 @@ export function parseEpub(bytes: Uint8Array): ParsedEpub {
   }) as { '@_content'?: string } | undefined;
   const coverItem = manifestItems.find((item) => item['@_id'] === coverMetadata?.['@_content'])
     ?? manifestItems.find((item) => item['@_properties']?.split(/\s+/).includes('cover-image'));
-  const coverPath = coverItem?.['@_href'] ? resolveZipPath(opfPath, coverItem['@_href']) : null;
+  const coverPath = coverItem?.['@_href'] ? resolveZipPath(opfPath, coverItem['@_href'], false) : null;
   const coverBytes = coverPath ? readEntry(coverPath) : null;
 
   const tocItem = manifestItems.find((item) => item['@_properties']?.split(/\s+/).includes('nav'))
     ?? manifestItems.find((item) => item['@_id'] === epubPackage.spine?.['@_toc'])
     ?? manifestItems.find((item) => item['@_media-type'] === 'application/x-dtbncx+xml');
-  const tocPath = tocItem?.['@_href'] ? resolveZipPath(opfPath, tocItem['@_href']) : null;
+  const tocPath = tocItem?.['@_href'] ? resolveZipPath(opfPath, tocItem['@_href'], false) : null;
   const toc = tocPath && readEntry(tocPath) ? parseToc(strFromU8(readEntry(tocPath)!), tocPath) : [];
 
   return {

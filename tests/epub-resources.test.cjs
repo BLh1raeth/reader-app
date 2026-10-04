@@ -54,3 +54,17 @@ test('incremental file hash agrees with SHA-256 across chunk boundaries and yiel
   assert.equal(yielded, true);
   assert.equal(await hashEpub(new Uint8Array()), crypto.createHash('sha256').digest('hex'));
 });
+
+test('valid URI-encoded package, chapter and cover paths resolve without treating fragments as filenames', () => {
+  const { parseEpub } = load(path.join(__dirname, '../src/features/library/epub-parser.ts'));
+  const files = fixture();
+  files['META-INF/container.xml'] = strToU8('<container><rootfiles><rootfile full-path="OEBPS/book%20name.opf"/></rootfiles></container>');
+  files['OEBPS/book name.opf'] = strToU8(new TextDecoder().decode(files['OEBPS/book.opf'])
+    .replace('href="chapter.xhtml"', 'href="chapter%20one.xhtml#first"')
+    .replace('</manifest>', '<item id="cover" href="cover%20image.png" properties="cover-image"/></manifest>'));
+  delete files['OEBPS/book.opf'];
+  files['OEBPS/chapter one.xhtml'] = files['OEBPS/chapter.xhtml']; delete files['OEBPS/chapter.xhtml'];
+  files['OEBPS/cover image.png'] = Uint8Array.of(1, 2, 3);
+  const parsed = parseEpub(zipSync(files));
+  assert.equal(parsed.title, '测试'); assert.deepEqual(parsed.cover.bytes, Uint8Array.of(1, 2, 3));
+});
