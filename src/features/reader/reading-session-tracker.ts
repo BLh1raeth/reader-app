@@ -29,7 +29,7 @@ import { toLocalDayKeyFromMs } from '../../shared/time/local-day';
 export const READING_SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 export const READING_SESSION_CHECKPOINT_MS = 30 * 1000;
 export const READING_SESSION_MEASURE_TIMEOUT_MS = 10 * 1000;
-/** Fixed 1-minute speed-sample window: chars read in the window = chars/min. */
+/** Minimum wall-clock sampling interval; values are normalized by eligible time. */
 export const READING_SPEED_SAMPLE_MS = 60 * 1000;
 
 export type ReadingSessionContext = {
@@ -51,6 +51,7 @@ export type ReadingSessionTrackerDeps = {
    * never blocks the queue.
    */
   requestTextMeasure: (fromCfi: string, toCfi: string) => Promise<ReaderTextMeasureResult>;
+  onStoreError?: (operation: string, error: unknown) => void;
 };
 
 type ActiveReadingSession = {
@@ -68,6 +69,7 @@ type ActiveReadingSession = {
   highWaterCfi: string | null;
   /** Bumped on every segment rebase; drops stale queued measurements. */
   measureGeneration: number;
+  pendingForwardCfis: Set<string>;
 };
 
 function nextLocalMidnightMs(afterMs: number): number {
@@ -91,12 +93,13 @@ export class ReadingSessionTracker {
 
   private active: ActiveReadingSession | null = null;
   private measureQueue: Promise<void> = Promise.resolve();
+  private storeQueue: Promise<void> = Promise.resolve();
   /**
    * Speed sampler baseline: last 60s-window boundary (ms) and the session's
    * cumulative forwardCharacters then. Reset on every session close; a
    * partial trailing window is discarded, never prorated.
    */
-  private speedSampleBaseline: { atMs: number; chars: number } | null = null;
+  private speedSampleBaseline: { atMs: number; activeMs: number; chars: number } | null = null;
 
   /** Last raw location, whatever its restore state (used for endCfi). */
   private lastLocationCfi: string | null = null;
@@ -119,6 +122,10 @@ export class ReadingSessionTracker {
     Object.assign(this.ctx, patch);
     if (this.ctx.bookId !== previousBookId) {
       this.closeSession('book-change', nowMs);
+      this.lastStableCfi = null;
+      this.lastStableSpineIndex = null;
+      this.lastLocationCfi = null;
+      this.lastLocationSpineIndex = null;
     }
     // Becoming (in)eligible mid-session needs no extra work: account() above
     // already advanced lastAccountingAtMs to now, so no gap is backfilled.
@@ -167,9 +174,8 @@ export class ReadingSessionTracker {
   }
 
   /**
-   * 1-minute speed sampler. At each 60s boundary, stores how many forward
-   * characters were read since the previous boundary — that count IS the
-   * speed (chars/min), so no per-window seconds bookkeeping is needed.
+   * Sample at least 60s apart and normalize by actual eligible milliseconds.
+   * Timer delays and time spent in blocking sheets cannot inflate the rate.
    * Windows with 0 chars (idle) are omitted, never stored as 0.
    */
   private maybeSampleSpeed(nowMs: number): void {
@@ -180,26 +186,24 @@ export class ReadingSessionTracker {
     }
     const baseline = this.speedSampleBaseline;
     if (!baseline) {
-      this.speedSampleBaseline = { atMs: nowMs, chars: session.forwardCharacters };
+      this.speedSampleBaseline = { atMs: nowMs, activeMs: session.activeMs, chars: session.forwardCharacters };
       return;
     }
     if (nowMs - baseline.atMs < READING_SPEED_SAMPLE_MS) return;
     const chars = session.forwardCharacters - baseline.chars;
     // Advance the baseline even when nothing was read: the next window
     // starts now, not "when reading resumes".
-    this.speedSampleBaseline = { atMs: nowMs, chars: session.forwardCharacters };
-    if (chars <= 0) return;
+    this.speedSampleBaseline = { atMs: nowMs, activeMs: session.activeMs, chars: session.forwardCharacters };
+    const activeMs = session.activeMs - baseline.activeMs;
+    if (chars <= 0 || activeMs <= 0) return;
+    const charsPerMinute = Math.round(chars * READING_SPEED_SAMPLE_MS / activeMs);
+    if (charsPerMinute <= 0) return;
     // Sessions never cross a local day (midnight split in account()), so
     // the session's start day is the sample's day.
     const localDayKey = toLocalDayKeyFromMs(session.startedAtMs);
-    void this.deps.store
-      .createSpeedSample({ localDayKey, sampledAt: toIso(nowMs), chars })
-      .catch((error: unknown) => {
-        this.deps.devLog('[READING_SESSION_STORE_FAILED]', {
-          op: 'speed-sample',
-          message: String(error),
-        });
-      });
+    this.persist('speed-sample', () => this.deps.store.createSpeedSample({
+      bookId: session.bookId, localDayKey, sampledAt: toIso(nowMs), chars: charsPerMinute,
+    }));
   }
 
   // ---------------------------------------------------------------- activity
@@ -214,6 +218,7 @@ export class ReadingSessionTracker {
    * but contributes 0 characters.
    */
   markActivity(nowMs: number = this.deps.now()): void {
+    this.account(nowMs);
     const session = this.active;
     if (session) {
       session.lastInteractionAtMs = nowMs;
@@ -228,6 +233,7 @@ export class ReadingSessionTracker {
 
   handleLocation(location: ReaderLocation, restoreState: ReaderRestoreState): void {
     const nowMs = this.deps.now();
+    this.account(nowMs);
     if (location.cfi) {
       this.lastLocationCfi = location.cfi;
       this.lastLocationSpineIndex = typeof location.spineIndex === 'number' ? location.spineIndex : null;
@@ -300,10 +306,11 @@ export class ReadingSessionTracker {
       lastAccountingAtMs: nowMs,
       highWaterCfi: this.lastStableCfi,
       measureGeneration: 0,
+      pendingForwardCfis: new Set(),
     };
     this.active = session;
     this.measureQueue = Promise.resolve();
-    this.speedSampleBaseline = { atMs: nowMs, chars: 0 };
+    this.speedSampleBaseline = { atMs: nowMs, activeMs: 0, chars: 0 };
     this.deps.devLog('[READING_SESSION_START]', {
       bookId,
       sessionId: session.id,
@@ -324,9 +331,7 @@ export class ReadingSessionTracker {
       lastCheckpointAt: toIso(session.lastCheckpointAtMs),
       closeReason: null,
     };
-    void this.deps.store.createReadingSession(payload).catch((error: unknown) => {
-      this.deps.devLog('[READING_SESSION_STORE_FAILED]', { op: 'create', message: String(error) });
-    });
+    this.persist('create', () => this.deps.store.createReadingSession(payload));
   }
 
   /**
@@ -395,9 +400,7 @@ export class ReadingSessionTracker {
       lastInteractionAt: toIso(session.lastInteractionAtMs),
       lastCheckpointAt: toIso(session.lastCheckpointAtMs),
     };
-    void this.deps.store.updateReadingSession(session.id, patch).catch((error: unknown) => {
-      this.deps.devLog('[READING_SESSION_STORE_FAILED]', { op: 'update', message: String(error) });
-    });
+    this.persist('update', () => this.deps.store.updateReadingSession(session.id, patch));
   }
 
   private closeSession(reason: ReadingSessionCloseReason, endedAtMs: number): void {
@@ -407,8 +410,9 @@ export class ReadingSessionTracker {
     // Drop the sampler baseline: the trailing partial window is discarded,
     // never prorated into a sample.
     this.speedSampleBaseline = null;
-    // Invalidate any queued measurements from the old segment.
-    session.measureGeneration += 1;
+    // Let already accepted page turns settle before writing the final count.
+    // Each measurement is bounded by the bridge timeout and belongs to this
+    // session object, even if a new session has since started.
     this.deps.devLog('[READING_SESSION_CLOSE]', {
       sessionId: session.id,
       activeSeconds: Math.round((session.activeMs / 1000) * 10) / 10,
@@ -423,8 +427,28 @@ export class ReadingSessionTracker {
       forwardCharacters: session.forwardCharacters,
       closeReason: reason,
     };
-    void this.deps.store.closeReadingSession(session.id, close).catch((error: unknown) => {
-      this.deps.devLog('[READING_SESSION_STORE_FAILED]', { op: 'close', message: String(error) });
+    void this.measureQueue.then(() => {
+      this.persist('close', () => this.deps.store.closeReadingSession(session.id, {
+        ...close, forwardCharacters: session.forwardCharacters,
+      }));
+    });
+  }
+
+  private persist(operation: string, write: () => Promise<unknown>): void {
+    this.storeQueue = this.storeQueue.then(write).then(() => undefined).catch((error: unknown) => {
+      this.deps.devLog('[READING_SESSION_STORE_FAILED]', { op: operation, message: String(error) });
+      this.deps.onStoreError?.(operation, error);
+    });
+  }
+
+  private measure(fromCfi: string, toCfi: string): Promise<ReaderTextMeasureResult> {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve({ id: '', ok: false, error: 'text-measure-timeout' }),
+        READING_SESSION_MEASURE_TIMEOUT_MS);
+      void Promise.resolve().then(() => this.deps.requestTextMeasure(fromCfi, toCfi)).then(
+        (result) => { clearTimeout(timeout); resolve(result); },
+        (error: unknown) => { clearTimeout(timeout); resolve({ id: '', ok: false, error: String(error) }); },
+      );
     });
   }
 
@@ -432,9 +456,10 @@ export class ReadingSessionTracker {
     // A relocate that reports the current high-water CFI carries no new
     // information; ignoring it keeps a queued forward measurement alive
     // across foliate's settle duplicates.
-    if (!cfi || cfi === session.highWaterCfi) return;
+    if (!cfi || cfi === session.highWaterCfi || session.pendingForwardCfis.has(cfi)) return;
     session.highWaterCfi = cfi;
     session.measureGeneration += 1;
+    session.pendingForwardCfis.clear();
   }
 
   /**
@@ -444,24 +469,23 @@ export class ReadingSessionTracker {
    * A→B→C can never settle out of order.
    */
   private handleReadingForward(session: ActiveReadingSession, cfi: string): void {
-    if (session.highWaterCfi === cfi) return;
-    const fromCfi = session.highWaterCfi ?? session.startCfi ?? cfi;
-    // Advance the mark synchronously; the async measurement only settles the
-    // character count. A failed measurement adds 0 but keeps the mark —
-    // never re-count the same span twice.
-    session.highWaterCfi = cfi;
     const generation = session.measureGeneration;
+    session.pendingForwardCfis.add(cfi);
     this.measureQueue = this.measureQueue.then(async () => {
-      if (this.active !== session || generation !== session.measureGeneration) return;
+      if (generation !== session.measureGeneration || session.highWaterCfi === cfi) return;
+      // Evaluate inside the queue: the preceding measurement owns the latest
+      // confirmed high-water mark. Backward/same results never lower it.
+      const fromCfi = session.highWaterCfi ?? session.startCfi ?? cfi;
       let result: ReaderTextMeasureResult;
       try {
-        result = await this.deps.requestTextMeasure(fromCfi, cfi);
+        result = await this.measure(fromCfi, cfi);
       } catch (error) {
         result = { id: '', ok: false, error: String(error) };
       }
-      if (this.active !== session || generation !== session.measureGeneration) return;
-      if (result.ok && result.direction === 'forward' && result.characters > 0) {
-        session.forwardCharacters += result.characters;
+      if (generation !== session.measureGeneration) return;
+      if (result.ok && result.direction === 'forward') {
+        session.highWaterCfi = cfi;
+        session.forwardCharacters += Math.max(0, result.characters);
         this.deps.devLog('[READING_FORWARD]', {
           fromSection: result.fromSectionIndex,
           toSection: result.toSectionIndex,
@@ -476,6 +500,8 @@ export class ReadingSessionTracker {
         });
       }
       // direction 'same'/'backward' (already at/past high-water): +0.
+    }).finally(() => {
+      if (generation === session.measureGeneration) session.pendingForwardCfis.delete(cfi);
     });
   }
 }

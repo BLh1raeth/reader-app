@@ -15,6 +15,9 @@ export type Book = {
   language: string | null;
   publisher: string | null;
   addedAt: string;
+  /** Removed from the library, while annotations and reading history survive. */
+  archivedAt?: string | null;
+  tags?: string[];
   lastOpenedAt: string | null;
   readingStatus: ReadingStatus;
   /** Canonical ReadingProgress fraction joined by BookRepository; never write this to books. */

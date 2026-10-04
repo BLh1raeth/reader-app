@@ -1,5 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { reportOperationError } from '../../../shared/operation-errors';
 import { excerptRepository } from '../excerpt-repository';
 import { highlightRepository, type ReaderHighlightSnapshotItem } from '../highlight-repository';
 import type {
@@ -56,6 +57,8 @@ export function useReaderSelection({
   const highlightSavingRef = useRef(false);
   const selectionCommandSequenceRef = useRef(0);
   const excerptVerificationSequenceRef = useRef(0);
+  const currentBookIdRef = useRef(bookId);
+  currentBookIdRef.current = bookId;
 
   // 换书时重置选中状态（原 ReaderScreen 内 bookId 重置 effect 的一部分）。
   useEffect(() => {
@@ -63,6 +66,7 @@ export function useReaderSelection({
     excerptActionPayloadRef.current = null;
     excerptActionPressingRef.current = false;
     excerptSavingRef.current = false;
+    highlightSavingRef.current = false;
     setActiveSelection(null);
     setExcerptSaving(false);
     setSelectionCommand(null);
@@ -151,6 +155,7 @@ export function useReaderSelection({
       // This proves the SQLite round trip before selection is cleared.
       const persisted = await excerptRepository.getExcerptById(result.excerpt.id);
       if (!persisted) throw new Error('摘录保存后无法从数据库重新读取。');
+      if (currentBookIdRef.current !== payload.bookId) return;
       setExcerptVerificationRequest({
         id: ++excerptVerificationSequenceRef.current,
         items: [{ excerptId: persisted.id, text: persisted.text, rangeCfi: persisted.rangeCfi }],
@@ -162,11 +167,15 @@ export function useReaderSelection({
       setSelectionCommand({ id: ++selectionCommandSequenceRef.current, type: 'clear' });
     } catch (error) {
       if (__DEV__) console.error('[EXCERPT_CREATE_FAILED]', error);
+      if (currentBookIdRef.current !== payload.bookId) return;
+      reportOperationError(error, '摘录保存失败', '无法确认摘录已保存，请保留选区并重试。');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
     } finally {
-      excerptSavingRef.current = false;
-      excerptActionPressingRef.current = false;
-      setExcerptSaving(false);
+      if (currentBookIdRef.current === payload.bookId) {
+        excerptSavingRef.current = false;
+        excerptActionPressingRef.current = false;
+        setExcerptSaving(false);
+      }
     }
   }, [markReaderActivity]);
 
@@ -200,6 +209,7 @@ export function useReaderSelection({
         sectionIndex: payload.sectionIndex,
         color: 'blue',
       });
+      if (currentBookIdRef.current !== payload.bookId) return;
       // Paint even on a dedup hit: the adapter registry may have been rebuilt
       // since, and overlayer paint is idempotent for the same range CFI.
       const snapshotItem = { rangeCfi: result.highlight.rangeCfi, sectionIndex: result.highlight.sectionIndex };
@@ -220,9 +230,11 @@ export function useReaderSelection({
       setActiveSelection(null);
     } catch (error) {
       if (__DEV__) console.error('[HIGHLIGHT_CREATE_FAILED]', error);
+      if (currentBookIdRef.current !== payload.bookId) return;
+      reportOperationError(error, '高亮保存失败', '无法确认高亮已保存，请重试。');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
     } finally {
-      highlightSavingRef.current = false;
+      if (currentBookIdRef.current === payload.bookId) highlightSavingRef.current = false;
     }
   }, [markReaderActivity]);
 
@@ -230,11 +242,18 @@ export function useReaderSelection({
   // highlight. Only the SQLite row and the RN-side snapshot remain.
   const handleHighlightDeleteRequest = useCallback((rangeCfi: string) => {
     if (!bookId) return;
-    setHighlightSnapshot((prev) => prev?.filter((item) => item.rangeCfi !== rangeCfi) ?? prev);
-    void highlightRepository.deleteHighlightByRange(bookId, rangeCfi).catch((error: unknown) => {
+    void highlightRepository.deleteHighlightByRange(bookId, rangeCfi).then(() => {
+      if (currentBookIdRef.current !== bookId) return;
+      setHighlightSnapshot((prev) => prev?.filter((item) => item.rangeCfi !== rangeCfi) ?? prev);
+    }).catch((error: unknown) => {
+      if (currentBookIdRef.current !== bookId) return;
+      const item = highlightSnapshot?.find((item) => item.rangeCfi === rangeCfi);
+      if (item) setSelectionCommand({ id: ++selectionCommandSequenceRef.current,
+        type: 'apply-highlight', rangeCfi, sectionIndex: item.sectionIndex });
+      reportOperationError(error, '删除高亮失败', '高亮已恢复，请重试。');
       if (__DEV__) console.error('[HIGHLIGHT_DELETE_FAILED]', error);
     });
-  }, [bookId]);
+  }, [bookId, highlightSnapshot]);
 
   const onNoteRequested = useCallback((payload: ReaderSelectionPayload) => {
     if (__DEV__) console.log('[ANNOTATION_ACTION]', JSON.stringify({ action: 'note', rangeCfi: payload.rangeCfi, textLength: payload.text.length }));

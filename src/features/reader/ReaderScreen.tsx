@@ -24,6 +24,7 @@ import type {
 import { markReaderOpen } from './reader-open-performance';
 import { READING_SESSION_MEASURE_TIMEOUT_MS } from './reading-session-tracker';
 import { useReadingSessionTracker } from './use-reading-session-tracker';
+import { ReaderJumpHistory } from './reader-jump-history';
 import { DEFAULT_READER_SETTINGS, READER_SETTINGS_LIMITS } from './reader-settings';
 import type { ReaderPageIndicatorMode } from './reader-settings';
 import FoliateReaderDom from './FoliateReaderDom';
@@ -123,12 +124,12 @@ function ReaderGlassButton({
   animationDuration: number;
   contentOpacityStyle: AnimatedStyle<ViewStyle>;
   glassVisible: boolean;
-  icon: 'xmark';
+  icon: 'xmark' | 'arrow.uturn.backward';
   interactive: boolean;
   colorScheme: 'light' | 'dark';
   tintColor: string;
   fallbackColor: string;
-  onLayout: () => void;
+  onLayout?: () => void;
   onPress: () => void;
 }) {
   const button = <Pressable accessibilityLabel={accessibilityLabel} accessibilityRole="button" disabled={!interactive} hitSlop={10} onPress={onPress} style={styles.glassButtonContent}><SymbolView name={icon} size={21} tintColor={tintColor} weight="semibold" /></Pressable>;
@@ -540,11 +541,21 @@ export default function ReaderScreen() {
   // consumes it. The tracker only reads; it never mutates location state.
   // 同时跟踪向前翻页间隔，供页码指示器的章节/全书剩余时间用（内存态）。
   const lastPageTurnAtRef = useRef<number | null>(null);
+  const jumpHistoryRef = useRef(new ReaderJumpHistory());
+  const pendingReturnRef = useRef<{ cfi: string; requestId: number } | null>(null);
+  const [canReturnToReading, setCanReturnToReading] = useState(false);
+  useEffect(() => {
+    jumpHistoryRef.current.reset();
+    pendingReturnRef.current = null;
+    setCanReturnToReading(false);
+  }, [bookId]);
   const pageTurnIntervalsRef = useRef<number[]>([]);
   const handleLocation = useCallback(async (
     location: ReaderLocation,
     restoreState: ReaderRestoreState,
   ) => {
+    jumpHistoryRef.current.observe(location, restoreState);
+    setCanReturnToReading(jumpHistoryRef.current.canReturn);
     if (location.navigationReason === 'reading-forward') {
       const nowMs = Date.now();
       const last = lastPageTurnAtRef.current;
@@ -636,6 +647,7 @@ export default function ReaderScreen() {
     openToc,
     selectTocItem,
     selectBookmark,
+    returnToCfi,
     handleTocSheetDismissed,
     handleBookmarkNavigationResult,
     handleTocNavigationResult,
@@ -648,6 +660,15 @@ export default function ReaderScreen() {
     setSearchSheetPresented,
     cancelSearchRequest,
   });
+  const handleHistoryNavigationResult = useCallback(async (requestId: number, succeeded: boolean, message: string | null) => {
+    const pending = pendingReturnRef.current;
+    if (pending?.requestId === requestId) {
+      if (succeeded) jumpHistoryRef.current.confirmReturn(pending.cfi);
+      pendingReturnRef.current = null;
+      setCanReturnToReading(jumpHistoryRef.current.canReturn);
+    }
+    await handleBookmarkNavigationResult(requestId, succeeded, message);
+  }, [handleBookmarkNavigationResult]);
   const {
     bookmarks,
     bookmarksLoaded,
@@ -871,7 +892,7 @@ export default function ReaderScreen() {
           onToc={handleToc}
           onTocNavigationResult={handleTocNavigationResult}
           onBookmarkSnapshot={handleBookmarkSnapshot}
-          onBookmarkNavigationResult={handleBookmarkNavigationResult}
+          onBookmarkNavigationResult={handleHistoryNavigationResult}
           onPageLocationUpdate={handlePageLocationUpdate}
           onSearchUpdate={handleSearchUpdate}
           onSearchNavigationResult={handleSearchNavigationResult}
@@ -978,6 +999,18 @@ export default function ReaderScreen() {
                   tintColor={readerColors.primary}
                 />
               </View>
+              {canReturnToReading ? <View style={{ position: 'absolute', right: 20, top: insets.top + READER_HEADER_SAFE_TOP_GAP }}>
+                <ReaderGlassButton accessibilityLabel="返回跳转前的阅读位置" animationDuration={glassAnimationDuration}
+                  contentOpacityStyle={chromeContentStyle} colorScheme={readerAppearance}
+                  fallbackColor={readerColors.glassFallback} glassVisible={glassVisible} icon="arrow.uturn.backward"
+                  interactive={chromeInteractive && !tocNavigating} onPress={() => {
+                    const cfi = jumpHistoryRef.current.peek();
+                    if (cfi && !pendingReturnRef.current) {
+                      const requestId = returnToCfi(cfi);
+                      if (requestId !== undefined) pendingReturnRef.current = { cfi, requestId };
+                    }
+                  }} tintColor={readerColors.primary} />
+              </View> : null}
             </>
           ) : null}
         </View>

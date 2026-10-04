@@ -41,6 +41,8 @@ import {
   type ExcerptFeedItem,
 } from './excerpt-feed-repository';
 import { NativeExcerptSearchBar } from '../../../modules/excerpt-search-bar';
+import { exportExcerpts, showExcerptActions } from './excerpt-actions';
+import { reportOperationError } from '../../shared/operation-errors';
 
 const GROUP_LABELS = {
   today: uiText.excerpts.today,
@@ -157,15 +159,15 @@ function ExpandableQuote({
 
   return (
     <Pressable
-      disabled={!canExpand}
-      onPress={() => onToggleExpand(item.id)}
+      onLongPress={() => showExcerptActions(item)}
+      onPress={() => { if (canExpand) onToggleExpand(item.id); }}
       // 无 pressed 视觉反馈：opacity 跳变会与正文切换叠在同一帧，
       // 在真机上被感知为文字闪烁。保持视觉极简。
-      accessible={canExpand}
+      accessible
       accessibilityRole={canExpand ? 'button' : undefined}
       accessibilityState={canExpand ? { expanded: isExpanded } : undefined}
-      accessibilityHint={canExpand ? (isExpanded ? '轻点收起摘录' : '轻点展开完整摘录') : undefined}
-      accessibilityLabel={canExpand ? item.quoteText : undefined}
+      accessibilityHint={canExpand ? '轻点展开或收起，长按复制、分享或管理摘录' : '长按复制、分享或管理摘录'}
+      accessibilityLabel={item.quoteText}
     >
       <Animated.View style={[styles.quoteClip, animatedStyle]}>
         <Text
@@ -200,7 +202,7 @@ function ExcerptFeedItemRow({
   isExpanded: boolean;
   /**
    * 基于真实 Text layout 的截断判定：
-   * true = 实际超过 2 行，可点击展开；false = 短摘录，完全不可交互；
+   * true = 实际超过 2 行，可点击展开；false = 短摘录，只支持长按管理；
    * undefined = 尚未完成不可见测量。
    */
   isTruncated: boolean | undefined;
@@ -235,10 +237,8 @@ function ExcerptFeedItemRow({
 
   return (
     <View
-      // 可展开时容器不再整体 accessible：让 quote 的 button 语义生效，
-      // 避免 VoiceOver 把内外合并成一个元素吞掉展开状态。
-      accessible={!isTruncated}
-      accessibilityLabel={isTruncated ? undefined : accessibilityLabelFor(item)}
+      // Quote and source each expose their own actions to VoiceOver.
+      accessible={false}
       style={[
         styles.item,
         isFirst && styles.itemFirst,
@@ -282,9 +282,10 @@ function ExcerptFeedItemRow({
             ? bookModeSourceAccessibilityLabel(item)
             : accessibilityLabelFor(item)
         }
-        accessibilityHint="轻点返回原文位置"
+        accessibilityHint="轻点返回原文位置，长按管理摘录"
         hitSlop={{ top: 8, bottom: 8 }}
         onPress={() => onSourcePress(item)}
+        onLongPress={() => showExcerptActions(item)}
         style={({ pressed }) => [styles.sourcePressable, pressed && styles.sourcePressed]}
       >
         <Text
@@ -369,14 +370,17 @@ export default function ExcerptsScreen() {
     setExpandedItemId((prev) => (prev === itemId ? null : itemId));
   }, []);
 
+  const [loadError, setLoadError] = useState(false);
   const loadFeed = useCallback(async () => {
     try {
       const items = await refreshExcerptFeed();
+      setLoadError(false);
       const ids = new Set(items.map((i) => i.id));
       // refresh 后展开项若已不存在（删书/删 annotation），清空悬空 id
       setExpandedItemId((prev) => (prev !== null && ids.has(prev) ? prev : null));
       // refreshExcerptFeed 将真正变化的快照通知页面；相同数据不重绘。
     } catch (error) {
+      setLoadError(true);
       if (__DEV__) console.error('[EXCERPT_FEED_LOAD_FAILED]', error);
       // 加载失败时保持旧数据，不闪成 empty state
     }
@@ -411,7 +415,13 @@ export default function ExcerptsScreen() {
   const sourceNavSeqRef = useRef(0);
   const handleSourcePress = useCallback(async (item: ExcerptFeedItem) => {
     const seq = ++sourceNavSeqRef.current;
-    const book = await bookRepository.getBookById(item.bookId).catch(() => null);
+    let book;
+    try {
+      book = await bookRepository.getBookById(item.bookId);
+    } catch (error) {
+      if (seq === sourceNavSeqRef.current) reportOperationError(error, '打开摘录原文失败');
+      return;
+    }
     if (seq !== sourceNavSeqRef.current) {
       if (__DEV__) console.log('[EXCERPT_NAVIGATE]', JSON.stringify({ bookId: item.bookId, itemKind: item.kind, aborted: 'superseded' }));
       return;
@@ -421,6 +431,10 @@ export default function ExcerptsScreen() {
       // 书已不存在：提示后刷新 Feed 让 stale item 消失，不进入空 Reader。
       Alert.alert(uiText.reader.cannotOpen, '这本书可能已被删除。');
       void loadFeed();
+      return;
+    }
+    if (book.archivedAt) {
+      Alert.alert(uiText.reader.cannotOpen, '本地文件已移除，请重新导入同一 EPUB。摘录和阅读进度仍然保留。');
       return;
     }
     // 畸形 CFI 不在 Excerpts 层拦截：照常发布请求并进 Reader，
@@ -494,6 +508,11 @@ export default function ExcerptsScreen() {
                 onTextChange={(event) => setQuery(event.nativeEvent.text)}
               />
             </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="导出当前显示的摘录"
+              onPress={() => { void exportExcerpts(visibleSections.flatMap((section) => section.data)); }}
+              style={{ padding: 8 }}>
+              <SymbolView name="square.and.arrow.up" size={22} tintColor={tokens.colors.blue} />
+            </Pressable>
           </View>
         </View>
         <AnimatedSectionList<ExcerptFeedItem, ExcerptFeedSection>
@@ -505,6 +524,11 @@ export default function ExcerptsScreen() {
           keyboardShouldPersistTaps="handled"
           onScroll={onScroll}
           scrollEventThrottle={16}
+          ListHeaderComponent={loadError ? (
+            <Pressable accessibilityRole="button" onPress={() => { void loadFeed(); }} style={{ paddingVertical: 16 }}>
+              <Text style={{ color: tokens.colors.secondaryLabel }}>摘录加载失败，轻点重试。原有内容仍然保留。</Text>
+            </Pressable>
+          ) : null}
         contentContainerStyle={[
           styles.content,
           // 浮动头部预留：insets.top + 2（头部 paddingTop）+ 40（headerRow 高）

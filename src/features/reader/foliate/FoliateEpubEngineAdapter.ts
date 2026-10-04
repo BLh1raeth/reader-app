@@ -8,7 +8,6 @@ import type {
   ReaderEngineDiagnostic,
   ReaderLocation,
   ReaderLocationChangeReason,
-  ReaderResourcePayload,
   ReaderRestoreState,
   ReaderSearchResult,
   ReaderExcerptVerificationItem,
@@ -17,15 +16,14 @@ import type {
   ReaderPageLocationResult,
   ReaderPageLocationTarget,
   ReaderTocItem,
-  ReaderZipEntry,
 } from '../reader-types';
 import type { ReaderPageCountCache } from '../reader-page-cache-repository';
 // foliate-js is statically imported (not dynamically) so its fetch+eval is
 // paid once with the DOM bundle — pre-warmed at app launch — instead of
 // ~450ms serially on every book open. search.js/text-walker.js stay dynamic:
 // search is not on the open critical path.
-import { EPUB } from 'foliate-js/epub.js';
-import { makeBook } from 'foliate-js/view.js';
+import { createFoliateBook, type FoliateOpenInput } from './book-loader';
+export type { FoliateOpenInput } from './book-loader';
 import { getGlobalReaderPage } from '../reader-pagination';
 import {
   FOOTNOTE_EXTERNAL_SCHEME_RE,
@@ -47,7 +45,6 @@ import {
 } from './footnote-detection';
 import {
   anchorToDocPoint,
-  base64ToBytes,
   clampPercentage,
   countReadableCharacters,
   cssText,
@@ -55,12 +52,12 @@ import {
   drawRevealRects,
   drawSearchResultHighlight,
   mapToc,
-  normalizeBookStyles,
   rangeReadableText,
 } from './foliate-utils';
 import type { DocPoint, FoliateBook, FoliateResolvedHref } from './foliate-utils';
 import {
   DEFAULT_READER_SETTINGS,
+  READER_FONT_CSS,
   normalizeReaderSettings,
   readerLayoutSettingsEqual,
   readerSettingsEqual,
@@ -218,55 +215,7 @@ type PendingPageTurn = {
 // functions, no adapter state). Imported below.
 
 
-export type FoliateOpenInput = {
-  bookId: string;
-  base64?: string;
-  entries?: ReaderZipEntry[];
-  fileName: string;
-  onResourceRequest: (name: string) => Promise<ReaderResourcePayload | null>;
-  /** Metadata texts prefetched natively; checked before any bridge request. */
-  prefetchedText?: Record<string, string>;
-  restoreCfi: string | null;
-  /**
-   * Excerpts Tab Core C: external navigation target (e.g. an excerpt's range
-   * CFI from its Source row). When set and resolvable it becomes the initial
-   * navigation intent, winning over restoreCfi; when unresolvable the reader
-   * falls back to restoreCfi and reports EXTERNAL_TARGET_RESULT.
-   */
-  externalTargetCfi?: string | null;
-  sourceKind: 'zip-resource-loader' | 'full-base64-fallback';
-  pageCountCache: ReaderPageCountCache | null;
-  readerSettings: ReaderSettings;
-};
-
 type ReaderPageCountResult = Omit<ReaderPageCountCache, 'bookId' | 'updatedAt'>;
-
-
-async function createOnDemandBook(
-  input: FoliateOpenInput,
-): Promise<FoliateBook> {
-  const entries = new Map((input.entries ?? []).map((entry) => [entry.name, entry]));
-  const decoder = new TextDecoder();
-  const prefetchedText = input.prefetchedText ?? {};
-  const loadBytes = async (name: string) => {
-    const resource = await input.onResourceRequest(name);
-    if (!resource) return null;
-    return base64ToBytes(resource.base64);
-  };
-  return new EPUB({
-    loadText: async (name: string) => {
-      // Opening metadata (container.xml, OPF, encryption.xml, NCX/nav) was
-      // read natively alongside the source: answer straight from memory
-      // instead of paying a DOM<->native round trip per file.
-      const hit = prefetchedText[name];
-      if (hit !== undefined) return hit;
-      const bytes = await loadBytes(name);
-      return bytes ? decoder.decode(bytes) : '';
-    },
-    loadBlob: async (name: string) => (await loadBytes(name)) ?? new Uint8Array(),
-    getSize: (name: string) => entries.get(name)?.uncompressedSize ?? 0,
-  }).init() as Promise<FoliateBook>;
-}
 
 
 // Phase 1 highlight color: single default blue. The color column already
@@ -382,9 +331,7 @@ export class FoliateEpubEngineAdapter {
     // foliate-js is statically imported at the top of this module; no
     // per-open dynamic import here.
     this.onDiagnostic({ event: 'BOOK_BUILD_START' });
-    const bookPromise = input.sourceKind === 'zip-resource-loader'
-      ? createOnDemandBook(input)
-      : null;
+    const bookPromise = createFoliateBook(input);
     this.onDiagnostic({ event: 'FOLIATE_IMPORT_END' });
 
     const view = document.createElement('foliate-view') as FoliateView;
@@ -393,9 +340,8 @@ export class FoliateEpubEngineAdapter {
     view.style.height = '100%';
     view.style.backgroundColor = this.getReaderColors().background;
     view.style.visibility = 'hidden';
-    // Page turns are driven by foliate's own scroll-container slide (see
-    // turnWithSlide). No snapshot animation: the live foliate DOM is the
-    // only page surface, so there is nothing to exclude from a transition.
+    // The live Foliate DOM is the page surface; navigation is serialized
+    // so queued turns cannot race restore or repagination.
     view.setAttribute('flow', 'paginated');
     view.addEventListener('relocate', this.handleRelocate);
     view.addEventListener('load', this.handleDocumentLoad as EventListener);
@@ -403,11 +349,8 @@ export class FoliateEpubEngineAdapter {
     this.host.replaceChildren(view);
     this.view = view;
 
-    const book = input.sourceKind === 'zip-resource-loader'
-      ? await bookPromise!
-      : await makeBook(new File([base64ToBytes(input.base64 ?? '')], input.fileName, { type: 'application/epub+zip' })) as FoliateBook;
+    const book = await bookPromise;
     this.onDiagnostic({ event: 'BOOK_BUILD_END' });
-    normalizeBookStyles(book);
     this.onDiagnostic({ event: 'BOOK_OPEN_START' });
     await view.open(book);
     view.classList.toggle('reader-reflowable', !view.isFixedLayout);
@@ -881,7 +824,6 @@ export class FoliateEpubEngineAdapter {
 
         const locatorBook = await this.createCounterBook(input);
         if (run !== this.pageLocatorRun || layoutSignature !== this.layoutSignature) return;
-        normalizeBookStyles(locatorBook);
         await locatorView.open(locatorBook);
         locatorView.classList.toggle('reader-reflowable', !locatorView.isFixedLayout);
         locatorOpen = true;
@@ -2496,7 +2438,7 @@ export class FoliateEpubEngineAdapter {
     // v2 uses foliate's actual readable-column count (`pages - 2`) instead
     // of its internal viewport count. Changing the version deliberately
     // ignores v1 rows, which over-counted every spine section.
-    return `foliate-paginated:v4:${width}x${height}:top=${READER_CONTENT_TOP_PX}:bottom=${READER_CONTENT_BOTTOM_PX}:gap=${this.readerSettings.pageMargin}:font=apple-system:size=${this.readerSettings.fontSize}:weight=500:line=${this.readerSettings.lineHeight}:tracking=${this.readerSettings.letterSpacing}:image-normalize=standalone-v3`;
+    return `foliate-paginated:v5:${width}x${height}:top=${READER_CONTENT_TOP_PX}:bottom=${READER_CONTENT_BOTTOM_PX}:gap=${this.readerSettings.pageMargin}:font=${this.readerSettings.fontFamily}:size=${this.readerSettings.fontSize}:weight=500:line=${this.readerSettings.lineHeight}:tracking=${this.readerSettings.letterSpacing}:image-normalize=standalone-v3`;
   }
 
   private isCacheUsable(cache: ReaderPageCountCache | null, layoutSignature: string) {
@@ -2571,7 +2513,6 @@ export class FoliateEpubEngineAdapter {
       await this.nextIdleFrame();
       const counterBook = await this.createCounterBook(input);
       if (run !== this.pageCountRun || this.restoreState !== 'active') return;
-      normalizeBookStyles(counterBook);
       await counterView.open(counterBook);
       counterView.classList.toggle('reader-reflowable', !counterView.isFixedLayout);
       counterOpen = true;
@@ -2626,8 +2567,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   private async createCounterBook(input: FoliateOpenInput): Promise<FoliateBook> {
-    if (input.sourceKind === 'zip-resource-loader') return createOnDemandBook(input);
-    return makeBook(new File([base64ToBytes(input.base64 ?? '')], input.fileName, { type: 'application/epub+zip' })) as Promise<FoliateBook>;
+    return createFoliateBook(input);
   }
 
   private async waitForVisibleTurnIdle(run: number) {
@@ -2699,7 +2639,7 @@ export class FoliateEpubEngineAdapter {
          through PingFang SC. */
       body,
       body :is(p, li, blockquote, dd, dt, td, th, h1, h2, h3, h4, h5, h6) {
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", sans-serif !important;
+        font-family: ${READER_FONT_CSS[this.readerSettings.fontFamily]} !important;
       }
       body {
         color: ${colors.text} !important;

@@ -18,7 +18,11 @@ function replaceOnce(source, needle, replacement, filePath) {
 
 function patchDomWebView(filePath) {
   let source = fs.readFileSync(filePath, 'utf8');
-  if (source.includes(VIEW_MARKER)) return;
+  const markers = [IMPORT_MARKER, WEBVIEW_MARKER, VIEW_MARKER, 'override func buildMenu(with builder: UIMenuBuilder)', 'private func updateReaderEditMenuIntegration()'];
+  if (markers.every((marker) => source.includes(marker))) return source;
+  if (markers.some((marker) => source.includes(marker))) {
+    throw new Error(`Incomplete reader edit-menu patch in ${filePath}. Reinstall dependencies before prebuild.`);
+  }
 
   source = replaceOnce(
     source,
@@ -62,12 +66,15 @@ function patchDomWebView(filePath) {
     '    self.webView = webView\n    addSubview(webView)\n    updateReaderEditMenuIntegration()\n',
     filePath,
   );
-  fs.writeFileSync(filePath, source);
+  return source;
 }
 
 function patchDomWebViewModule(filePath) {
   let source = fs.readFileSync(filePath, 'utf8');
-  if (source.includes(MODULE_MARKER)) return;
+  if (source.includes(MODULE_MARKER) && source.includes('"onReaderSelectionAction"')) return source;
+  if (source.includes(MODULE_MARKER) || source.includes('"onReaderSelectionAction"')) {
+    throw new Error(`Incomplete reader edit-menu patch in ${filePath}. Reinstall dependencies before prebuild.`);
+  }
   source = replaceOnce(
     source,
     '      Events("onMessage", "onContentProcessDidTerminate")\n',
@@ -80,19 +87,19 @@ function patchDomWebViewModule(filePath) {
     `      Prop("hideKeyboardAccessoryView") { (view: DomWebView, hidden: Bool) in\n        view.hideKeyboardAccessoryView = hidden\n      }\n\n      ${MODULE_MARKER} { (view: DomWebView, enabled: Bool) in\n        view.readerEditMenuEnabled = enabled\n      }\n`,
     filePath,
   );
-  fs.writeFileSync(filePath, source);
+  return source;
 }
 
 function patchPodspec(filePath) {
   let source = fs.readFileSync(filePath, 'utf8');
-  if (source.includes(POD_MARKER)) return;
+  if (source.includes(POD_MARKER)) return source;
   source = replaceOnce(
     source,
     "  s.dependency 'ExpoModulesCore'\n",
     `  s.dependency 'ExpoModulesCore'\n  ${POD_MARKER}\n`,
     filePath,
   );
-  fs.writeFileSync(filePath, source);
+  return source;
 }
 
 module.exports = function withReaderEditMenu(config) {
@@ -107,9 +114,24 @@ module.exports = function withReaderEditMenu(config) {
       if (packageJson.version !== '57.0.1') {
         throw new Error(`Reader edit-menu integration expects @expo/dom-webview 57.0.1, found ${packageJson.version}.`);
       }
-      patchDomWebView(path.join(packageRoot, 'ios', 'DomWebView.swift'));
-      patchDomWebViewModule(path.join(packageRoot, 'ios', 'DomWebViewModule.swift'));
-      patchPodspec(path.join(packageRoot, 'ios', 'ExpoDomWebView.podspec'));
+      // Resolve all patch targets first. An upstream change must fail before
+      // mutating any dependency file, rather than leaving a partial install.
+      const patches = [
+        ['DomWebView.swift', patchDomWebView],
+        ['DomWebViewModule.swift', patchDomWebViewModule],
+        ['ExpoDomWebView.podspec', patchPodspec],
+      ].map(([name, patch]) => {
+        const filePath = path.join(packageRoot, 'ios', name);
+        return { filePath, before: fs.readFileSync(filePath, 'utf8'), after: patch(filePath) };
+      });
+      try {
+        for (const { filePath, after } of patches) fs.writeFileSync(filePath, after);
+      } catch (error) {
+        for (const { filePath, before } of patches) {
+          try { fs.writeFileSync(filePath, before); } catch { /* Preserve the original failure. */ }
+        }
+        throw error;
+      }
       return modConfig;
     },
   ]);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { reportOperationError } from '../../../shared/operation-errors';
 import type { ReaderBookmark } from '../bookmark-repository';
 import type {
   ReaderBookmarkNavigationRequest,
@@ -80,6 +81,15 @@ export function useReaderToc({
     setTocSheetPresented(false);
   }, [tocNavigating, setTocSheetPresented]);
 
+  const returnToCfi = useCallback((cfi: string) => {
+    if (tocNavigating) return;
+    markReaderActivity();
+    setTocNavigating(true);
+    const id = ++bookmarkNavigationSequenceRef.current;
+    setBookmarkNavigationRequest({ id, cfi, reason: 'programmatic' });
+    return id;
+  }, [markReaderActivity, tocNavigating]);
+
   const handleTocSheetDismissed = useCallback(() => {
     const bookmark = pendingBookmarkRef.current;
     pendingBookmarkRef.current = null;
@@ -99,13 +109,13 @@ export function useReaderToc({
   const handleBookmarkNavigationResult = useCallback(async (requestId: number, succeeded: boolean, message: string | null) => {
     setBookmarkNavigationRequest((request) => request?.id === requestId ? null : request);
     setTocNavigating(false);
-    if (!succeeded) console.warn('[BOOKMARK_NAVIGATION_FAILED]', JSON.stringify({ requestId, message }));
+    if (!succeeded) reportOperationError(message, '跳转失败', '无法定位到目标位置，当前阅读位置已保留。');
   }, []);
 
   const handleTocNavigationResult = useCallback(async (requestId: number, succeeded: boolean, message: string | null) => {
     setTocNavigationRequest((request) => request?.id === requestId ? null : request);
     setTocNavigating(false);
-    if (!succeeded) console.warn('[TOC_NAVIGATION_FAILED]', JSON.stringify({ requestId, message }));
+    if (!succeeded) reportOperationError(message, '目录跳转失败', '无法定位到目标章节，请重试。');
   }, []);
 
   const handleToc = useCallback(async (nextToc: ReaderTocItem[]) => {
@@ -120,6 +130,7 @@ export function useReaderToc({
     openToc,
     selectTocItem,
     selectBookmark,
+    returnToCfi,
     handleTocSheetDismissed,
     handleBookmarkNavigationResult,
     handleTocNavigationResult,

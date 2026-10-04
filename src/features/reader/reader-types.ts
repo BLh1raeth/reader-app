@@ -84,6 +84,7 @@ export type ReaderZipEntry = {
   compressionMethod: 0 | 8;
   localHeaderOffset: number;
   uncompressedSize: number;
+  crc32?: number;
 };
 
 export type ReaderResourcePayload = {

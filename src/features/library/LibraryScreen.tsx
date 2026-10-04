@@ -8,9 +8,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SFSymbol } from 'sf-symbols-typescript';
 import {
   Alert,
+  FlatList,
+  TextInput,
   Pressable,
   Text,
   useWindowDimensions,
+  useColorScheme,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,9 +26,14 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import { filterLibraryBooks } from './library-filter';
+import { reportOperationError } from '../../shared/operation-errors';
+
 import { tokens } from '../../design-system/tokens';
+import { resolveReaderAppearance } from '../reader/reader-settings';
 import { readerSettingsRepository } from '../reader/reader-settings-repository';
 import { bookRepository } from './book-repository';
+import { retryFileCleanup } from './file-cleanup';
 import { beginReaderOpen } from '../reader/reader-open-performance';
 import { preloadReaderData } from '../reader/reader-preload';
 import {
@@ -67,8 +75,11 @@ import type {
 } from './components/library-shared';
 import { styles } from './components/library-styles';
 
+const AnimatedBookList = Animated.createAnimatedComponent(FlatList) as unknown as typeof FlatList;
+
 export default function LibraryScreen() {
   const router = useRouter();
+  const systemScheme = useColorScheme();
   const { height, width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const scrollOffset = useSharedValue(0);
@@ -76,14 +87,17 @@ export default function LibraryScreen() {
   const { displayMode, setTabBarHidden } = useLibraryView();
   const [books, setBooks] = useState<LibraryBook[]>([]);
   const [libraryReady, setLibraryReady] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('manual');
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectionExitPending, setSelectionExitPending] = useState(false);
   const [selectedBookIds, setSelectedBookIds] = useState<string[]>([]);
   const [manualOrderSnapshot, setManualOrderSnapshot] = useState<LibraryBook[] | null>(null);
   const [manualOrderingMode, setManualOrderingMode] = useState(false);
-  const [readerBackgroundColor, setReaderBackgroundColor] = useState<string>(tokens.colors.background);
+  const [readerBackgroundColor, setReaderBackgroundColor] = useState<string>('#F3F2F8');
   const [readerOpeningTransition, setReaderOpeningTransition] = useState<ReaderOpeningTransition | null>(null);
   // Import progress ring: 0..1 while an import is running, null when idle.
   const [importProgress, setImportProgress] = useState<number | null>(null);
@@ -94,9 +108,16 @@ export default function LibraryScreen() {
   const nativeHeaderVisible = false;
 
   const reloadBooks = useCallback(async () => {
-    const persistedBooks = await bookRepository.getAllBooks();
-    setBooks(persistedBooks.map(toLibraryBook));
-    setLibraryReady(true);
+    try {
+      const persistedBooks = await bookRepository.getAllBooks(true);
+      setBooks(persistedBooks.map(toLibraryBook));
+      setLoadError(false);
+      setLibraryReady(true);
+      void retryFileCleanup().catch(() => undefined);
+    } catch (error) {
+      setLoadError(true);
+      throw error;
+    }
   }, []);
 
   useEffect(() => {
@@ -109,9 +130,9 @@ export default function LibraryScreen() {
     setTabBarHidden(false);
     void reloadBooks().catch(() => setLibraryReady(true));
     void readerSettingsRepository.get().then((settings) => {
-      setReaderBackgroundColor(settings.appearance === 'dark' ? '#151517' : tokens.colors.background);
-    }).catch(() => setReaderBackgroundColor(tokens.colors.background));
-  }, [reloadBooks, setTabBarHidden]));
+      setReaderBackgroundColor(resolveReaderAppearance(settings.appearance, systemScheme) === 'dark' ? '#151517' : '#F3F2F8');
+    }).catch(() => setReaderBackgroundColor('#F3F2F8'));
+  }, [reloadBooks, setTabBarHidden, systemScheme]));
 
   const finishReaderOpeningTransition = useCallback((transition: ReaderOpeningTransition) => {
     router.push({
@@ -220,7 +241,7 @@ export default function LibraryScreen() {
   }));
 
   const visibleBooks = useMemo(() => {
-    const filtered = filterMode === 'all' ? books : books.filter((book) => book.state === filterMode);
+    const filtered = filterLibraryBooks(books, filterMode, searchQuery);
     const sorted = [...filtered];
 
     switch (sortMode) {
@@ -238,12 +259,12 @@ export default function LibraryScreen() {
       default:
         return sorted;
     }
-  }, [books, filterMode, sortMode]);
+  }, [books, filterMode, sortMode, searchQuery]);
 
   const continueReadingBook = useMemo(
     () =>
       books
-        .filter((book) => book.state === 'reading' && book.lastReadAt && book.progress !== null)
+        .filter((book) => !book.archivedAt && book.state === 'reading' && book.lastReadAt && book.progress !== null)
         .sort(
           (left, right) => new Date(right.lastReadAt ?? 0).getTime() - new Date(left.lastReadAt ?? 0).getTime(),
         )[0],
@@ -253,7 +274,7 @@ export default function LibraryScreen() {
   const toggleFinished = useCallback(
     (book: LibraryBook) => {
       const nextStatus: ReadingStatus = book.state === 'finished' ? 'unread' : 'finished';
-      void updateBookReadingStatus(book, nextStatus).then(reloadBooks).catch(() => undefined);
+      void updateBookReadingStatus(book, nextStatus).then(reloadBooks).catch((error) => reportOperationError(error));
     },
     [reloadBooks],
   );
@@ -266,7 +287,7 @@ export default function LibraryScreen() {
         (title) => {
           const trimmedTitle = title.trim();
           if (trimmedTitle) {
-            void updateBookMetadata(book.id, { title: trimmedTitle, author: book.author, coverUri: book.coverUri }).then(reloadBooks).catch(() => undefined);
+            void updateBookMetadata(book.id, { title: trimmedTitle, author: book.author, coverUri: book.coverUri }).then(reloadBooks).catch((error) => reportOperationError(error));
           }
         },
         'plain-text',
@@ -283,7 +304,7 @@ export default function LibraryScreen() {
         undefined,
         (author) => {
           const trimmedAuthor = author.trim();
-          void updateBookMetadata(book.id, { title: book.title, author: trimmedAuthor || null, coverUri: book.coverUri }).then(reloadBooks).catch(() => undefined);
+          void updateBookMetadata(book.id, { title: book.title, author: trimmedAuthor || null, coverUri: book.coverUri }).then(reloadBooks).catch((error) => reportOperationError(error));
         },
         'plain-text',
         book.author ?? '',
@@ -298,19 +319,31 @@ export default function LibraryScreen() {
     }
     Alert.alert(
       bookIds.length === 1 ? '移除图书？' : `移除这 ${bookIds.length} 本图书？`,
-      '移除后会删除本机保存的 EPUB 和封面。',
+      '移除本地文件会保留摘录、高亮、书签、阅读进度和历史。同一 EPUB 再次导入后可以继续阅读。永久删除会清除这本书的所有关联记录，且无法撤销。',
       [
         { style: 'cancel', text: '取消' },
         {
-          style: 'destructive',
-          text: '移除',
+          text: '移除本地文件，保留记录',
           onPress: () => {
             void removeStoredBooks(bookIds).then(async () => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
               setSelectedBookIds((currentIds) => currentIds.filter((bookId) => !bookIds.includes(bookId)));
               await reloadBooks();
-            }).catch(() => undefined);
+            }).catch((error) => reportOperationError(error, '移除失败'));
           },
+        },
+        {
+          style: 'destructive',
+          text: '永久删除及全部记录',
+          onPress: () => Alert.alert('永久删除？', '摘录、高亮、书签和阅读历史将一并删除，无法撤销。', [
+            { style: 'cancel', text: '取消' },
+            { style: 'destructive', text: '永久删除', onPress: () => {
+              void removeStoredBooks(bookIds, true).then(async () => {
+                setSelectedBookIds((ids) => ids.filter((id) => !bookIds.includes(id)));
+                await reloadBooks();
+              }).catch((error) => reportOperationError(error, '删除失败'));
+            } },
+          ]),
         },
       ],
     );
@@ -349,7 +382,7 @@ export default function LibraryScreen() {
         ].filter(Boolean);
         Alert.alert('导入结果', lines.join('\n'));
       }
-    }).catch(() => setImportProgress(null));
+    }).catch((error) => { setImportProgress(null); reportOperationError(error, '导入失败'); });
   }, [confirmDuplicateImport, reloadBooks]);
 
   const shareSelectedBooks = useCallback(() => {
@@ -359,7 +392,7 @@ export default function LibraryScreen() {
       return;
     }
     const book = books.find((item) => item.id === selectedBookIds[0]);
-    if (book) void shareBook(book).catch(() => undefined);
+    if (book) void shareBook(book).catch((error) => reportOperationError(error, '分享失败'));
   }, [books, selectedBookIds]);
 
   const toggleBookSelection = useCallback((bookId: string) => {
@@ -436,11 +469,15 @@ export default function LibraryScreen() {
   }, [manualOrderSnapshot, setTabBarHidden]);
 
   const finishManualOrdering = useCallback(() => {
+    const original = manualOrderSnapshot;
     setManualOrderSnapshot(null);
     setManualOrderingMode(false);
     setTabBarHidden(false);
-    void bookRepository.updateManualOrder(books.map((book) => book.id)).catch(() => undefined);
-  }, [books, setTabBarHidden]);
+    void bookRepository.updateManualOrder(books.map((book) => book.id)).catch((error) => {
+      if (original) setBooks(original);
+      reportOperationError(error, '排序保存失败', '已恢复原来的顺序，请重试。');
+    });
+  }, [books, manualOrderSnapshot, setTabBarHidden]);
 
   const notifyManualReorder = useCallback(() => {
     Haptics.selectionAsync().catch(() => undefined);
@@ -448,9 +485,7 @@ export default function LibraryScreen() {
 
   const moveManualBook = useCallback((bookId: string, targetIndex: number) => {
     setBooks((currentBooks) => {
-      const currentVisibleBooks = filterMode === 'all'
-        ? currentBooks
-        : currentBooks.filter((book) => book.state === filterMode);
+      const currentVisibleBooks = filterLibraryBooks(currentBooks, filterMode, searchQuery);
       const sourceIndex = currentVisibleBooks.findIndex((book) => book.id === bookId);
       const clampedTargetIndex = Math.max(0, Math.min(targetIndex, currentVisibleBooks.length - 1));
 
@@ -462,17 +497,13 @@ export default function LibraryScreen() {
       const [movedBook] = reorderedVisibleBooks.splice(sourceIndex, 1);
       reorderedVisibleBooks.splice(clampedTargetIndex, 0, movedBook);
 
-      if (filterMode === 'all') {
-        return reorderedVisibleBooks;
-      }
-
       const reorderedBookIds = new Set(reorderedVisibleBooks.map((book) => book.id));
       let visibleBookIndex = 0;
       return currentBooks.map((book) => (
         reorderedBookIds.has(book.id) ? reorderedVisibleBooks[visibleBookIndex++] : book
       ));
     });
-  }, [filterMode]);
+  }, [filterMode, searchQuery]);
 
   const chooseSortMode = useCallback(
     (nextSortMode: SortMode) => {
@@ -486,25 +517,29 @@ export default function LibraryScreen() {
 
   const renderBook = (book: LibraryBook) => {
     const isSelected = selectedBookSet.has(book.id);
-    const canOpenReader = !selectionMode && !selectionExitPending && !manualOrderingMode;
+    const canOpenReader = !book.archivedAt && importProgress === null && !selectionMode && !selectionExitPending && !manualOrderingMode;
     const onOpenReader = canOpenReader
       ? (frame: ReaderOpeningFrame) => openReaderWithTransition(book, frame)
       : undefined;
-    const titleMenu: BookMenuHandlers | undefined = !manualOrderingMode
+    const titleMenu: BookMenuHandlers | undefined = !manualOrderingMode && importProgress === null
       ? {
+          onEditTags: (targetBook) => Alert.prompt('编辑标签', '多个标签用逗号分隔。', (text) => {
+            void bookRepository.updateTags(targetBook.id, text.split(/[,，]/)).then(reloadBooks)
+              .catch((error) => reportOperationError(error, '标签保存失败'));
+          }, 'plain-text', (targetBook.tags ?? []).join('，')),
           onEditCover: (targetBook) => {
             void replaceBookCover(targetBook).then((coverUri) => {
               if (coverUri) return reloadBooks();
               return undefined;
-            }).catch(() => undefined);
+            }).catch((error) => reportOperationError(error, '封面更新失败'));
           },
           onEditTitle: renameBook,
           onEditAuthor: renameBookAuthor,
           onRestoreOriginal: (targetBook) => {
-            void restoreOriginalBookMetadata(targetBook.id).then(reloadBooks).catch(() => undefined);
+            void restoreOriginalBookMetadata(targetBook.id).then(reloadBooks).catch((error) => reportOperationError(error));
           },
           onRemove: () => removeBooks([book.id]),
-          onShare: (targetBook) => { void shareBook(targetBook).catch(() => undefined); },
+          onShare: (targetBook) => { void shareBook(targetBook).catch((error) => reportOperationError(error, '分享失败')); },
           onToggleFinished: toggleFinished,
         }
       : undefined;
@@ -553,6 +588,7 @@ export default function LibraryScreen() {
           automatically when the transition tears down. */}
       <StatusBar animated hidden={readerOpeningTransition != null} />
       <GestureHandlerRootView style={styles.safeArea}>
+        {manualOrderingMode ? (
         <Animated.ScrollView
           contentInsetAdjustmentBehavior={nativeHeaderVisible ? 'automatic' : 'never'}
           contentContainerStyle={[
@@ -564,7 +600,12 @@ export default function LibraryScreen() {
           style={styles.screen}
         >
           <View style={styles.libraryHeaderSpacer} />
-          {!libraryReady ? null : books.length === 0 ? (
+          {loadError ? (
+            <Pressable accessibilityRole="button" onPress={() => { void reloadBooks().catch(() => undefined); }}>
+              <Text style={styles.noResults}>书库加载失败，轻点重试。原有记录不会被清除。</Text>
+            </Pressable>
+          ) : null}
+          {!libraryReady || (loadError && books.length === 0) ? null : books.length === 0 ? (
             <EmptyLibrary onImport={importBooks} />
           ) : (
             <>
@@ -581,6 +622,39 @@ export default function LibraryScreen() {
             </>
           )}
         </Animated.ScrollView>
+        ) : (
+          <AnimatedBookList<LibraryBook>
+            key={displayMode} data={libraryReady ? visibleBooks : []}
+            numColumns={displayMode === 'grid' ? 2 : 1}
+            columnWrapperStyle={displayMode === 'grid' ? { gap: tokens.spacing.grid } : undefined}
+            contentInsetAdjustmentBehavior={nativeHeaderVisible ? 'automatic' : 'never'}
+            contentContainerStyle={[styles.scrollContent, { gap: 0 }, nativeHeaderVisible ? null : { paddingTop: insets.top + tokens.spacing.compact }]}
+            onScroll={onScroll} scrollEventThrottle={16} style={styles.screen}
+            keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled"
+            keyExtractor={(book) => book.id} renderItem={({ item }) => renderBook(item)}
+            initialNumToRender={12} maxToRenderPerBatch={8} windowSize={7}
+            ItemSeparatorComponent={() => <View style={{ height: displayMode === 'grid' ? tokens.spacing.gridRow : 0 }} />}
+            ListHeaderComponent={<View style={{ gap: tokens.spacing.section, paddingBottom: tokens.spacing.section }}>
+            <View style={styles.libraryHeaderSpacer} />
+            {searchVisible ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TextInput autoFocus accessibilityLabel="搜索书名、作者或标签" placeholder="搜索书名、作者或标签"
+                value={searchQuery} onChangeText={setSearchQuery} clearButtonMode="while-editing" returnKeyType="search"
+                style={{ flex: 1, color: tokens.colors.label, backgroundColor: tokens.colors.fill, borderRadius: 10, padding: 12 }} />
+              <Pressable accessibilityRole="button" onPress={() => { setSearchVisible(false); setSearchQuery(''); }}><Text style={{ color: tokens.colors.blue }}>取消</Text></Pressable>
+            </View> : null}
+            {loadError ? <Pressable accessibilityRole="button" onPress={() => { void reloadBooks().catch(() => undefined); }}>
+              <Text style={styles.noResults}>书库加载失败，轻点重试。原有记录不会被清除。</Text>
+            </Pressable> : null}
+            {continueReadingBook && filterMode !== 'archived' && importProgress === null ? <ContinueReading book={continueReadingBook}
+              onOpenReader={(frame) => openReaderWithTransition(continueReadingBook, frame)}
+              opening={readerOpeningTransition?.book.id === continueReadingBook.id} selectionMode={selectionMode && !selectionExitPending} /> : null}
+          </View>}
+            ListEmptyComponent={!libraryReady || loadError ? null : books.length === 0
+              ? <EmptyLibrary onImport={importBooks} />
+              : <Text style={styles.noResults}>没有符合此筛选或搜索条件的图书</Text>}
+            ListFooterComponent={visibleBooks.length ? <Text selectable style={[styles.bookCount, { marginTop: tokens.spacing.section }]}>{visibleBooks.length}本书</Text> : null}
+          />
+        )}
         <>
           <Animated.View pointerEvents="none" style={[styles.floatingTitle, { top: insets.top + LIBRARY_HEADER_SAFE_TOP_GAP }, floatingTitleStyle]}>
             <Text accessibilityRole="header" style={styles.navigationTitle}>书库</Text>
@@ -589,6 +663,8 @@ export default function LibraryScreen() {
               <View pointerEvents="box-none" style={[styles.floatingMenu, { top: insets.top + LIBRARY_HEADER_SAFE_TOP_GAP }]}>
                 <LibraryOverflowMenu
                   booksExist={books.length > 0}
+                  tags={[...new Set(books.filter((book) => !book.archivedAt).flatMap((book) => book.tags ?? []))].sort()}
+                  onSearch={() => setSearchVisible(true)}
                   filterMode={filterMode}
                   sortMode={sortMode}
                   onImport={importBooks}
@@ -597,12 +673,12 @@ export default function LibraryScreen() {
                   onFilter={setFilterMode}
                   onAdjustOrder={enterManualOrderingMode}
                   onExportBackup={() => {
-                    void exportBackupFlow();
+                    void exportBackupFlow(setImportProgress);
                   }}
                   onImportBackup={() => {
                     importBackupFlow(() => {
                       void reloadBooks().catch(() => undefined);
-                    });
+                    }, (busy) => setImportProgress(busy ? 0 : null));
                   }}
                   selectionProgress={selectionUiProgress}
                   importProgress={importProgress}
