@@ -18,7 +18,30 @@
 
 ## 新 development build 的真机验收
 
-新增 expo-clipboard 和自动系统外观配置，需要重新构建 iOS development client。Linux 上的 prebuild 和 JS 导出不能证明 Swift 编译或 WKWebView 行为。
+下一次 iOS EAS development build 合并验收以下原生项目：
+
+| 项目 | 当前状态 | 验收要求 |
+| --- | --- | --- |
+| expo-image-picker | 依赖、config plugin 和封面相册选择接线已存在，待新包验收 | 授权、拒绝授权、取消选择及更换封面正常 |
+| expo-clipboard | 摘录复制已接线，待新包验收 | 系统剪贴板内容与摘录一致 |
+| 自动系统外观 | 原生配置已调整，待新包验收 | 跟随系统切换浅色/深色，并保留手动选择 |
+| 高亮点按原生菜单 | **待恢复 `339cbfe`、适配与构建，尚未实现到当前分支** | 按下节锁定规格在真机验收 |
+
+Linux 上的 prebuild、类型检查和 JS 导出不能证明 Swift 编译或 WKWebView 行为。高亮点按菜单使用自研 Swift 模块，**不得在 Expo Go 中验收**；必须安装包含恢复后模块的新 development build。
+
+### 高亮点按原生菜单：恢复与验收清单
+
+原实现为 2026-09-21 的 `339cbfe`（`feat: native highlight-tap menu (UIEditMenuInteraction)`），包含 `ReaderHighlightMenuPresenter.swift`、config plugin、Foliate adapter 高亮点按上报和 ReaderScreen 接线。优先恢复原提交，再适配；不从零重写。用户本机 reflog 与云端 checkout 的 reflog 独立，恢复前须将原提交置于可访问的远程分支。当前 main 和改进分支仍含旧的 in-document 暗色“删除”气泡，恢复时必须移除，不作为原生模块缺失时的回退。
+
+- [ ] 从可访问分支获取原提交，在当前 main 上 cherry-pick；适配拆分后的 `useReaderSelection`、ReaderScreen、Foliate adapter、settings 和已加固的 config plugin，保留插件版本检查、幂等性及失败前验证。
+- [ ] 使用公开 UIKit `UIEditMenuInteraction`（iOS 16+），不使用私有 API。
+- [ ] 与选词菜单逐项对照：摘录 / 高亮 / 添加笔记 / 在本书中搜索，以及 Copy / Lookup / Translate 等系统项；**只将“高亮”替换成红色 `.destructive` 的“移除”**，其余项目及行为不删减、不改变。添加笔记保留现有占位行为，本轮不实现笔记功能。
+- [ ] Copy 使用原生 `UIPasteboard`。点“移除”立即删除对应高亮并收起菜单，不出现二次确认；重新开书确认删除已持久化。写入失败时确认高亮恢复并提示错误。
+- [ ] 确认 `rangeCfi` 解析回对应的实时 Range，iframe 局部矩形映射至 WKWebView / 原生菜单坐标；覆盖边缘高亮、跨行文本、横竖屏、不同字号/边距和分页重排，不重复叠加 safe-area、分页 transform 或设备像素倍率。当前映射函数为 `mapIframeRectToWebView`，其窗口原点假设需与恢复后的 Swift presenter 坐标空间对照。
+- [ ] 切换书籍、翻页、打开 settings / 搜索、点击菜单外部后，菜单正确收起；再次长按选词仍显示原菜单，动作不会落到上一条高亮或上一部书。
+- [ ] 适配后运行 `npx tsc --noEmit`，验证 config plugin 和 DOM 接线，再与 expo-image-picker 一起加入下一次 EAS build；Swift 编译及上述交互仅在新包真机测试通过后标记完成。
+
+### 其余真机场景
 
 | 场景 | 预期 |
 | --- | --- |
