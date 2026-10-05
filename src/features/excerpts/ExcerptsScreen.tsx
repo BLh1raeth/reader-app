@@ -23,6 +23,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { SymbolView } from 'expo-symbols';
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -508,11 +509,22 @@ export default function ExcerptsScreen() {
                 onTextChange={(event) => setQuery(event.nativeEvent.text)}
               />
             </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="导出当前显示的摘录"
-              onPress={() => { void exportExcerpts(visibleSections.flatMap((section) => section.data)); }}
-              style={{ padding: 8 }}>
-              <SymbolView name="square.and.arrow.up" size={22} tintColor={tokens.colors.blue} />
-            </Pressable>
+            {/* 右上角分享：液态玻璃圆钮，黑图标。 */}
+            {isGlassEffectAPIAvailable() ? (
+              <GlassView glassEffectStyle="regular" isInteractive style={styles.shareGlass}>
+                <Pressable accessibilityRole="button" accessibilityLabel="导出当前显示的摘录"
+                  onPress={() => { void exportExcerpts(visibleSections.flatMap((section) => section.data)); }}
+                  style={styles.shareGlassContent}>
+                  <SymbolView name="square.and.arrow.up" size={20} tintColor="#000000" />
+                </Pressable>
+              </GlassView>
+            ) : (
+              <Pressable accessibilityRole="button" accessibilityLabel="导出当前显示的摘录"
+                onPress={() => { void exportExcerpts(visibleSections.flatMap((section) => section.data)); }}
+                style={styles.shareGlassFallback}>
+                <SymbolView name="square.and.arrow.up" size={20} tintColor="#000000" />
+              </Pressable>
+            )}
           </View>
         </View>
         <AnimatedSectionList<ExcerptFeedItem, ExcerptFeedSection>
@@ -651,6 +663,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     marginBottom: 12,
+  },
+  /** 右上角分享按钮：40pt 液态玻璃圆钮（与标题行高一致，顶对齐）。 */
+  shareGlass: { borderRadius: 20, height: 40, width: 40 },
+  shareGlassContent: { alignItems: 'center', flex: 1, justifyContent: 'center' },
+  shareGlassFallback: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(250,250,252,0.86)',
+    borderColor: 'rgba(60,60,67,0.15)',
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
   },
   headerTitle: {
     marginBottom: 0,
