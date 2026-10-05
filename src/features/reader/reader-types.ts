@@ -258,13 +258,19 @@ export type ReaderSelectionCommand = {
   type: 'apply-highlight';
   rangeCfi: string;
   sectionIndex: number;
+} | {
+  id: number;
+  type: 'remove-highlight';
+  rangeCfi: string;
 };
 
 export type ReaderSelectionAction = 'excerpt' | 'highlight' | 'note' | 'searchInBook';
 
 export type ReaderSelectionActionEvent = {
   nativeEvent: {
-    action: ReaderSelectionAction;
+    action: ReaderSelectionAction | 'deleteHighlight' | 'copy' | 'dismissHighlightMenu';
+    /** Present only for a highlighted-text menu; guards delayed native events. */
+    highlightRequestId?: number;
   };
 };
 

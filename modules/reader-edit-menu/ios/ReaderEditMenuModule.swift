@@ -7,5 +7,9 @@ public final class ReaderEditMenuModule: Module {
     Constant("isAvailable") {
       true
     }
+
+    Constant("isHighlightMenuAvailable") {
+      true
+    }
   }
 }

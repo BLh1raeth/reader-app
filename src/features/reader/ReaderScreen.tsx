@@ -8,7 +8,7 @@ import { AccessibilityInfo, Linking, Pressable, ScrollView, StyleSheet, Text, Te
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { AnimatedStyle, Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
-import { isReaderEditMenuNativeAvailable } from '../../../modules/reader-edit-menu';
+import { isReaderEditMenuNativeAvailable, isReaderHighlightMenuNativeAvailable } from '../../../modules/reader-edit-menu';
 import { tokens } from '../../design-system/tokens';
 import { uiText } from '../../localization';
 import { BookCoverArt } from '../library/BookCoverArt';
@@ -693,7 +693,8 @@ export default function ReaderScreen() {
     clearReaderSelection,
     searchSelectionInBook,
     onHighlightRequested,
-    handleHighlightDeleteRequest,
+    handleHighlightTap,
+    nativeHighlightMenuRequest,
     onNoteRequested,
     handleNativeSelectionAction,
     freezeExcerptSelection,
@@ -710,6 +711,7 @@ export default function ReaderScreen() {
     insets,
     isReady: controller.state.kind === 'ready',
     settingsSheetPresented,
+    highlightMenuBlocked: readingSessionBlocked || footnoteModalOpen,
   });
   const [readerOpeningVisible, setReaderOpeningVisible] = useState(Boolean(openingTitle));
   const pageIndicatorOpacity = useSharedValue(0);
@@ -881,7 +883,7 @@ export default function ReaderScreen() {
           highlightSnapshot={highlightSnapshot}
           textMeasureRequest={textMeasureRequest}
           onTextMeasureResult={handleTextMeasureResult}
-          onHighlightDeleteRequest={handleHighlightDeleteRequest}
+          onHighlightTap={isReaderHighlightMenuNativeAvailable ? handleHighlightTap : () => undefined}
           onReady={controller.onEngineReady}
           onLocation={handleLocation}
           onDiagnostic={controller.onDiagnostic}
@@ -904,6 +906,7 @@ export default function ReaderScreen() {
             style: [styles.domReader, { backgroundColor: readerColors.background }],
             ...(isReaderEditMenuNativeAvailable ? {
               readerEditMenuEnabled: true,
+              ...(isReaderHighlightMenuNativeAvailable ? { readerHighlightMenuRequest: nativeHighlightMenuRequest } : {}),
               onReaderSelectionAction: handleNativeSelectionAction,
             } : {}),
           }}

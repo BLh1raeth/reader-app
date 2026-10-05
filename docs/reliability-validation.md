@@ -14,6 +14,7 @@
 - 正向计数不因往返翻页重复增加；测量队列顺序和退出后的结算、跳转分段、速度按有效时间归一化、延迟闲置计时均有回归覆盖。
 - 摘录编辑保持 CFI 和创建日期；标签、搜索、外观和字体持久化有覆盖。分页缓存每本书最多保留 3 个布局，并行统计读取只合并正在进行的请求。
 - 原生菜单插件在锁定的 Expo 依赖上测试补丁目标、重复执行、版本不匹配和部分补丁；任一目标不匹配时在写文件前失败。
+- 高亮点按上报原文、CFI 和经过一次 iframe 映射的锚点；点击不翻页、不切换工具栏、不生成网页删除气泡。删除成功后清除绘制，失败保留高亮；旧菜单回调、换书与打开阅读面板均不会误删，高亮原文可直接保存为摘录。
 - Chromium 使用实际 Foliate 适配器测试 EPUB 2/3 的按需加载和兼容加载：脚本/事件处理器不执行，远程图片不请求，本地图片及嵌套 CSS 正常；中文分页、脚注、字体重排的可见锚点和关闭后 CFI 恢复正常。
 
 ## 新 development build 的真机验收
@@ -22,24 +23,22 @@
 
 | 项目 | 当前状态 | 验收要求 |
 | --- | --- | --- |
-| expo-image-picker | 依赖、config plugin 和封面相册选择接线已存在，待新包验收 | 授权、拒绝授权、取消选择及更换封面正常 |
 | expo-clipboard | 摘录复制已接线，待新包验收 | 系统剪贴板内容与摘录一致 |
 | 自动系统外观 | 原生配置已调整，待新包验收 | 跟随系统切换浅色/深色，并保留手动选择 |
-| 高亮点按原生菜单 | **待恢复 `339cbfe`、适配与构建，尚未实现到当前分支** | 按下节锁定规格在真机验收 |
+| 高亮点按原生菜单 | 代码与 DOM / 原生接线已实现，待 EAS 编译与真机验收 | 复用选词菜单，将“高亮”替换为红色“删除” |
 
-Linux 上的 prebuild、类型检查和 JS 导出不能证明 Swift 编译或 WKWebView 行为。高亮点按菜单使用自研 Swift 模块，**不得在 Expo Go 中验收**；必须安装包含恢复后模块的新 development build。
+Linux 上的 prebuild、类型检查和 JS 导出不能证明 Swift 编译或 WKWebView 行为。高亮点按菜单使用自研 Swift 模块，**不得在 Expo Go 中验收**；必须安装包含更新后模块的新 development build。
 
-### 高亮点按原生菜单：恢复与验收清单
+### 高亮点按原生菜单：真机验收清单
 
-原实现为 2026-09-21 的 `339cbfe`（`feat: native highlight-tap menu (UIEditMenuInteraction)`），包含 `ReaderHighlightMenuPresenter.swift`、config plugin、Foliate adapter 高亮点按上报和 ReaderScreen 接线。优先恢复原提交，再适配；不从零重写。用户本机 reflog 与云端 checkout 的 reflog 独立，恢复前须将原提交置于可访问的远程分支。当前 main 和改进分支仍含旧的 in-document 暗色“删除”气泡，恢复时必须移除，不作为原生模块缺失时的回退。
+高亮点击不再生成网页内的暗色“删除”气泡。公开 UIKit `UIEditMenuInteraction` 通过只读、透明的原生文本 responder 提供系统 Copy / Lookup / Translate 动作，与 WKWebView 选词菜单共用 `ReaderEditMenuCoordinator`，只在高亮菜单中将“高亮”替换为 `.destructive` 的红色“删除”。未包含新版原生模块的开发包不恢复网页气泡，需要安装新包后验收。
 
-- [ ] 从可访问分支获取原提交，在当前 main 上 cherry-pick；适配拆分后的 `useReaderSelection`、ReaderScreen、Foliate adapter、settings 和已加固的 config plugin，保留插件版本检查、幂等性及失败前验证。
-- [ ] 使用公开 UIKit `UIEditMenuInteraction`（iOS 16+），不使用私有 API。
-- [ ] 与选词菜单逐项对照：摘录 / 高亮 / 添加笔记 / 在本书中搜索，以及 Copy / Lookup / Translate 等系统项；**只将“高亮”替换成红色 `.destructive` 的“移除”**，其余项目及行为不删减、不改变。添加笔记保留现有占位行为，本轮不实现笔记功能。
-- [ ] Copy 使用原生 `UIPasteboard`。点“移除”立即删除对应高亮并收起菜单，不出现二次确认；重新开书确认删除已持久化。写入失败时确认高亮恢复并提示错误。
-- [ ] 确认 `rangeCfi` 解析回对应的实时 Range，iframe 局部矩形映射至 WKWebView / 原生菜单坐标；覆盖边缘高亮、跨行文本、横竖屏、不同字号/边距和分页重排，不重复叠加 safe-area、分页 transform 或设备像素倍率。当前映射函数为 `mapIframeRectToWebView`，其窗口原点假设需与恢复后的 Swift presenter 坐标空间对照。
-- [ ] 切换书籍、翻页、打开 settings / 搜索、点击菜单外部后，菜单正确收起；再次长按选词仍显示原菜单，动作不会落到上一条高亮或上一部书。
-- [ ] 适配后运行 `npx tsc --noEmit`，验证 config plugin 和 DOM 接线，再与 expo-image-picker 一起加入下一次 EAS build；Swift 编译及上述交互仅在新包真机测试通过后标记完成。
+- [ ] 与选词菜单逐项对照：摘录 / 添加笔记 / 在本书中搜索，以及 Copy / Lookup / Translate 等系统项保持原行为，只有“高亮”变为红色“删除”。添加笔记仍为现有占位。
+- [ ] Copy 使用原生 `UIPasteboard`；Lookup / Translate 处理被点击高亮的原文，系统项及其语言、设备可用性与选词菜单一致。
+- [ ] 点“删除”立即收起菜单，无二次确认；数据库写入成功后移除高亮，重新开书确认删除已持久化。写入失败时高亮保留并提示错误。
+- [ ] 菜单贴近被点击的高亮行：覆盖边缘、跨行及跨页高亮、横竖屏、不同字号/边距和分页重排。iframe 局部矩形映射为 WKWebView viewport 坐标，原生 responder 直接位于该 WebView 中，不再叠加窗口 / safe-area 偏移、分页 transform 或设备像素倍率。
+- [ ] 切换书籍、翻页、打开 settings / 搜索、点击菜单外部后正确收起；再次长按选词仍显示“高亮”，延迟回调不会删除另一条高亮或另一本书的内容。
+- [ ] EAS development build 的 Swift 编译成功，安装新包后逐项验收。类型检查、config plugin 补丁测试与浏览器 EPUB 回归通过不能替代真机结果。
 
 ### 其余真机场景
 

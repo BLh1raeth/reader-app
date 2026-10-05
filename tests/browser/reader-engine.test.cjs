@@ -89,8 +89,11 @@ test('real Foliate reader blocks book scripts and remote assets while preserving
         const { DEFAULT_READER_SETTINGS } = await import('/src/features/reader/reader-settings.ts');
         const host = document.querySelector('#reader');
         window.footnote = null;
-        const engine = new FoliateEpubEngineAdapter(host, () => {}, () => {}, () => {}, () => {}, () => {},
-          () => {}, (payload) => { window.footnote = payload; }, () => false, () => {});
+        let chromeTaps = 0;
+        window.highlightTap = null;
+        const engine = new FoliateEpubEngineAdapter(host, () => {}, () => { chromeTaps++; }, () => {}, () => {}, () => {},
+          () => {}, (payload) => { window.footnote = payload; }, () => false,
+          (payload) => { window.highlightTap = payload; });
         const input = {
           bookId: 'fixture', fileName: 'fixture.epub', sourceKind, base64,
           entries: Object.entries(entries).map(([name, encoded]) => ({ name, uncompressedSize: atob(encoded).length })),
@@ -109,7 +112,46 @@ test('real Foliate reader blocks book scripts and remote assets while preserving
           && !frame.querySelector('#unsafe').getAttribute('href');
         const localStylesLoaded = getComputedStyle(frame.querySelector('#first')).borderTopWidth === '3px';
         const localImageLoaded = image.complete && image.naturalWidth > 0;
+        // Resolve a real painted CFI and exercise iframe pointer hit-testing.
+        // Offset + scale the host so accidentally sending iframe-local pixels
+        // or adding a safe-area/device scale a second time cannot pass.
+        host.style.marginLeft = '17px'; host.style.marginTop = '23px';
+        host.style.transform = 'scale(0.9)'; host.style.transformOrigin = '0 0';
+        const highlightView = host.querySelector('foliate-view');
+        const range = frame.createRange();
+        const firstText = frame.querySelector('#first').firstChild;
+        range.setStart(firstText, 0); range.setEnd(firstText, 4);
+        const rangeCfi = highlightView.getCFI(0, range);
+        await engine.addAnnotation(rangeCfi, 0);
+        const rect = range.getClientRects()[0];
+        const iframe = frame.defaultView.frameElement;
+        const iframeRect = iframe.getBoundingClientRect();
+        const expectedRect = {
+          x: iframeRect.left + rect.left * iframeRect.width / iframe.clientWidth,
+          y: iframeRect.top + rect.top * iframeRect.height / iframe.clientHeight,
+          width: rect.width * iframeRect.width / iframe.clientWidth,
+          height: rect.height * iframeRect.height / iframe.clientHeight,
+        };
+        const tapHighlight = () => {
+          const init = { bubbles: true, isPrimary: true, pointerId: 1,
+            clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+            screenX: 195, screenY: 120 };
+          frame.querySelector('#first').dispatchEvent(new frame.defaultView.PointerEvent('pointerdown', init));
+          frame.querySelector('#first').dispatchEvent(new frame.defaultView.PointerEvent('pointerup', init));
+        };
+        const beforeTapCfi = engine.getLocation().cfi;
+        tapHighlight();
+        const highlightTap = window.highlightTap;
+        const highlightTextMatchesCfi = highlightTap && highlightView.resolveCFI(highlightTap.rangeCfi).anchor(frame).toString().trim() === highlightTap.text;
+        const highlightTapLeavesPage = engine.getLocation().cfi === beforeTapCfi && chromeTaps === 0;
+        const noDeleteBubble = !frame.querySelector('[data-reader-highlight-bubble]');
+        const paintKeptUntilDelete = engine.highlightRanges.get(frame)?.some((item) => item.rangeCfi === rangeCfi);
+        await engine.removeAnnotation(rangeCfi);
+        const highlightRemoved = !engine.highlightRanges.get(frame)?.some((item) => item.rangeCfi === rangeCfi) && window.highlightTap === null;
+        await engine.addAnnotation(rangeCfi, 0); tapHighlight();
+        host.style.marginLeft = ''; host.style.marginTop = ''; host.style.transform = '';
         await engine.next();
+        const highlightDismissedOnTurn = window.highlightTap === null;
         const beforeFontChange = engine.getLocation().cfi;
         engine.setSettingsSessionActive(true);
         await engine.applySettings({ ...DEFAULT_READER_SETTINGS, fontFamily: 'serif', fontSize: 24 });
@@ -124,7 +166,9 @@ test('real Foliate reader blocks book scripts and remote assets while preserving
         engine.destroy();
         const restored = await engine.open({ ...input, restoreCfi: opened.cfi });
         engine.destroy();
-        return { safe, localStylesLoaded, localImageLoaded, footnote, fontAnchorVisible, fontApplied, cfi: opened.cfi, restoredCfi: restored.cfi };
+        return { safe, localStylesLoaded, localImageLoaded, footnote, fontAnchorVisible, fontApplied,
+          highlightTap, expectedRect, highlightTextMatchesCfi, highlightTapLeavesPage, noDeleteBubble,
+          paintKeptUntilDelete, highlightRemoved, highlightDismissedOnTurn, cfi: opened.cfi, restoredCfi: restored.cfi };
       }, { entries, base64, sourceKind });
       assert.equal(result.safe, true, sourceKind);
       assert.equal(result.localImageLoaded, true, sourceKind);
@@ -132,6 +176,17 @@ test('real Foliate reader blocks book scripts and remote assets while preserving
       assert.match(result.footnote, /这是一条脚注/);
       assert.equal(result.fontAnchorVisible, true, 'font repagination preserves the visible CFI anchor');
       assert.equal(result.fontApplied, true, 'the serif font preference reaches the chapter');
+      assert.equal(result.highlightTap?.text, '阅读测试');
+      assert.equal(result.highlightTap?.bookId, 'fixture');
+      assert.equal(result.highlightTextMatchesCfi, true, 'highlight text round-trips through its range CFI');
+      for (const key of ['x', 'y', 'width', 'height']) {
+        assert.ok(Math.abs(result.highlightTap.rect[key] - result.expectedRect[key]) < 0.01, `highlight anchor ${key} maps to the WebView viewport once`);
+      }
+      assert.equal(result.highlightTapLeavesPage, true, 'highlight taps do not turn pages or toggle chrome');
+      assert.equal(result.noDeleteBubble, true, 'the abandoned DOM delete bubble is absent');
+      assert.equal(result.paintKeptUntilDelete, true, 'opening a menu does not delete its highlight');
+      assert.equal(result.highlightRemoved, true, 'explicit removal clears the paint and menu request');
+      assert.equal(result.highlightDismissedOnTurn, true, 'page navigation invalidates the menu anchor');
       assert.match(result.cfi, /^epubcfi\(/);
       assert.equal(result.restoredCfi, result.cfi, sourceKind);
     }

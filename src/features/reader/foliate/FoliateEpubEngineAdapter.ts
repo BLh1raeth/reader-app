@@ -244,7 +244,7 @@ export class FoliateEpubEngineAdapter {
   // Live Range cache per loaded document, captured from the draw-annotation
   // event. Used for synchronous tap hit-testing; cleared on doc release.
   private highlightRanges = new Map<Document, Array<{ rangeCfi: string; range: Range }>>();
-  private highlightBubble: { doc: Document; element: HTMLElement } | null = null;
+  private highlightMenuActive = false;
   // A tap that begins with an active text selection is owned by selection
   // dismissal. The click handler consumes this flag so a footnote popover
   // never fires on the same tap (selection > footnote > page tap).
@@ -316,9 +316,9 @@ export class FoliateEpubEngineAdapter {
     // Synchronous "a footnote popover is on screen" signal from the host.
     // Read on every pointer-up so taps are classified modally while open.
     private readonly isFootnotePopoverOpen: () => boolean,
-    // A highlight was deleted from its in-doc bubble. The adapter already
-    // removed the paint; the host persists the deletion to SQLite.
-    private readonly onHighlightDeleteRequest: (rangeCfi: string) => void,
+    // Serialize the tapped highlight for the native edit menu; a null payload
+    // invalidates a menu when navigation or document teardown moves its anchor.
+    private readonly onHighlightTap: (payload: ReaderSelectionPayload | null) => void,
   ) {}
 
   async open(input: FoliateOpenInput): Promise<ReaderLocation> {
@@ -479,6 +479,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   applySettings(settings: ReaderSettings) {
+    this.dismissHighlightMenu();
     const normalized = normalizeReaderSettings(settings);
     const sessionAnchorCfi = this.settingsSessionAnchorCfi;
     this.settingsApplyQueue = this.settingsApplyQueue
@@ -540,6 +541,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   async goTo(location: string, reason: ReaderLocationChangeReason = 'programmatic') {
+    this.dismissHighlightMenu();
     const view = this.view;
     if (!view) throw new Error('Reader 尚未就绪。');
     const resolved = view.resolveNavigation?.(location) ?? view.book?.resolveHref?.(location);
@@ -949,6 +951,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   clearSelection() {
+    this.dismissHighlightMenu();
     for (const doc of this.loadedDocuments.keys()) doc.getSelection()?.removeAllRanges();
     this.clearActiveSelection(false);
   }
@@ -1112,7 +1115,7 @@ export class FoliateEpubEngineAdapter {
       const next = items.filter((item) => item.rangeCfi !== rangeCfi);
       if (next.length !== items.length) this.highlightRanges.set(doc, next);
     }
-    this.dismissHighlightBubble();
+    this.dismissHighlightMenu();
     const view = this.view;
     if (!view?.deleteAnnotation) return;
     try {
@@ -1138,7 +1141,7 @@ export class FoliateEpubEngineAdapter {
   // Synchronous tap hit-test against the cached live Ranges. Both the tap's
   // clientX/Y and getClientRects() live in the section iframe's viewport
   // coordinate space, so they compare directly (no screenX mapping needed).
-  private hitTestHighlight(doc: Document, clientX: number, clientY: number): string | null {
+  private hitTestHighlight(doc: Document, clientX: number, clientY: number): ReaderSelectionPayload | null {
     const items = this.highlightRanges.get(doc);
     if (!items || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
     for (const { rangeCfi, range } of items) {
@@ -1151,67 +1154,23 @@ export class FoliateEpubEngineAdapter {
       for (const rect of Array.from(rects)) {
         if (rect.width <= 0 || rect.height <= 0) continue;
         if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
-          return rangeCfi;
+          const index = this.loadedDocuments.get(doc);
+          if (index === undefined) return null;
+          const payload = this.serializeSelectionRange(doc, index, range);
+          if (!payload) return null;
+          // Anchor to the tapped line, not the union of a multi-page Range.
+          // The cached CFI is the persisted annotation's exact identity.
+          return { ...payload, rangeCfi, rect: this.mapIframeRectToWebView(rect, doc) };
         }
       }
     }
     return null;
   }
 
-  private showHighlightDeleteBubble(doc: Document, rangeCfi: string, clientX: number, clientY: number) {
-    this.dismissHighlightBubble();
-    const bubble = doc.createElement('div');
-    bubble.setAttribute('data-reader-ui', 'true');
-    bubble.setAttribute('data-reader-highlight-bubble', 'true');
-    // position:fixed shares the tap's iframe-viewport coordinate space.
-    bubble.style.cssText = [
-      'position:fixed',
-      'z-index:2147483647',
-      `left:${Math.round(clientX)}px`,
-      `top:${Math.round(clientY)}px`,
-      'transform:translate(-50%,-135%)',
-      'pointer-events:auto',
-    ].join(';');
-    const button = doc.createElement('button');
-    button.type = 'button';
-    button.textContent = '删除';
-    button.style.cssText = [
-      'appearance:none',
-      'border:none',
-      'border-radius:11px',
-      'background:rgba(28,28,30,0.94)',
-      'color:#fff',
-      'font-size:15px',
-      'font-family:-apple-system,system-ui,sans-serif',
-      'padding:9px 20px',
-      'box-shadow:0 4px 16px rgba(0,0,0,0.35)',
-      'cursor:pointer',
-    ].join(';');
-    button.addEventListener('click', (event) => {
-      event.stopPropagation();
-      event.preventDefault();
-      void this.removeAnnotation(rangeCfi).then(() => {
-        try {
-          this.onHighlightDeleteRequest(rangeCfi);
-        } catch (error) {
-          if (__DEV__) console.warn('[HIGHLIGHT_DELETE_REQUEST_FAILED]', error);
-        }
-      });
-    });
-    bubble.append(button);
-    // data-reader-ui keeps this out of text selection (readSelection filter).
-    doc.body?.append(bubble);
-    this.highlightBubble = { doc, element: bubble };
-  }
-
-  private dismissHighlightBubble() {
-    const bubble = this.highlightBubble;
-    this.highlightBubble = null;
-    try {
-      bubble?.element.remove();
-    } catch {
-      // Already detached with its document.
-    }
+  private dismissHighlightMenu() {
+    if (!this.highlightMenuActive) return;
+    this.highlightMenuActive = false;
+    this.onHighlightTap(null);
   }
 
   destroy() {
@@ -1245,7 +1204,7 @@ export class FoliateEpubEngineAdapter {
     this.activeSelection = null;
     this.bookId = null;
     this.loadedDocuments.clear();
-    this.dismissHighlightBubble();
+    this.dismissHighlightMenu();
     // Excerpts Tab Core C: cancel any in-flight transient reveal; its
     // overlayer is being torn down with the view, and a newer open gets a
     // fresh generation. Settle the waiters so their promises never dangle;
@@ -1312,6 +1271,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   private readonly handleRelocate = () => {
+    this.dismissHighlightMenu();
     try {
       const location = this.getLocation();
       // Attach the explicit navigation reason (if any) stamped by the call
@@ -1344,7 +1304,7 @@ export class FoliateEpubEngineAdapter {
       this.footnoteCleanups.get(loadedDoc)?.();
       this.footnoteCleanups.delete(loadedDoc);
       this.highlightRanges.delete(loadedDoc);
-      if (this.highlightBubble?.doc === loadedDoc) this.highlightBubble = null;
+      this.dismissHighlightMenu();
       this.loadedDocuments.delete(loadedDoc);
     }
     if (this.activeSelection && this.activeSelection.doc !== doc) {
@@ -1844,6 +1804,7 @@ export class FoliateEpubEngineAdapter {
       }
       return;
     }
+    this.dismissHighlightMenu();
     const previous = this.activeSelection?.payload;
     this.activeSelection = { doc, payload };
     this.interactionState = 'selecting';
@@ -1858,7 +1819,13 @@ export class FoliateEpubEngineAdapter {
     const bookId = this.bookId;
     const selection = doc.getSelection() ?? doc.defaultView?.getSelection();
     if (!view?.getCFI || !bookId || !selection || selection.rangeCount < 1 || selection.isCollapsed) return null;
-    const range = selection.getRangeAt(0).cloneRange();
+    return this.serializeSelectionRange(doc, index, selection.getRangeAt(0).cloneRange());
+  }
+
+  private serializeSelectionRange(doc: Document, index: number, range: Range): ReaderSelectionPayload | null {
+    const view = this.view;
+    const bookId = this.bookId;
+    if (!view?.getCFI || !bookId) return null;
     if (!doc.body?.contains(range.startContainer) || !doc.body.contains(range.endContainer)) return null;
     const startElement = this.getSelectionElement(range.startContainer);
     const endElement = this.getSelectionElement(range.endContainer);
@@ -1930,14 +1897,7 @@ export class FoliateEpubEngineAdapter {
   private readonly handlePointerDown = (event: PointerEvent) => {
     const doc = event.currentTarget as Document;
     if (!event.isPrimary || this.reflowing) return;
-    // A tap outside the highlight delete bubble dismisses it. Taps inside
-    // the bubble (the delete button) must not dismiss before click fires.
-    // Cross-window instanceof is unreliable here; guard with nodeType like
-    // the tap-target classification below.
-    const downTarget = (event.target as Node | null)?.nodeType === 1 ? (event.target as Element) : null;
-    if (this.highlightBubble && !downTarget?.closest('[data-reader-highlight-bubble]')) {
-      this.dismissHighlightBubble();
-    }
+    this.dismissHighlightMenu();
     const startedWhileTurning = this.interactionState === 'turning';
     this.pointerSession = {
       pointerId: event.pointerId,
@@ -2031,15 +1991,16 @@ export class FoliateEpubEngineAdapter {
       if (__DEV__) console.log('[FOOTNOTE_MODAL_SUPPRESS]');
       return;
     }
-    // Highlight tap: landing on a painted highlight opens the delete bubble
+    // Highlight tap: landing on a painted highlight opens the native edit menu
     // instead of turning the page or toggling chrome. Selection gestures,
     // interactive targets, and reflowing states keep their existing paths.
     if (isTap && !selectionActive && !session.selectionWasActive && !interactiveTarget && !blockedByState
       && this.view && this.restoreState === 'active') {
-      const hitRangeCfi = this.hitTestHighlight(doc, event.clientX, event.clientY);
-      if (hitRangeCfi) {
+      const payload = this.hitTestHighlight(doc, event.clientX, event.clientY);
+      if (payload) {
         this.interactionState = 'idle';
-        this.showHighlightDeleteBubble(doc, hitRangeCfi, event.clientX, event.clientY);
+        this.highlightMenuActive = true;
+        this.onHighlightTap(payload);
         return;
       }
     }
@@ -2090,6 +2051,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   private async requestPageTurn(direction: 'next' | 'prev') {
+    this.dismissHighlightMenu();
     if (!this.view || this.restoreState !== 'active' || this.reflowing) return;
     if (this.turnLoopActive) {
       this.queuePageTurn({ direction });
@@ -2306,6 +2268,7 @@ export class FoliateEpubEngineAdapter {
         return;
       }
       if (Math.abs(width - nextWidth) < 2 && Math.abs(height - nextHeight) < 2) return;
+      this.dismissHighlightMenu();
       width = nextWidth;
       height = nextHeight;
       if (this.resizeTimer !== null) window.clearTimeout(this.resizeTimer);

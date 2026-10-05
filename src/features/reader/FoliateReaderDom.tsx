@@ -41,6 +41,7 @@ import type {
 
 type ReaderDomProps = import('expo/dom').DOMProps & {
   readerEditMenuEnabled?: boolean;
+  readerHighlightMenuRequest?: string;
   onReaderSelectionAction?: (event: ReaderSelectionActionEvent) => void;
 };
 
@@ -74,7 +75,7 @@ type Props = {
   highlightSnapshot: ReaderHighlightSnapshotItem[] | null;
   textMeasureRequest: ReaderTextMeasureRequest | null;
   onTextMeasureResult: (result: ReaderTextMeasureResult) => Promise<void>;
-  onHighlightDeleteRequest: (rangeCfi: string) => void;
+  onHighlightTap: (payload: ReaderSelectionPayload | null) => void;
   onReady: (location: ReaderLocation) => Promise<void>;
   onLocation: (location: ReaderLocation, restoreState: ReaderRestoreState) => Promise<void>;
   onDiagnostic: (diagnostic: ReaderEngineDiagnostic) => Promise<void>;
@@ -100,7 +101,7 @@ type Props = {
   dom?: ReaderDomProps;
 };
 
-export default function FoliateReaderDom({ source, restoreCfi, externalTargetCfi, excerptNavigationRequest, onExcerptNavigationResult, pageCountCache, readerSettings, settingsSessionActive, tocNavigationRequest, bookmarkSnapshotRequest, bookmarkNavigationRequest, pageLocationRequest, searchRequest, searchNavigationRequest, selectionCommand, excerptVerificationRequest, highlightSnapshot, textMeasureRequest, onTextMeasureResult, onHighlightDeleteRequest, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen }: Props) {
+export default function FoliateReaderDom({ source, restoreCfi, externalTargetCfi, excerptNavigationRequest, onExcerptNavigationResult, pageCountCache, readerSettings, settingsSessionActive, tocNavigationRequest, bookmarkSnapshotRequest, bookmarkNavigationRequest, pageLocationRequest, searchRequest, searchNavigationRequest, selectionCommand, excerptVerificationRequest, highlightSnapshot, textMeasureRequest, onTextMeasureResult, onHighlightTap, onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<FoliateEpubEngineAdapter | null>(null);
   const loadedSessionRef = useRef<string | null>(null);
@@ -109,8 +110,8 @@ export default function FoliateReaderDom({ source, restoreCfi, externalTargetCfi
   const highlightSnapshotRef = useRef(highlightSnapshot);
   highlightSnapshotRef.current = highlightSnapshot;
   const settingsApplicationRef = useRef<Promise<void>>(Promise.resolve());
-  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest, onExcerptNavigationResult });
-  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightDeleteRequest, onExcerptNavigationResult };
+  const callbacksRef = useRef({ onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightTap, onExcerptNavigationResult });
+  callbacksRef.current = { onReady, onLocation, onDiagnostic, onChromeRequest, onError, onResourceRequest, onPageCount, onToc, onTocNavigationResult, onBookmarkSnapshot, onBookmarkNavigationResult, onPageLocationUpdate, onSearchUpdate, onSearchNavigationResult, onTextMeasureResult, onSelectionChange, onFootnoteOpen, footnoteModalOpen, onHighlightTap, onExcerptNavigationResult };
 
   useEffect(() => {
     document.documentElement.lang = 'zh-CN';
@@ -200,7 +201,7 @@ export default function FoliateReaderDom({ source, restoreCfi, externalTargetCfi
       // Getter (not a snapshot): the adapter is constructed once, but the
       // modal flag changes over time; callbacksRef always holds the latest.
       () => callbacksRef.current.footnoteModalOpen,
-      (rangeCfi) => { callbacksRef.current.onHighlightDeleteRequest(rangeCfi); },
+      (payload) => { callbacksRef.current.onHighlightTap(payload); },
     );
     adapterRef.current = adapter;
     loadedSessionRef.current = nextSource.sessionId;
@@ -399,6 +400,9 @@ export default function FoliateReaderDom({ source, restoreCfi, externalTargetCfi
     if (!command) return;
     if (command.type === 'clear') {
       adapterRef.current?.clearSelection();
+    } else if (command.type === 'remove-highlight') {
+      const adapter = adapterRef.current;
+      if (adapter) void adapter.removeAnnotation(command.rangeCfi).then(() => { adapter.clearSelection(); });
     } else if (command.type === 'apply-highlight') {
       // Paint first (it only needs the CFI string), then release the native
       // selection so the iOS edit menu dismisses like the excerpt flow.
