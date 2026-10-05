@@ -16,7 +16,8 @@ export function BookTitleMenu({ book, children, handlers }: {
   }
 
   const actions: MenuAction[] = [
-    { id: 'share', image: 'square.and.arrow.up' as SFSymbol, title: '分享' },
+    ...(book.archivedAt ? [] : [{ id: 'share', image: 'square.and.arrow.up' as SFSymbol, title: '分享' }]),
+    { id: 'edit-tags', image: 'tag' as SFSymbol, title: '编辑标签' },
     {
       id: 'toggle-finished',
       image: (book.state === 'finished' ? 'arrow.uturn.backward' : 'checkmark.circle') as SFSymbol,
@@ -27,7 +28,7 @@ export function BookTitleMenu({ book, children, handlers }: {
       image: 'info.circle' as SFSymbol,
       title: '编辑图书信息',
       subactions: [
-        { id: 'edit-cover', image: 'photo' as SFSymbol, title: '封面' },
+        ...(book.archivedAt ? [] : [{ id: 'edit-cover', image: 'photo' as SFSymbol, title: '封面' }]),
         { id: 'edit-title', image: 'pencil' as SFSymbol, title: '书名' },
         { id: 'edit-author', image: 'person' as SFSymbol, title: '作者' },
         { id: 'restore-original', image: 'arrow.counterclockwise' as SFSymbol, title: '恢复原始信息' },
@@ -37,6 +38,7 @@ export function BookTitleMenu({ book, children, handlers }: {
   ];
 
   const handleAction = (actionId: string) => {
+    if (actionId === 'edit-tags') handlers.onEditTags(book);
     if (actionId === 'share') handlers.onShare(book);
     if (actionId === 'toggle-finished') handlers.onToggleFinished(book);
     if (actionId === 'edit-cover') handlers.onEditCover(book);

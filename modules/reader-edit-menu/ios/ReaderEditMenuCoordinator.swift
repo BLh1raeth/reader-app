@@ -8,8 +8,10 @@ public final class ReaderEditMenuCoordinator {
   public typealias ActionHandler = (String) -> Void
 
   private let actionHandler: ActionHandler
+  private let isHighlightMenu: Bool
 
-  public init(actionHandler: @escaping ActionHandler) {
+  public init(isHighlightMenu: Bool = false, actionHandler: @escaping ActionHandler) {
+    self.isHighlightMenu = isHighlightMenu
     self.actionHandler = actionHandler
   }
 
@@ -47,11 +49,12 @@ public final class ReaderEditMenuCoordinator {
           action: "excerpt"
         ),
         self.readerAction(
-          titleKey: "reader.editMenu.highlight",
-          fallback: "高亮",
+          titleKey: self.isHighlightMenu ? "reader.editMenu.deleteHighlight" : "reader.editMenu.highlight",
+          fallback: self.isHighlightMenu ? "删除" : "高亮",
           symbol: "highlighter",
           identifier: "com.readerapp.selection.highlight",
-          action: "highlight"
+          action: self.isHighlightMenu ? "deleteHighlight" : "highlight",
+          attributes: self.isHighlightMenu ? .destructive : []
         ),
         self.readerAction(
           titleKey: "reader.editMenu.note",
@@ -90,12 +93,14 @@ public final class ReaderEditMenuCoordinator {
     fallback: String,
     symbol: String,
     identifier: String,
-    action: String
+    action: String,
+    attributes: UIMenuElement.Attributes = []
   ) -> UIAction {
     UIAction(
       title: ReaderEditMenuStrings.localized(titleKey, fallback: fallback),
       image: UIImage(systemName: symbol),
-      identifier: UIAction.Identifier(identifier)
+      identifier: UIAction.Identifier(identifier),
+      attributes: attributes
     ) { [weak self] _ in
       self?.actionHandler(action)
     }

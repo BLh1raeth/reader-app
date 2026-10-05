@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { reportOperationError } from '../../../shared/operation-errors';
 import { bookmarkRepository, type ReaderBookmark } from '../bookmark-repository';
 import type {
   ReaderBookmarkSnapshot,
@@ -148,6 +149,7 @@ export function useReaderBookmarks({
       setBookmarks(await bookmarkRepository.list(bookId));
     } catch (error) {
       console.warn('[BOOKMARK_TOGGLE_FAILED]', error);
+      reportOperationError(error, '书签保存失败');
     } finally {
       setBookmarkBusy(false);
     }

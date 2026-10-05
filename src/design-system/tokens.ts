@@ -44,7 +44,7 @@ export const tokens = {
     coverListTight: { color: '#000000', opacity: 0.2, radius: 2, offsetY: 1 },
   },
   colors: {
-    background: '#F3F2F8',
+    background: PlatformColor('systemGroupedBackground'),
     label: PlatformColor('label'),
     secondaryLabel: PlatformColor('secondaryLabel'),
     tertiaryLabel: PlatformColor('tertiaryLabel'),

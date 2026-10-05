@@ -79,8 +79,8 @@ export const readingAnalyticsRepository = {
   },
 
   /**
-   * All 1-minute speed samples, oldest first. Each row's chars IS the
-   * speed (chars/min) for its fixed 60s window; only chars > 0 windows
+   * All speed samples, oldest first. Each row's chars stores the normalized
+   * speed (chars/min) for its eligible reading time; only chars > 0 windows
    * were stored. Personal-app volume: full scan is fine.
    */
   async listSpeedSamplesForAnalytics(): Promise<ReadingSpeedSampleRow[]> {

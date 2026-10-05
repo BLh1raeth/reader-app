@@ -8,7 +8,6 @@ import type {
   ReaderEngineDiagnostic,
   ReaderLocation,
   ReaderLocationChangeReason,
-  ReaderResourcePayload,
   ReaderRestoreState,
   ReaderSearchResult,
   ReaderExcerptVerificationItem,
@@ -17,15 +16,14 @@ import type {
   ReaderPageLocationResult,
   ReaderPageLocationTarget,
   ReaderTocItem,
-  ReaderZipEntry,
 } from '../reader-types';
 import type { ReaderPageCountCache } from '../reader-page-cache-repository';
 // foliate-js is statically imported (not dynamically) so its fetch+eval is
 // paid once with the DOM bundle — pre-warmed at app launch — instead of
 // ~450ms serially on every book open. search.js/text-walker.js stay dynamic:
 // search is not on the open critical path.
-import { EPUB } from 'foliate-js/epub.js';
-import { makeBook } from 'foliate-js/view.js';
+import { createFoliateBook, type FoliateOpenInput } from './book-loader';
+export type { FoliateOpenInput } from './book-loader';
 import { getGlobalReaderPage } from '../reader-pagination';
 import {
   FOOTNOTE_EXTERNAL_SCHEME_RE,
@@ -47,7 +45,6 @@ import {
 } from './footnote-detection';
 import {
   anchorToDocPoint,
-  base64ToBytes,
   clampPercentage,
   countReadableCharacters,
   cssText,
@@ -55,12 +52,12 @@ import {
   drawRevealRects,
   drawSearchResultHighlight,
   mapToc,
-  normalizeBookStyles,
   rangeReadableText,
 } from './foliate-utils';
 import type { DocPoint, FoliateBook, FoliateResolvedHref } from './foliate-utils';
 import {
   DEFAULT_READER_SETTINGS,
+  READER_FONT_CSS,
   normalizeReaderSettings,
   readerLayoutSettingsEqual,
   readerSettingsEqual,
@@ -101,6 +98,7 @@ type FoliateRenderer = HTMLElement & {
   atEnd?: boolean;
   page?: number;
   pages?: number;
+  render?: () => void;
   getContents?: () => Array<{
     index: number;
     overlayer?: FoliateOverlayer | null;
@@ -218,55 +216,7 @@ type PendingPageTurn = {
 // functions, no adapter state). Imported below.
 
 
-export type FoliateOpenInput = {
-  bookId: string;
-  base64?: string;
-  entries?: ReaderZipEntry[];
-  fileName: string;
-  onResourceRequest: (name: string) => Promise<ReaderResourcePayload | null>;
-  /** Metadata texts prefetched natively; checked before any bridge request. */
-  prefetchedText?: Record<string, string>;
-  restoreCfi: string | null;
-  /**
-   * Excerpts Tab Core C: external navigation target (e.g. an excerpt's range
-   * CFI from its Source row). When set and resolvable it becomes the initial
-   * navigation intent, winning over restoreCfi; when unresolvable the reader
-   * falls back to restoreCfi and reports EXTERNAL_TARGET_RESULT.
-   */
-  externalTargetCfi?: string | null;
-  sourceKind: 'zip-resource-loader' | 'full-base64-fallback';
-  pageCountCache: ReaderPageCountCache | null;
-  readerSettings: ReaderSettings;
-};
-
 type ReaderPageCountResult = Omit<ReaderPageCountCache, 'bookId' | 'updatedAt'>;
-
-
-async function createOnDemandBook(
-  input: FoliateOpenInput,
-): Promise<FoliateBook> {
-  const entries = new Map((input.entries ?? []).map((entry) => [entry.name, entry]));
-  const decoder = new TextDecoder();
-  const prefetchedText = input.prefetchedText ?? {};
-  const loadBytes = async (name: string) => {
-    const resource = await input.onResourceRequest(name);
-    if (!resource) return null;
-    return base64ToBytes(resource.base64);
-  };
-  return new EPUB({
-    loadText: async (name: string) => {
-      // Opening metadata (container.xml, OPF, encryption.xml, NCX/nav) was
-      // read natively alongside the source: answer straight from memory
-      // instead of paying a DOM<->native round trip per file.
-      const hit = prefetchedText[name];
-      if (hit !== undefined) return hit;
-      const bytes = await loadBytes(name);
-      return bytes ? decoder.decode(bytes) : '';
-    },
-    loadBlob: async (name: string) => (await loadBytes(name)) ?? new Uint8Array(),
-    getSize: (name: string) => entries.get(name)?.uncompressedSize ?? 0,
-  }).init() as Promise<FoliateBook>;
-}
 
 
 // Phase 1 highlight color: single default blue. The color column already
@@ -295,7 +245,7 @@ export class FoliateEpubEngineAdapter {
   // Live Range cache per loaded document, captured from the draw-annotation
   // event. Used for synchronous tap hit-testing; cleared on doc release.
   private highlightRanges = new Map<Document, Array<{ rangeCfi: string; range: Range }>>();
-  private highlightBubble: { doc: Document; element: HTMLElement } | null = null;
+  private highlightMenuActive = false;
   // A tap that begins with an active text selection is owned by selection
   // dismissal. The click handler consumes this flag so a footnote popover
   // never fires on the same tap (selection > footnote > page tap).
@@ -367,9 +317,9 @@ export class FoliateEpubEngineAdapter {
     // Synchronous "a footnote popover is on screen" signal from the host.
     // Read on every pointer-up so taps are classified modally while open.
     private readonly isFootnotePopoverOpen: () => boolean,
-    // A highlight was deleted from its in-doc bubble. The adapter already
-    // removed the paint; the host persists the deletion to SQLite.
-    private readonly onHighlightDeleteRequest: (rangeCfi: string) => void,
+    // Serialize the tapped highlight for the native edit menu; a null payload
+    // invalidates a menu when navigation or document teardown moves its anchor.
+    private readonly onHighlightTap: (payload: ReaderSelectionPayload | null) => void,
   ) {}
 
   async open(input: FoliateOpenInput): Promise<ReaderLocation> {
@@ -382,9 +332,7 @@ export class FoliateEpubEngineAdapter {
     // foliate-js is statically imported at the top of this module; no
     // per-open dynamic import here.
     this.onDiagnostic({ event: 'BOOK_BUILD_START' });
-    const bookPromise = input.sourceKind === 'zip-resource-loader'
-      ? createOnDemandBook(input)
-      : null;
+    const bookPromise = createFoliateBook(input);
     this.onDiagnostic({ event: 'FOLIATE_IMPORT_END' });
 
     const view = document.createElement('foliate-view') as FoliateView;
@@ -393,9 +341,8 @@ export class FoliateEpubEngineAdapter {
     view.style.height = '100%';
     view.style.backgroundColor = this.getReaderColors().background;
     view.style.visibility = 'hidden';
-    // Page turns are driven by foliate's own scroll-container slide (see
-    // turnWithSlide). No snapshot animation: the live foliate DOM is the
-    // only page surface, so there is nothing to exclude from a transition.
+    // The live Foliate DOM is the page surface; navigation is serialized
+    // so queued turns cannot race restore or repagination.
     view.setAttribute('flow', 'paginated');
     view.addEventListener('relocate', this.handleRelocate);
     view.addEventListener('load', this.handleDocumentLoad as EventListener);
@@ -403,13 +350,11 @@ export class FoliateEpubEngineAdapter {
     this.host.replaceChildren(view);
     this.view = view;
 
-    const book = input.sourceKind === 'zip-resource-loader'
-      ? await bookPromise!
-      : await makeBook(new File([base64ToBytes(input.base64 ?? '')], input.fileName, { type: 'application/epub+zip' })) as FoliateBook;
+    const book = await bookPromise;
     this.onDiagnostic({ event: 'BOOK_BUILD_END' });
-    normalizeBookStyles(book);
     this.onDiagnostic({ event: 'BOOK_OPEN_START' });
     await view.open(book);
+    this.guardPaginatorLayout(view.renderer);
     view.classList.toggle('reader-reflowable', !view.isFixedLayout);
     // foliate parses EPUB3 nav or falls back to EPUB2 NCX during view.open().
     // Publish the result before init emits the first active relocation; that
@@ -536,6 +481,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   applySettings(settings: ReaderSettings) {
+    this.dismissHighlightMenu();
     const normalized = normalizeReaderSettings(settings);
     const sessionAnchorCfi = this.settingsSessionAnchorCfi;
     this.settingsApplyQueue = this.settingsApplyQueue
@@ -597,6 +543,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   async goTo(location: string, reason: ReaderLocationChangeReason = 'programmatic') {
+    this.dismissHighlightMenu();
     const view = this.view;
     if (!view) throw new Error('Reader 尚未就绪。');
     const resolved = view.resolveNavigation?.(location) ?? view.book?.resolveHref?.(location);
@@ -881,8 +828,8 @@ export class FoliateEpubEngineAdapter {
 
         const locatorBook = await this.createCounterBook(input);
         if (run !== this.pageLocatorRun || layoutSignature !== this.layoutSignature) return;
-        normalizeBookStyles(locatorBook);
         await locatorView.open(locatorBook);
+        this.guardPaginatorLayout(locatorView.renderer);
         locatorView.classList.toggle('reader-reflowable', !locatorView.isFixedLayout);
         locatorOpen = true;
         locatorView.renderer?.setAttribute('margin', READER_VERTICAL_MARGIN);
@@ -1007,6 +954,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   clearSelection() {
+    this.dismissHighlightMenu();
     for (const doc of this.loadedDocuments.keys()) doc.getSelection()?.removeAllRanges();
     this.clearActiveSelection(false);
   }
@@ -1170,7 +1118,7 @@ export class FoliateEpubEngineAdapter {
       const next = items.filter((item) => item.rangeCfi !== rangeCfi);
       if (next.length !== items.length) this.highlightRanges.set(doc, next);
     }
-    this.dismissHighlightBubble();
+    this.dismissHighlightMenu();
     const view = this.view;
     if (!view?.deleteAnnotation) return;
     try {
@@ -1196,7 +1144,7 @@ export class FoliateEpubEngineAdapter {
   // Synchronous tap hit-test against the cached live Ranges. Both the tap's
   // clientX/Y and getClientRects() live in the section iframe's viewport
   // coordinate space, so they compare directly (no screenX mapping needed).
-  private hitTestHighlight(doc: Document, clientX: number, clientY: number): string | null {
+  private hitTestHighlight(doc: Document, clientX: number, clientY: number): ReaderSelectionPayload | null {
     const items = this.highlightRanges.get(doc);
     if (!items || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
     for (const { rangeCfi, range } of items) {
@@ -1209,67 +1157,23 @@ export class FoliateEpubEngineAdapter {
       for (const rect of Array.from(rects)) {
         if (rect.width <= 0 || rect.height <= 0) continue;
         if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
-          return rangeCfi;
+          const index = this.loadedDocuments.get(doc);
+          if (index === undefined) return null;
+          const payload = this.serializeSelectionRange(doc, index, range);
+          if (!payload) return null;
+          // Anchor to the tapped line, not the union of a multi-page Range.
+          // The cached CFI is the persisted annotation's exact identity.
+          return { ...payload, rangeCfi, rect: this.mapIframeRectToWebView(rect, doc) };
         }
       }
     }
     return null;
   }
 
-  private showHighlightDeleteBubble(doc: Document, rangeCfi: string, clientX: number, clientY: number) {
-    this.dismissHighlightBubble();
-    const bubble = doc.createElement('div');
-    bubble.setAttribute('data-reader-ui', 'true');
-    bubble.setAttribute('data-reader-highlight-bubble', 'true');
-    // position:fixed shares the tap's iframe-viewport coordinate space.
-    bubble.style.cssText = [
-      'position:fixed',
-      'z-index:2147483647',
-      `left:${Math.round(clientX)}px`,
-      `top:${Math.round(clientY)}px`,
-      'transform:translate(-50%,-135%)',
-      'pointer-events:auto',
-    ].join(';');
-    const button = doc.createElement('button');
-    button.type = 'button';
-    button.textContent = '删除';
-    button.style.cssText = [
-      'appearance:none',
-      'border:none',
-      'border-radius:11px',
-      'background:rgba(28,28,30,0.94)',
-      'color:#fff',
-      'font-size:15px',
-      'font-family:-apple-system,system-ui,sans-serif',
-      'padding:9px 20px',
-      'box-shadow:0 4px 16px rgba(0,0,0,0.35)',
-      'cursor:pointer',
-    ].join(';');
-    button.addEventListener('click', (event) => {
-      event.stopPropagation();
-      event.preventDefault();
-      void this.removeAnnotation(rangeCfi).then(() => {
-        try {
-          this.onHighlightDeleteRequest(rangeCfi);
-        } catch (error) {
-          if (__DEV__) console.warn('[HIGHLIGHT_DELETE_REQUEST_FAILED]', error);
-        }
-      });
-    });
-    bubble.append(button);
-    // data-reader-ui keeps this out of text selection (readSelection filter).
-    doc.body?.append(bubble);
-    this.highlightBubble = { doc, element: bubble };
-  }
-
-  private dismissHighlightBubble() {
-    const bubble = this.highlightBubble;
-    this.highlightBubble = null;
-    try {
-      bubble?.element.remove();
-    } catch {
-      // Already detached with its document.
-    }
+  private dismissHighlightMenu() {
+    if (!this.highlightMenuActive) return;
+    this.highlightMenuActive = false;
+    this.onHighlightTap(null);
   }
 
   destroy() {
@@ -1303,7 +1207,7 @@ export class FoliateEpubEngineAdapter {
     this.activeSelection = null;
     this.bookId = null;
     this.loadedDocuments.clear();
-    this.dismissHighlightBubble();
+    this.dismissHighlightMenu();
     // Excerpts Tab Core C: cancel any in-flight transient reveal; its
     // overlayer is being torn down with the view, and a newer open gets a
     // fresh generation. Settle the waiters so their promises never dangle;
@@ -1370,6 +1274,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   private readonly handleRelocate = () => {
+    this.dismissHighlightMenu();
     try {
       const location = this.getLocation();
       // Attach the explicit navigation reason (if any) stamped by the call
@@ -1402,7 +1307,7 @@ export class FoliateEpubEngineAdapter {
       this.footnoteCleanups.get(loadedDoc)?.();
       this.footnoteCleanups.delete(loadedDoc);
       this.highlightRanges.delete(loadedDoc);
-      if (this.highlightBubble?.doc === loadedDoc) this.highlightBubble = null;
+      this.dismissHighlightMenu();
       this.loadedDocuments.delete(loadedDoc);
     }
     if (this.activeSelection && this.activeSelection.doc !== doc) {
@@ -1902,6 +1807,7 @@ export class FoliateEpubEngineAdapter {
       }
       return;
     }
+    this.dismissHighlightMenu();
     const previous = this.activeSelection?.payload;
     this.activeSelection = { doc, payload };
     this.interactionState = 'selecting';
@@ -1916,7 +1822,13 @@ export class FoliateEpubEngineAdapter {
     const bookId = this.bookId;
     const selection = doc.getSelection() ?? doc.defaultView?.getSelection();
     if (!view?.getCFI || !bookId || !selection || selection.rangeCount < 1 || selection.isCollapsed) return null;
-    const range = selection.getRangeAt(0).cloneRange();
+    return this.serializeSelectionRange(doc, index, selection.getRangeAt(0).cloneRange());
+  }
+
+  private serializeSelectionRange(doc: Document, index: number, range: Range): ReaderSelectionPayload | null {
+    const view = this.view;
+    const bookId = this.bookId;
+    if (!view?.getCFI || !bookId) return null;
     if (!doc.body?.contains(range.startContainer) || !doc.body.contains(range.endContainer)) return null;
     const startElement = this.getSelectionElement(range.startContainer);
     const endElement = this.getSelectionElement(range.endContainer);
@@ -1988,14 +1900,7 @@ export class FoliateEpubEngineAdapter {
   private readonly handlePointerDown = (event: PointerEvent) => {
     const doc = event.currentTarget as Document;
     if (!event.isPrimary || this.reflowing) return;
-    // A tap outside the highlight delete bubble dismisses it. Taps inside
-    // the bubble (the delete button) must not dismiss before click fires.
-    // Cross-window instanceof is unreliable here; guard with nodeType like
-    // the tap-target classification below.
-    const downTarget = (event.target as Node | null)?.nodeType === 1 ? (event.target as Element) : null;
-    if (this.highlightBubble && !downTarget?.closest('[data-reader-highlight-bubble]')) {
-      this.dismissHighlightBubble();
-    }
+    this.dismissHighlightMenu();
     const startedWhileTurning = this.interactionState === 'turning';
     this.pointerSession = {
       pointerId: event.pointerId,
@@ -2089,15 +1994,16 @@ export class FoliateEpubEngineAdapter {
       if (__DEV__) console.log('[FOOTNOTE_MODAL_SUPPRESS]');
       return;
     }
-    // Highlight tap: landing on a painted highlight opens the delete bubble
+    // Highlight tap: landing on a painted highlight opens the native edit menu
     // instead of turning the page or toggling chrome. Selection gestures,
     // interactive targets, and reflowing states keep their existing paths.
     if (isTap && !selectionActive && !session.selectionWasActive && !interactiveTarget && !blockedByState
       && this.view && this.restoreState === 'active') {
-      const hitRangeCfi = this.hitTestHighlight(doc, event.clientX, event.clientY);
-      if (hitRangeCfi) {
+      const payload = this.hitTestHighlight(doc, event.clientX, event.clientY);
+      if (payload) {
         this.interactionState = 'idle';
-        this.showHighlightDeleteBubble(doc, hitRangeCfi, event.clientX, event.clientY);
+        this.highlightMenuActive = true;
+        this.onHighlightTap(payload);
         return;
       }
     }
@@ -2148,6 +2054,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   private async requestPageTurn(direction: 'next' | 'prev') {
+    this.dismissHighlightMenu();
     if (!this.view || this.restoreState !== 'active' || this.reflowing) return;
     if (this.turnLoopActive) {
       this.queuePageTurn({ direction });
@@ -2348,6 +2255,20 @@ export class FoliateEpubEngineAdapter {
     return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }
 
+  private guardPaginatorLayout(renderer: FoliateRenderer | undefined) {
+    if (renderer?.localName !== 'foliate-paginator' || !renderer.render || !renderer.getContents) return;
+    const render = renderer.render;
+    // Foliate's ResizeObserver can run while its iframe is being replaced;
+    // contentDocument exists then, but documentElement/body may already be
+    // gone. Its public render() otherwise dereferences a null style owner.
+    // The section load path performs the real layout once the DOM is ready.
+    renderer.render = function () {
+      const contents = this.getContents?.();
+      if (!contents?.length || contents.some(({ doc }) => !doc?.documentElement || !doc.body)) return;
+      render.call(this);
+    };
+  }
+
   private installViewportObserver() {
     if (!globalThis.ResizeObserver) return;
     this.resizeObserver?.disconnect();
@@ -2364,6 +2285,7 @@ export class FoliateEpubEngineAdapter {
         return;
       }
       if (Math.abs(width - nextWidth) < 2 && Math.abs(height - nextHeight) < 2) return;
+      this.dismissHighlightMenu();
       width = nextWidth;
       height = nextHeight;
       if (this.resizeTimer !== null) window.clearTimeout(this.resizeTimer);
@@ -2496,7 +2418,7 @@ export class FoliateEpubEngineAdapter {
     // v2 uses foliate's actual readable-column count (`pages - 2`) instead
     // of its internal viewport count. Changing the version deliberately
     // ignores v1 rows, which over-counted every spine section.
-    return `foliate-paginated:v4:${width}x${height}:top=${READER_CONTENT_TOP_PX}:bottom=${READER_CONTENT_BOTTOM_PX}:gap=${this.readerSettings.pageMargin}:font=apple-system:size=${this.readerSettings.fontSize}:weight=500:line=${this.readerSettings.lineHeight}:tracking=${this.readerSettings.letterSpacing}:image-normalize=standalone-v3`;
+    return `foliate-paginated:v5:${width}x${height}:top=${READER_CONTENT_TOP_PX}:bottom=${READER_CONTENT_BOTTOM_PX}:gap=${this.readerSettings.pageMargin}:font=${this.readerSettings.fontFamily}:size=${this.readerSettings.fontSize}:weight=500:line=${this.readerSettings.lineHeight}:tracking=${this.readerSettings.letterSpacing}:image-normalize=standalone-v3`;
   }
 
   private isCacheUsable(cache: ReaderPageCountCache | null, layoutSignature: string) {
@@ -2571,8 +2493,8 @@ export class FoliateEpubEngineAdapter {
       await this.nextIdleFrame();
       const counterBook = await this.createCounterBook(input);
       if (run !== this.pageCountRun || this.restoreState !== 'active') return;
-      normalizeBookStyles(counterBook);
       await counterView.open(counterBook);
+      this.guardPaginatorLayout(counterView.renderer);
       counterView.classList.toggle('reader-reflowable', !counterView.isFixedLayout);
       counterOpen = true;
       counterView.renderer?.setAttribute('margin', READER_VERTICAL_MARGIN);
@@ -2626,8 +2548,7 @@ export class FoliateEpubEngineAdapter {
   }
 
   private async createCounterBook(input: FoliateOpenInput): Promise<FoliateBook> {
-    if (input.sourceKind === 'zip-resource-loader') return createOnDemandBook(input);
-    return makeBook(new File([base64ToBytes(input.base64 ?? '')], input.fileName, { type: 'application/epub+zip' })) as Promise<FoliateBook>;
+    return createFoliateBook(input);
   }
 
   private async waitForVisibleTurnIdle(run: number) {
@@ -2699,7 +2620,7 @@ export class FoliateEpubEngineAdapter {
          through PingFang SC. */
       body,
       body :is(p, li, blockquote, dd, dt, td, th, h1, h2, h3, h4, h5, h6) {
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", sans-serif !important;
+        font-family: ${READER_FONT_CSS[this.readerSettings.fontFamily]} !important;
       }
       body {
         color: ${colors.text} !important;

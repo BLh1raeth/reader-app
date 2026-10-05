@@ -1,4 +1,5 @@
-import { AppState } from 'react-native';
+import { AppState, useColorScheme } from 'react-native';
+import { reportReaderSaveError } from '../../shared/operation-errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { bookRepository } from '../library/book-repository';
@@ -12,6 +13,7 @@ import { getGlobalReaderPage } from './reader-pagination';
 import {
   DEFAULT_READER_SETTINGS,
   normalizeReaderSettings,
+  resolveReaderAppearance,
   readerLayoutSettingsEqual,
   readerSettingsEqual,
   type ReaderSettings,
@@ -45,6 +47,7 @@ function toProgress(bookId: string, location: ReaderLocation): ReadingProgress {
 
 /** Native half of Reader Core. DOM never reads SQLite or FileSystem paths. */
 export function useReaderController(bookId: string | undefined) {
+  const systemScheme = useColorScheme();
   const [state, setState] = useState<ReaderControllerState>({ kind: 'loading', message: '正在打开图书' });
   const [currentLocation, setCurrentLocation] = useState<ReaderLocation | null>(null);
   const [firstPageRendered, setFirstPageRendered] = useState(false);
@@ -82,7 +85,8 @@ export function useReaderController(bookId: string | undefined) {
     settingsWriteQueueRef.current = settingsWriteQueueRef.current
       .catch(() => undefined)
       .then(() => readerSettingsRepository.upsert(settings));
-    await settingsWriteQueueRef.current;
+    try { await settingsWriteQueueRef.current; }
+    catch (error) { reportReaderSaveError(error); throw error; }
   }, []);
 
   const commitReaderSettings = useCallback(async () => {
@@ -137,7 +141,8 @@ export function useReaderController(bookId: string | undefined) {
         await bookRepository.recordReading(book.id);
         lastPersistedCfiRef.current = progress.cfi;
       });
-    await writeQueueRef.current;
+    try { await writeQueueRef.current; }
+    catch (error) { reportReaderSaveError(error); throw error; }
   }, []);
 
   const scheduleLocationFlush = useCallback(() => {
@@ -414,7 +419,7 @@ export function useReaderController(bookId: string | undefined) {
     externalTargetFailed,
     pageCountCache,
     readerSettings,
-    appliedReaderSettings,
+    appliedReaderSettings: { ...appliedReaderSettings, appearance: resolveReaderAppearance(appliedReaderSettings.appearance, systemScheme) },
     updateReaderSettings,
     commitReaderSettings,
     flushLocation,

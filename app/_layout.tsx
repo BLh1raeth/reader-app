@@ -1,19 +1,15 @@
 import { Stack } from 'expo-router';
-import { DefaultTheme, ThemeProvider } from 'expo-router/react-navigation';
+import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router/react-navigation';
 import { StatusBar } from 'expo-status-bar';
 
 import { tokens } from '../src/design-system/tokens';
 import ReaderDomPrewarm from '../src/features/reader/ReaderDomPrewarm';
-
-const appTheme = {
-  ...DefaultTheme,
-  colors: {
-    ...DefaultTheme.colors,
-    background: tokens.colors.background,
-  },
-};
+import { useAppAppearance } from '../src/design-system/use-app-appearance';
 
 export default function RootLayout() {
+  const scheme = useAppAppearance();
+  const base = scheme === 'dark' ? DarkTheme : DefaultTheme;
+  const appTheme = { ...base, colors: { ...base.colors, background: scheme === 'dark' ? '#000000' : '#F3F2F8' } };
   return (
     <ThemeProvider value={appTheme}>
       <StatusBar style="auto" />

@@ -109,7 +109,7 @@ function ModeButton({ disabled, mode, onPress }: { disabled: boolean; mode: Read
   );
   if (isGlassEffectAPIAvailable()) {
     return (
-      <GlassView colorScheme="light" glassEffectStyle="regular" isInteractive style={styles.modeButton}>
+      <GlassView glassEffectStyle="regular" isInteractive style={styles.modeButton}>
         {content}
       </GlassView>
     );
@@ -266,7 +266,7 @@ export function ReaderTocSheet({
         ]}>
           <RNHostView>
             <View style={styles.sheetContent}>
-              <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: '#FFFFFF', bottom: -insets.bottom }]} />
+              <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: tokens.colors.groupedCell, bottom: -insets.bottom }]} />
 
               <Animated.View accessibilityElementsHidden={mode !== 'toc'} importantForAccessibility={mode === 'toc' ? 'auto' : 'no-hide-descendants'} pointerEvents={mode === 'toc' ? 'auto' : 'none'} style={[StyleSheet.absoluteFill, { opacity: tocOpacity }]}>
                 <FlatList
@@ -332,7 +332,7 @@ const styles = StyleSheet.create({
   tocRow: { alignItems: 'center', borderBottomColor: 'rgba(60,60,67,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', gap: 12, height: TOC_ROW_HEIGHT, justifyContent: 'center', paddingLeft: 22, paddingRight: 18 },
   rowPressed: { backgroundColor: 'rgba(60,60,67,0.08)', borderRadius: 12 },
   tocLabel: { color: tokens.colors.label, flex: 1, fontSize: 16, fontWeight: '500', lineHeight: 20 },
-  tocCurrent: { color: '#1E40AF' },
+  tocCurrent: { color: tokens.colors.blue },
   tocLabelCurrent: { fontWeight: '600' },
   tocPage: { color: tokens.colors.secondaryLabel, fontSize: 15, fontVariant: ['tabular-nums'], fontWeight: '500' },
   bookmarkRow: { borderBottomColor: 'rgba(60,60,67,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, minHeight: 86, paddingHorizontal: 22, paddingVertical: 12 },

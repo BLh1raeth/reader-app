@@ -1,5 +1,6 @@
 export type ReaderPageTransition = 'dissolve';
-export type ReaderAppearance = 'light' | 'dark';
+export type ReaderAppearance = 'system' | 'light' | 'dark';
+export type ReaderFontFamily = 'system' | 'serif' | 'sans';
 /** 页码指示器显示模式：页码 / 本章剩余时间 / 全书剩余时间（点按循环切换）。 */
 export type ReaderPageIndicatorMode = 'pages' | 'chapter' | 'book';
 
@@ -7,6 +8,7 @@ export type ReaderSettings = {
   fontSize: number;
   pageTransition: ReaderPageTransition;
   appearance: ReaderAppearance;
+  fontFamily: ReaderFontFamily;
   lineHeight: number;
   /** em units applied to the base reading text. */
   letterSpacing: number;
@@ -20,7 +22,8 @@ export type ReaderSettings = {
 export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   fontSize: 19,
   pageTransition: 'dissolve',
-  appearance: 'light',
+  appearance: 'system',
+  fontFamily: 'system',
   lineHeight: 1.72,
   letterSpacing: 0.01,
   pageMargin: 7,
@@ -71,7 +74,8 @@ export function normalizeReaderSettings(value: Partial<ReaderSettings> | null | 
     // Cross-dissolve is the only supported page-turn treatment for now.
     // Legacy persisted values are deliberately normalized back to it.
     pageTransition: 'dissolve',
-    appearance: value?.appearance === 'dark' ? 'dark' : 'light',
+    appearance: value?.appearance === 'dark' || value?.appearance === 'light' ? value.appearance : 'system',
+    fontFamily: value?.fontFamily === 'serif' || value?.fontFamily === 'sans' ? value.fontFamily : 'system',
     lineHeight: clampPrecision(lineHeight, READER_SETTINGS_LIMITS.lineHeight.min, READER_SETTINGS_LIMITS.lineHeight.max, 3),
     letterSpacing: clampPrecision(letterSpacing, READER_SETTINGS_LIMITS.letterSpacing.min, READER_SETTINGS_LIMITS.letterSpacing.max, 3),
     pageMargin: clampPrecision(pageMargin, READER_SETTINGS_LIMITS.pageMargin.min, READER_SETTINGS_LIMITS.pageMargin.max, 2),
@@ -82,10 +86,21 @@ export function normalizeReaderSettings(value: Partial<ReaderSettings> | null | 
 
 export function readerLayoutSettingsEqual(left: ReaderSettings, right: ReaderSettings) {
   return left.fontSize === right.fontSize
+    && left.fontFamily === right.fontFamily
     && left.lineHeight === right.lineHeight
     && left.letterSpacing === right.letterSpacing
     && left.pageMargin === right.pageMargin;
 }
+
+export function resolveReaderAppearance(mode: ReaderAppearance, systemScheme: string | null | undefined): 'light' | 'dark' {
+  return mode === 'system' ? systemScheme === 'dark' ? 'dark' : 'light' : mode;
+}
+
+export const READER_FONT_CSS: Record<ReaderFontFamily, string> = {
+  system: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", sans-serif',
+  serif: '"Songti SC", "Noto Serif CJK SC", "Times New Roman", serif',
+  sans: '"PingFang SC", "Noto Sans CJK SC", Arial, sans-serif',
+};
 
 export function readerSettingsEqual(left: ReaderSettings, right: ReaderSettings) {
   return readerLayoutSettingsEqual(left, right)

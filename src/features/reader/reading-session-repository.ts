@@ -79,11 +79,11 @@ export type ReadingSessionStore = {
 };
 
 /**
- * One fixed 60s reading-speed sample: `chars` forward characters read in
- * that window, so chars IS the speed (chars/min). Only windows with
- * chars > 0 are stored; idle windows are omitted by the tracker.
+ * One reading-speed sample: the legacy `chars` column stores normalized
+ * characters per eligible minute. Empty windows are omitted by the tracker.
  */
 export type NewReadingSpeedSample = {
+  bookId?: string | null;
   /** Device-local calendar day the window belonged to (YYYY-MM-DD). */
   localDayKey: string;
   /** ISO-8601 UTC timestamp of the window end. */
@@ -183,11 +183,12 @@ export const readingSessionRepository = {
   async createSpeedSample(sample: NewReadingSpeedSample): Promise<void> {
     const database = await getLibraryDatabase();
     await database.runAsync(
-      `INSERT INTO reader_speed_samples (local_day_key, sampled_at, chars)
-       VALUES (?, ?, ?);`,
+      `INSERT INTO reader_speed_samples (local_day_key, sampled_at, chars, book_id)
+       VALUES (?, ?, ?, ?);`,
       sample.localDayKey,
       sample.sampledAt,
       sample.chars,
+      sample.bookId ?? null,
     );
   },
 

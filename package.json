@@ -5,9 +5,10 @@
   "dependencies": {
     "@expo/metro-runtime": "57.0.15",
     "@expo/ui": "~57.0.18",
-    "epubjs": "0.3.93",
+    "@noble/hashes": "1.8.0",
     "expo": "~57.0.22",
     "expo-brightness": "~57.0.2",
+    "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.18",
     "expo-dev-client": "~57.0.19",
     "expo-document-picker": "~57.0.2",
@@ -39,6 +40,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "playwright": "1.58.2",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -47,7 +49,9 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "test": "node --test tests/*.test.cjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:browser": "node --test tests/browser/*.test.cjs",
+    "export:ios": "node scripts/export-ios.cjs"
   },
   "private": true
 }

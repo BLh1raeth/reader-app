@@ -7,6 +7,8 @@ const { createDatabase } = require('./helpers/sqlite-fixture.cjs');
 
 const source = path.join(__dirname, '..', 'src', 'features', 'library', 'library-database.ts');
 
+const CURRENT_VERSION = createTypeScriptLoader({ 'expo-sqlite': {} })(source).SCHEMA_VERSION;
+
 function loadMigrations() {
   return createTypeScriptLoader({ 'expo-sqlite': {} })(source).migrateLibraryDatabase;
 }
@@ -15,7 +17,7 @@ function version(database) {
   return database.native.prepare('PRAGMA user_version;').get().user_version;
 }
 
-test('interrupted migration records the last completed step and resumes to v21', async () => {
+test('interrupted migration records the last completed step and resumes to the current schema', async () => {
   const database = createDatabase();
   const migrate = loadMigrations();
   database.interruptBefore(15);
@@ -27,7 +29,7 @@ test('interrupted migration records the last completed step and resumes to v21',
 
   database.interruptBefore(null);
   await migrate(database);
-  assert.equal(version(database), 21);
+  assert.equal(version(database), CURRENT_VERSION);
   for (const name of ['reader_highlights', 'reader_reading_sessions', 'reader_speed_samples', 'reader_daily_goals']) {
     assert.equal(database.native.prepare(
       'SELECT count(*) AS n FROM sqlite_master WHERE name = ?;',
@@ -59,7 +61,7 @@ test('repairs a legacy partial schema already mislabeled v19, including local-da
   database.interruptBefore(null);
   await migrate(database);
 
-  assert.equal(version(database), 21);
+  assert.equal(version(database), CURRENT_VERSION);
   assert.match(database.native.prepare(
     "SELECT local_day_key FROM reader_reading_sessions WHERE id = 'session-1';",
   ).get().local_day_key, /^\d{4}-\d{2}-\d{2}$/);
@@ -76,7 +78,7 @@ test('v20 adds color_temp to reader_settings with default 0', async () => {
   const database = createDatabase();
   const migrate = loadMigrations();
   await migrate(database);
-  assert.equal(version(database), 21);
+  assert.equal(version(database), CURRENT_VERSION);
   const columns = database.native.prepare('PRAGMA table_info(reader_settings);').all();
   const colorTemp = columns.find((column) => column.name === 'color_temp');
   assert.ok(colorTemp, 'color_temp column exists');
@@ -97,7 +99,7 @@ test('v21 adds page_indicator_mode to reader_settings with default pages', async
   const database = createDatabase();
   const migrate = loadMigrations();
   await migrate(database);
-  assert.equal(version(database), 21);
+  assert.equal(version(database), CURRENT_VERSION);
   const columns = database.native.prepare('PRAGMA table_info(reader_settings);').all();
   const indicatorMode = columns.find((column) => column.name === 'page_indicator_mode');
   assert.ok(indicatorMode, 'page_indicator_mode column exists');
@@ -118,14 +120,49 @@ test('v21 repairs a device that stamped v20 before page_indicator_mode existed',
   const database = createDatabase();
   const migrate = loadMigrations();
   await migrate(database);
-  assert.equal(version(database), 21);
+  assert.equal(version(database), CURRENT_VERSION);
   // 模拟：删掉 v21 加的列、把版本戳回 20（SQLite 3.35+ 支持 DROP COLUMN）。
   database.native.exec('ALTER TABLE reader_settings DROP COLUMN page_indicator_mode;');
   database.native.exec('PRAGMA user_version = 20;');
   await migrate(database);
-  assert.equal(version(database), 21);
+  assert.equal(version(database), CURRENT_VERSION);
   const columns = database.native.prepare('PRAGMA table_info(reader_settings);').all();
   assert.ok(columns.some((column) => column.name === 'page_indicator_mode'), 'column repaired');
   assert.ok(columns.some((column) => column.name === 'color_temp'), 'color_temp untouched');
+  await database.closeAsync();
+});
+
+
+test('every migration boundary can be interrupted and resumed', async () => {
+  for (let boundary = 1; boundary <= CURRENT_VERSION; boundary += 1) {
+    const database = createDatabase();
+    const migrate = loadMigrations();
+    database.interruptBefore(boundary);
+    await assert.rejects(migrate(database), /simulated interruption/);
+    assert.equal(version(database), boundary - 1, `boundary ${boundary}`);
+    database.interruptBefore(null);
+    await migrate(database);
+    assert.equal(version(database), CURRENT_VERSION);
+    const columns = database.native.prepare('PRAGMA table_info(reader_settings);').all();
+    for (const name of ['color_temp', 'page_indicator_mode']) {
+      assert.ok(columns.some((column) => column.name === name), name);
+    }
+    await migrate(database); // bootstrap must also be idempotent
+    await database.closeAsync();
+  }
+});
+
+test('repairs a database stamped v21 before its settings migrations committed', async () => {
+  const database = createDatabase();
+  const migrate = loadMigrations();
+  database.interruptBefore(20);
+  await assert.rejects(migrate(database), /simulated interruption/);
+  database.native.exec('PRAGMA user_version = 21;');
+  database.interruptBefore(null);
+  await migrate(database);
+  assert.equal(version(database), CURRENT_VERSION);
+  const columns = database.native.prepare('PRAGMA table_info(reader_settings);').all();
+  assert.ok(columns.some((column) => column.name === 'color_temp'));
+  assert.ok(columns.some((column) => column.name === 'page_indicator_mode'));
   await database.closeAsync();
 });

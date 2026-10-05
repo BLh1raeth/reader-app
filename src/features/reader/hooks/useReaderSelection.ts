@@ -1,5 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { reportOperationError } from '../../../shared/operation-errors';
 import { excerptRepository } from '../excerpt-repository';
 import { highlightRepository, type ReaderHighlightSnapshotItem } from '../highlight-repository';
 import type {
@@ -33,6 +34,7 @@ export function useReaderSelection({
   insets,
   isReady,
   settingsSheetPresented,
+  highlightMenuBlocked,
 }: {
   bookId: string | undefined;
   markReaderActivity: () => void;
@@ -43,12 +45,17 @@ export function useReaderSelection({
   insets: { top: number; bottom: number };
   isReady: boolean;
   settingsSheetPresented: boolean;
+  highlightMenuBlocked: boolean;
 }) {
   const [activeSelection, setActiveSelection] = useState<ReaderSelectionPayload | null>(null);
   const [excerptSaving, setExcerptSaving] = useState(false);
   const [selectionCommand, setSelectionCommand] = useState<ReaderSelectionCommand | null>(null);
   const [excerptVerificationRequest, setExcerptVerificationRequest] = useState<ReaderExcerptVerificationRequest | null>(null);
   const [highlightSnapshot, setHighlightSnapshot] = useState<ReaderHighlightSnapshotItem[] | null>(null);
+  const [highlightMenuRequest, setHighlightMenuRequest] = useState<{ id: number; payload: ReaderSelectionPayload } | null>(null);
+  const highlightMenuRequestRef = useRef<typeof highlightMenuRequest>(null);
+  const highlightMenuSequenceRef = useRef(0);
+  const highlightDeletesRef = useRef(new Set<string>());
   const activeSelectionRef = useRef<ReaderSelectionPayload | null>(null);
   const excerptActionPayloadRef = useRef<ReaderSelectionPayload | null>(null);
   const excerptActionPressingRef = useRef(false);
@@ -56,6 +63,8 @@ export function useReaderSelection({
   const highlightSavingRef = useRef(false);
   const selectionCommandSequenceRef = useRef(0);
   const excerptVerificationSequenceRef = useRef(0);
+  const currentBookIdRef = useRef(bookId);
+  currentBookIdRef.current = bookId;
 
   // 换书时重置选中状态（原 ReaderScreen 内 bookId 重置 effect 的一部分）。
   useEffect(() => {
@@ -63,12 +72,36 @@ export function useReaderSelection({
     excerptActionPayloadRef.current = null;
     excerptActionPressingRef.current = false;
     excerptSavingRef.current = false;
+    highlightSavingRef.current = false;
     setActiveSelection(null);
     setExcerptSaving(false);
     setSelectionCommand(null);
     setExcerptVerificationRequest(null);
     setHighlightSnapshot(null);
+    highlightMenuRequestRef.current = null;
+    setHighlightMenuRequest(null);
   }, [bookId]);
+
+  const dismissHighlightMenu = useCallback(() => {
+    highlightMenuRequestRef.current = null;
+    setHighlightMenuRequest(null);
+  }, []);
+
+  useEffect(() => {
+    if (highlightMenuBlocked) dismissHighlightMenu();
+  }, [highlightMenuBlocked, dismissHighlightMenu]);
+
+  const handleHighlightTap = useCallback((payload: ReaderSelectionPayload | null) => {
+    if (!payload) {
+      dismissHighlightMenu();
+      return;
+    }
+    if (payload.bookId !== currentBookIdRef.current || highlightMenuBlocked) return;
+    markReaderActivity();
+    const request = { id: ++highlightMenuSequenceRef.current, payload };
+    highlightMenuRequestRef.current = request;
+    setHighlightMenuRequest(request);
+  }, [dismissHighlightMenu, highlightMenuBlocked, markReaderActivity]);
 
   // 换书时加载高亮快照。
   useEffect(() => {
@@ -151,6 +184,7 @@ export function useReaderSelection({
       // This proves the SQLite round trip before selection is cleared.
       const persisted = await excerptRepository.getExcerptById(result.excerpt.id);
       if (!persisted) throw new Error('摘录保存后无法从数据库重新读取。');
+      if (currentBookIdRef.current !== payload.bookId) return;
       setExcerptVerificationRequest({
         id: ++excerptVerificationSequenceRef.current,
         items: [{ excerptId: persisted.id, text: persisted.text, rangeCfi: persisted.rangeCfi }],
@@ -162,20 +196,25 @@ export function useReaderSelection({
       setSelectionCommand({ id: ++selectionCommandSequenceRef.current, type: 'clear' });
     } catch (error) {
       if (__DEV__) console.error('[EXCERPT_CREATE_FAILED]', error);
+      if (currentBookIdRef.current !== payload.bookId) return;
+      reportOperationError(error, '摘录保存失败', '无法确认摘录已保存，请保留选区并重试。');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
     } finally {
-      excerptSavingRef.current = false;
-      excerptActionPressingRef.current = false;
-      setExcerptSaving(false);
+      if (currentBookIdRef.current === payload.bookId) {
+        excerptSavingRef.current = false;
+        excerptActionPressingRef.current = false;
+        setExcerptSaving(false);
+      }
     }
   }, [markReaderActivity]);
 
   const clearReaderSelection = useCallback(() => {
+    dismissHighlightMenu();
     activeSelectionRef.current = null;
     excerptActionPayloadRef.current = null;
     setActiveSelection(null);
     setSelectionCommand({ id: ++selectionCommandSequenceRef.current, type: 'clear' });
-  }, []);
+  }, [dismissHighlightMenu]);
 
   const searchSelectionInBook = useCallback((payload: ReaderSelectionPayload) => {
     const query = payload.text.trim();
@@ -200,6 +239,7 @@ export function useReaderSelection({
         sectionIndex: payload.sectionIndex,
         color: 'blue',
       });
+      if (currentBookIdRef.current !== payload.bookId) return;
       // Paint even on a dedup hit: the adapter registry may have been rebuilt
       // since, and overlayer paint is idempotent for the same range CFI.
       const snapshotItem = { rangeCfi: result.highlight.rangeCfi, sectionIndex: result.highlight.sectionIndex };
@@ -220,29 +260,46 @@ export function useReaderSelection({
       setActiveSelection(null);
     } catch (error) {
       if (__DEV__) console.error('[HIGHLIGHT_CREATE_FAILED]', error);
+      if (currentBookIdRef.current !== payload.bookId) return;
+      reportOperationError(error, '高亮保存失败', '无法确认高亮已保存，请重试。');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
     } finally {
-      highlightSavingRef.current = false;
+      if (currentBookIdRef.current === payload.bookId) highlightSavingRef.current = false;
     }
   }, [markReaderActivity]);
 
-  // Fired by the adapter after it already removed the paint for a tapped
-  // highlight. Only the SQLite row and the RN-side snapshot remain.
-  const handleHighlightDeleteRequest = useCallback((rangeCfi: string) => {
-    if (!bookId) return;
-    setHighlightSnapshot((prev) => prev?.filter((item) => item.rangeCfi !== rangeCfi) ?? prev);
-    void highlightRepository.deleteHighlightByRange(bookId, rangeCfi).catch((error: unknown) => {
+  // The native destructive action dismisses immediately. Persist first so
+  // a failed write leaves the existing highlight visible and recoverable.
+  const deleteTappedHighlight = useCallback((payload: ReaderSelectionPayload) => {
+    const { bookId: highlightedBookId, rangeCfi } = payload;
+    const key = `${highlightedBookId}:${rangeCfi}`;
+    if (highlightDeletesRef.current.has(key)) return;
+    highlightDeletesRef.current.add(key);
+    void highlightRepository.deleteHighlightByRange(highlightedBookId, rangeCfi).then(() => {
+      if (currentBookIdRef.current !== highlightedBookId) return;
+      setHighlightSnapshot((prev) => prev?.filter((item) => item.rangeCfi !== rangeCfi) ?? prev);
+      setSelectionCommand({ id: ++selectionCommandSequenceRef.current, type: 'remove-highlight', rangeCfi });
+    }).catch((error: unknown) => {
+      if (currentBookIdRef.current !== highlightedBookId) return;
+      reportOperationError(error, '删除高亮失败', '高亮仍然保留，请重试。');
       if (__DEV__) console.error('[HIGHLIGHT_DELETE_FAILED]', error);
-    });
-  }, [bookId]);
+    }).finally(() => { highlightDeletesRef.current.delete(key); });
+  }, []);
 
   const onNoteRequested = useCallback((payload: ReaderSelectionPayload) => {
     if (__DEV__) console.log('[ANNOTATION_ACTION]', JSON.stringify({ action: 'note', rangeCfi: payload.rangeCfi, textLength: payload.text.length }));
   }, []);
 
   const handleNativeSelectionAction = useCallback((event: ReaderSelectionActionEvent) => {
-    const action = event.nativeEvent.action;
-    const payload = excerptActionPayloadRef.current ?? activeSelectionRef.current;
+    const { action, highlightRequestId } = event.nativeEvent;
+    const request = highlightMenuRequestRef.current;
+    const isHighlightAction = highlightRequestId !== undefined;
+    if (isHighlightAction && (request?.id !== highlightRequestId || request.payload.bookId !== currentBookIdRef.current)) return;
+    const payload = isHighlightAction ? request?.payload : excerptActionPayloadRef.current ?? activeSelectionRef.current;
+    if (action === 'dismissHighlightMenu') {
+      if (isHighlightAction) dismissHighlightMenu();
+      return;
+    }
     if (!payload) {
       if (__DEV__) console.warn('[ANNOTATION_ACTION_MISSING_SELECTION]', action);
       return;
@@ -250,7 +307,15 @@ export function useReaderSelection({
     // Any native selection action (excerpt / highlight / note / search-in-book)
     // is reading activity.
     markReaderActivity();
+    if (isHighlightAction) dismissHighlightMenu();
+    if (action === 'deleteHighlight') {
+      if (isHighlightAction) deleteTappedHighlight(payload);
+      return;
+    }
+    if (action === 'copy') return; // The native responder already used UIPasteboard.
     if (action === 'excerpt') {
+      // Highlight taps carry their own payload; no DOM selection is needed.
+      excerptActionPayloadRef.current = payload;
       void createExcerptFromSelection();
       return;
     }
@@ -265,7 +330,13 @@ export function useReaderSelection({
       return;
     }
     if (action === 'note') onNoteRequested(payload);
-  }, [createExcerptFromSelection, markReaderActivity, onHighlightRequested, onNoteRequested, searchSelectionInBook]);
+  }, [createExcerptFromSelection, deleteTappedHighlight, dismissHighlightMenu, markReaderActivity, onHighlightRequested, onNoteRequested, searchSelectionInBook]);
+
+  const nativeHighlightMenuRequest = useMemo(() => highlightMenuRequest ? JSON.stringify({
+    id: highlightMenuRequest.id,
+    text: highlightMenuRequest.payload.text,
+    rect: highlightMenuRequest.payload.rect,
+  }) : '', [highlightMenuRequest]);
 
   const excerptActionPosition = useMemo(() => {
     if (!activeSelection) return null;
@@ -293,7 +364,8 @@ export function useReaderSelection({
     clearReaderSelection,
     searchSelectionInBook,
     onHighlightRequested,
-    handleHighlightDeleteRequest,
+    handleHighlightTap,
+    nativeHighlightMenuRequest,
     onNoteRequested,
     handleNativeSelectionAction,
     freezeExcerptSelection,

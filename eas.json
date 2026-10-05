@@ -3,7 +3,10 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "credentialsSource": "local"
+      "credentialsSource": "local",
+      "env": {
+        "EXPO_NO_BUNDLE_SPLITTING": "1"
+      }
     }
   }
 }
