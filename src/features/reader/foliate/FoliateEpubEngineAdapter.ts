@@ -98,6 +98,7 @@ type FoliateRenderer = HTMLElement & {
   atEnd?: boolean;
   page?: number;
   pages?: number;
+  render?: () => void;
   getContents?: () => Array<{
     index: number;
     overlayer?: FoliateOverlayer | null;
@@ -353,6 +354,7 @@ export class FoliateEpubEngineAdapter {
     this.onDiagnostic({ event: 'BOOK_BUILD_END' });
     this.onDiagnostic({ event: 'BOOK_OPEN_START' });
     await view.open(book);
+    this.guardPaginatorLayout(view.renderer);
     view.classList.toggle('reader-reflowable', !view.isFixedLayout);
     // foliate parses EPUB3 nav or falls back to EPUB2 NCX during view.open().
     // Publish the result before init emits the first active relocation; that
@@ -827,6 +829,7 @@ export class FoliateEpubEngineAdapter {
         const locatorBook = await this.createCounterBook(input);
         if (run !== this.pageLocatorRun || layoutSignature !== this.layoutSignature) return;
         await locatorView.open(locatorBook);
+        this.guardPaginatorLayout(locatorView.renderer);
         locatorView.classList.toggle('reader-reflowable', !locatorView.isFixedLayout);
         locatorOpen = true;
         locatorView.renderer?.setAttribute('margin', READER_VERTICAL_MARGIN);
@@ -2252,6 +2255,20 @@ export class FoliateEpubEngineAdapter {
     return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }
 
+  private guardPaginatorLayout(renderer: FoliateRenderer | undefined) {
+    if (renderer?.localName !== 'foliate-paginator' || !renderer.render || !renderer.getContents) return;
+    const render = renderer.render;
+    // Foliate's ResizeObserver can run while its iframe is being replaced;
+    // contentDocument exists then, but documentElement/body may already be
+    // gone. Its public render() otherwise dereferences a null style owner.
+    // The section load path performs the real layout once the DOM is ready.
+    renderer.render = function () {
+      const contents = this.getContents?.();
+      if (!contents?.length || contents.some(({ doc }) => !doc?.documentElement || !doc.body)) return;
+      render.call(this);
+    };
+  }
+
   private installViewportObserver() {
     if (!globalThis.ResizeObserver) return;
     this.resizeObserver?.disconnect();
@@ -2477,6 +2494,7 @@ export class FoliateEpubEngineAdapter {
       const counterBook = await this.createCounterBook(input);
       if (run !== this.pageCountRun || this.restoreState !== 'active') return;
       await counterView.open(counterBook);
+      this.guardPaginatorLayout(counterView.renderer);
       counterView.classList.toggle('reader-reflowable', !counterView.isFixedLayout);
       counterOpen = true;
       counterView.renderer?.setAttribute('margin', READER_VERTICAL_MARGIN);

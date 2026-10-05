@@ -55,7 +55,7 @@ test('real Foliate reader blocks book scripts and remote assets while preserving
     t.after(() => browser.close());
     const page = await browser.newPage();
     const errors = [];
-    page.on('pageerror', (error) => errors.push(String(error)));
+    page.on('pageerror', (error) => errors.push(error.stack || String(error)));
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
     await page.evaluate(async (baseUrl) => {
@@ -163,12 +163,22 @@ test('real Foliate reader blocks book scripts and remote assets while preserving
           && visible.compareBoundaryPoints(Range.START_TO_END, anchor) >= 0;
         const fontApplied = view.renderer.getContents()[0].doc.querySelector('style[data-reader-style]')?.textContent?.includes('Songti')
           || getComputedStyle(documentAfter.body).fontFamily.includes('Songti');
+        // During an iframe replacement contentDocument can outlive its body.
+        // A queued Foliate ResizeObserver render must wait for the next live
+        // section instead of dereferencing null body.style.
+        const documentBody = documentAfter.body;
+        documentBody.remove();
+        let unguardedLayoutFailed = false;
+        try { Object.getPrototypeOf(view.renderer).render.call(view.renderer); }
+        catch (error) { unguardedLayoutFailed = /style/.test(String(error)); }
+        view.renderer.render();
+        documentAfter.documentElement.append(documentBody);
         engine.destroy();
         const restored = await engine.open({ ...input, restoreCfi: opened.cfi });
         engine.destroy();
         return { safe, localStylesLoaded, localImageLoaded, footnote, fontAnchorVisible, fontApplied,
           highlightTap, expectedRect, highlightTextMatchesCfi, highlightTapLeavesPage, noDeleteBubble,
-          paintKeptUntilDelete, highlightRemoved, highlightDismissedOnTurn, cfi: opened.cfi, restoredCfi: restored.cfi };
+          paintKeptUntilDelete, highlightRemoved, highlightDismissedOnTurn, unguardedLayoutFailed, cfi: opened.cfi, restoredCfi: restored.cfi };
       }, { entries, base64, sourceKind });
       assert.equal(result.safe, true, sourceKind);
       assert.equal(result.localImageLoaded, true, sourceKind);
@@ -187,6 +197,7 @@ test('real Foliate reader blocks book scripts and remote assets while preserving
       assert.equal(result.paintKeptUntilDelete, true, 'opening a menu does not delete its highlight');
       assert.equal(result.highlightRemoved, true, 'explicit removal clears the paint and menu request');
       assert.equal(result.highlightDismissedOnTurn, true, 'page navigation invalidates the menu anchor');
+      assert.equal(result.unguardedLayoutFailed, true, 'the missing-body fixture reproduces Foliate\'s null-style error while the guarded render succeeds');
       assert.match(result.cfi, /^epubcfi\(/);
       assert.equal(result.restoredCfi, result.cfi, sourceKind);
     }
