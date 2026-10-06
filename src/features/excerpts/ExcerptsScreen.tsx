@@ -515,14 +515,14 @@ export default function ExcerptsScreen() {
                 <Pressable accessibilityRole="button" accessibilityLabel="导出当前显示的摘录"
                   onPress={() => { void exportExcerpts(visibleSections.flatMap((section) => section.data)); }}
                   style={styles.shareGlassContent}>
-                  <SymbolView name="square.and.arrow.up" size={20} tintColor="#000000" />
+                  <SymbolView name="square.and.arrow.up" size={24} tintColor="#000000" weight="bold" />
                 </Pressable>
               </GlassView>
             ) : (
               <Pressable accessibilityRole="button" accessibilityLabel="导出当前显示的摘录"
                 onPress={() => { void exportExcerpts(visibleSections.flatMap((section) => section.data)); }}
                 style={styles.shareGlassFallback}>
-                <SymbolView name="square.and.arrow.up" size={20} tintColor="#000000" />
+                <SymbolView name="square.and.arrow.up" size={24} tintColor="#000000" weight="bold" />
               </Pressable>
             )}
           </View>
