@@ -69,8 +69,6 @@ public final class ReaderHighlightMenuPresenter: NSObject, UIEditMenuInteraction
     textView.frame = sourceView.bounds
     sourceView.addSubview(textView)
     textView.text = next.text
-    textView.becomeFirstResponder()
-    textView.selectedRange = NSRange(location: 0, length: (next.text as NSString).length)
     textView.layoutIfNeeded()
     anchorRect = CGRect(x: next.rect.x, y: next.rect.y, width: next.rect.width, height: next.rect.height)
       .intersection(textView.bounds)
@@ -82,7 +80,19 @@ public final class ReaderHighlightMenuPresenter: NSObject, UIEditMenuInteraction
       identifier: NSNumber(value: next.id),
       sourcePoint: CGPoint(x: anchorRect.midX, y: anchorRect.midY)
     )
-    interaction.presentEditMenu(with: configuration)
+    // Presenting synchronously from the tap's bridge delivery races WebKit
+    // reclaiming first responder as it finishes the tap: the menu flashed
+    // for 1-3 frames then vanished, and only the textView's selection UI
+    // (at the top-left, where its invisible text starts) ever rendered.
+    // Defer first-responder + presentation by 100ms so the tap's responder
+    // churn settles first. The generation guard drops this block if a
+    // dismiss or a newer request superseded it during the delay.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+      guard let self, self.request?.id == requestID else { return }
+      self.textView.becomeFirstResponder()
+      self.textView.selectedRange = NSRange(location: 0, length: (next.text as NSString).length)
+      self.interaction.presentEditMenu(with: configuration)
+    }
   }
 
   public func dismiss() {
