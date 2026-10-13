@@ -8,30 +8,48 @@ import { refreshExcerptFeed } from './excerpt-feed-cache';
 import { excerptsToMarkdown } from './excerpt-export';
 import type { ExcerptFeedItem } from './excerpt-feed-repository';
 
+function excerptRowId(item: ExcerptFeedItem) {
+  return Number(item.id.replace(/^excerpt-/, ''));
+}
+
+function excerptSource(item: ExcerptFeedItem) {
+  return `《${item.bookTitle}》${item.chapterTitle ? ` · ${item.chapterTitle}` : ''}`;
+}
+
+export function copyExcerpt(item: ExcerptFeedItem) {
+  void Clipboard.setStringAsync(`${item.quoteText}\n\n${excerptSource(item)}`)
+    .catch((error) => reportOperationError(error, '复制失败'));
+}
+
+export function shareExcerpt(item: ExcerptFeedItem) {
+  void Share.share({ message: `${item.quoteText}\n\n${excerptSource(item)}` })
+    .catch((error) => reportOperationError(error, '分享失败'));
+}
+
+export function editExcerpt(item: ExcerptFeedItem) {
+  Alert.prompt('编辑摘录', '只修改这条摘录，不修改书内原文。', (text) => {
+    void excerptRepository.updateExcerptText(excerptRowId(item), text).then(refreshExcerptFeed)
+      .catch((error) => reportOperationError(error, '编辑失败', '修改尚未保存。内容不能为空，请重试。'));
+  }, 'plain-text', item.quoteText);
+}
+
+export function deleteExcerpt(item: ExcerptFeedItem) {
+  Alert.alert('删除这条摘录？', '书内原文和高亮会保留。', [
+    { text: '取消', style: 'cancel' },
+    { text: '删除', style: 'destructive', onPress: () => {
+      void excerptRepository.deleteExcerpt(excerptRowId(item)).then(refreshExcerptFeed)
+        .catch((error) => reportOperationError(error, '删除摘录失败'));
+    } },
+  ]);
+}
+
 export function showExcerptActions(item: ExcerptFeedItem) {
-  const rowId = Number(item.id.replace(/^excerpt-/, ''));
-  const source = `《${item.bookTitle}》${item.chapterTitle ? ` · ${item.chapterTitle}` : ''}`;
   Alert.alert('摘录', undefined, [
     { text: '取消', style: 'cancel' },
-    { text: '复制', onPress: () => {
-      void Clipboard.setStringAsync(`${item.quoteText}\n\n${source}`)
-        .catch((error) => reportOperationError(error, '复制失败'));
-    } },
-    { text: '分享', onPress: () => {
-      void Share.share({ message: `${item.quoteText}\n\n${source}` })
-        .catch((error) => reportOperationError(error, '分享失败'));
-    } },
-    { text: '编辑内容', onPress: () => Alert.prompt('编辑摘录', '只修改这条摘录，不修改书内原文。', (text) => {
-      void excerptRepository.updateExcerptText(rowId, text).then(refreshExcerptFeed)
-        .catch((error) => reportOperationError(error, '编辑失败', '修改尚未保存。内容不能为空，请重试。'));
-    }, 'plain-text', item.quoteText) },
-    { text: '删除', style: 'destructive', onPress: () => Alert.alert('删除这条摘录？', '书内原文和高亮会保留。', [
-      { text: '取消', style: 'cancel' },
-      { text: '删除', style: 'destructive', onPress: () => {
-        void excerptRepository.deleteExcerpt(rowId).then(refreshExcerptFeed)
-          .catch((error) => reportOperationError(error, '删除摘录失败'));
-      } },
-    ]) },
+    { text: '复制', onPress: () => copyExcerpt(item) },
+    { text: '分享', onPress: () => shareExcerpt(item) },
+    { text: '编辑内容', onPress: () => editExcerpt(item) },
+    { text: '删除', style: 'destructive', onPress: () => deleteExcerpt(item) },
   ]);
 }
 

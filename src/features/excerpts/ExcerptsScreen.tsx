@@ -10,6 +10,7 @@ import {
   TextInput,
   TouchableWithoutFeedback,
   View,
+  type GestureResponderEvent,
   type NativeSyntheticEvent,
   type TextLayoutEventData,
 } from 'react-native';
@@ -42,7 +43,18 @@ import {
   type ExcerptFeedItem,
 } from './excerpt-feed-repository';
 import { NativeExcerptSearchBar } from '../../../modules/excerpt-search-bar';
-import { exportExcerpts, showExcerptActions } from './excerpt-actions';
+import {
+  copyExcerpt,
+  deleteExcerpt,
+  editExcerpt,
+  exportExcerpts,
+  shareExcerpt,
+  showExcerptActions,
+} from './excerpt-actions';
+import {
+  isExcerptMenuNativeAvailable,
+  presentExcerptMenu,
+} from '../../../modules/excerpt-menu';
 import { reportOperationError } from '../../shared/operation-errors';
 
 const GROUP_LABELS = {
@@ -95,6 +107,46 @@ function accessibilityLabelFor(item: ExcerptFeedItem): string {
   if (item.noteText) parts.push(item.noteText);
   parts.push(sourceLine(item));
   return parts.join('。');
+}
+
+/**
+ * 摘录卡长按：原生可用时弹 iOS 原生菜单（复制 / 分享 / 编辑内容 /
+ * 删除），按返回的 action 分发；不可用时（Expo Go）回退到 Alert 菜单。
+ * 锚点取长按事件的 pageX/pageY（窗口点），原生侧 1:1 映射到 root view。
+ */
+async function handleExcerptLongPress(item: ExcerptFeedItem, event: GestureResponderEvent) {
+  if (!isExcerptMenuNativeAvailable) {
+    showExcerptActions(item);
+    return;
+  }
+  let action: string;
+  try {
+    action = await presentExcerptMenu({
+      x: event.nativeEvent.pageX,
+      y: event.nativeEvent.pageY,
+    });
+  } catch {
+    // 原生菜单意外失败时回退到 Alert 菜单，不丢这次长按。
+    showExcerptActions(item);
+    return;
+  }
+  switch (action) {
+    case 'copy':
+      copyExcerpt(item);
+      break;
+    case 'share':
+      shareExcerpt(item);
+      break;
+    case 'edit':
+      editExcerpt(item);
+      break;
+    case 'delete':
+      deleteExcerpt(item);
+      break;
+    case 'dismiss':
+    default:
+      break;
+  }
 }
 
 /**
@@ -160,7 +212,7 @@ function ExpandableQuote({
 
   return (
     <Pressable
-      onLongPress={() => showExcerptActions(item)}
+      onLongPress={(event) => { void handleExcerptLongPress(item, event); }}
       onPress={() => { if (canExpand) onToggleExpand(item.id); }}
       // 无 pressed 视觉反馈：opacity 跳变会与正文切换叠在同一帧，
       // 在真机上被感知为文字闪烁。保持视觉极简。
@@ -286,7 +338,7 @@ function ExcerptFeedItemRow({
         accessibilityHint="轻点返回原文位置，长按管理摘录"
         hitSlop={{ top: 8, bottom: 8 }}
         onPress={() => onSourcePress(item)}
-        onLongPress={() => showExcerptActions(item)}
+        onLongPress={(event) => { void handleExcerptLongPress(item, event); }}
         style={({ pressed }) => [styles.sourcePressable, pressed && styles.sourcePressed]}
       >
         <Text
