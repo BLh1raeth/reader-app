@@ -1,9 +1,10 @@
 import UIKit
 
-/// A selectable, read-only native text responder supplies Apple's Copy /
-/// Lookup / Translate actions. Its text and selection are transparent; only
-/// the system edit menu is presented over the EPUB. No WebKit internals or
-/// private selectors are involved, and the regular selection menu is untouched.
+/// A transparent UITextView hosts a UIEditMenuInteraction over the EPUB.
+/// The highlight menu is built explicitly in the interaction delegate (the
+/// responder-chain suggestedActions path never produced a presenting menu).
+/// No WebKit internals or private selectors are involved, and the regular
+/// selection menu is untouched.
 @MainActor
 public final class ReaderHighlightMenuPresenter: NSObject, UIEditMenuInteractionDelegate {
   private struct Request: Decodable {
@@ -115,9 +116,43 @@ public final class ReaderHighlightMenuPresenter: NSObject, UIEditMenuInteraction
     menuFor configuration: UIEditMenuConfiguration,
     suggestedActions: [UIMenuElement]
   ) -> UIMenu? {
-    // ReaderHighlightMenuTextView.buildMenu uses the SAME coordinator as
-    // WKWebView. Preserve UIKit's supplied actions and their handlers intact.
-    UIMenu(children: suggestedActions)
+    // Build the highlight menu explicitly instead of trusting
+    // `suggestedActions`: the responder-chain buildMenu path never produced
+    // a presenting menu here (the menu silently failed to appear). These are
+    // the same four actions ReaderEditMenuCoordinator defines for highlight
+    // mode, with the same titles, symbols, and identifiers.
+    guard let requestID = (configuration.identifier as? NSNumber)?.intValue else { return nil }
+    let copy = UIAction(
+      title: "复制",
+      image: UIImage(systemName: "doc.on.doc"),
+      identifier: UIAction.Identifier("com.readerapp.highlight.copy")
+    ) { [weak self] _ in
+      UIPasteboard.general.string = self?.textView.text
+      self?.perform("copy", requestID: requestID)
+    }
+    let excerpt = UIAction(
+      title: ReaderEditMenuStrings.localized("reader.editMenu.excerpt", fallback: "摘录"),
+      image: UIImage(systemName: "text.quote"),
+      identifier: UIAction.Identifier("com.readerapp.selection.excerpt")
+    ) { [weak self] _ in
+      self?.perform("excerpt", requestID: requestID)
+    }
+    let delete = UIAction(
+      title: ReaderEditMenuStrings.localized("reader.editMenu.deleteHighlight", fallback: "删除"),
+      image: UIImage(systemName: "highlighter"),
+      identifier: UIAction.Identifier("com.readerapp.selection.highlight"),
+      attributes: .destructive
+    ) { [weak self] _ in
+      self?.perform("deleteHighlight", requestID: requestID)
+    }
+    let note = UIAction(
+      title: ReaderEditMenuStrings.localized("reader.editMenu.note", fallback: "添加笔记"),
+      image: UIImage(systemName: "square.and.pencil"),
+      identifier: UIAction.Identifier("com.readerapp.selection.note")
+    ) { [weak self] _ in
+      self?.perform("note", requestID: requestID)
+    }
+    return UIMenu(children: [copy, excerpt, delete, note])
   }
 
   public func editMenuInteraction(
