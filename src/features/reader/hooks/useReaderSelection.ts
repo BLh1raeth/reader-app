@@ -83,6 +83,8 @@ export function useReaderSelection({
   }, [bookId]);
 
   const dismissHighlightMenu = useCallback(() => {
+    // TEMP DIAG: trace what clears the highlight request.
+    if (__DEV__) console.log('[HL_DIAG] dismiss called', new Error().stack?.split('\n').slice(1, 4).join(' <- ') ?? '');
     highlightMenuRequestRef.current = null;
     setHighlightMenuRequest(null);
   }, []);
