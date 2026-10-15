@@ -101,6 +101,8 @@ export function useReaderSelection({
     const request = { id: ++highlightMenuSequenceRef.current, payload };
     highlightMenuRequestRef.current = request;
     setHighlightMenuRequest(request);
+    // TEMP DIAG (no EAS rebuild needed): trace highlight-menu request/response.
+    if (__DEV__) console.log('[HL_DIAG] tap request', JSON.stringify({ id: request.id, rect: payload.rect, textLen: payload.text.length }));
   }, [dismissHighlightMenu, highlightMenuBlocked, markReaderActivity]);
 
   // 换书时加载高亮快照。
@@ -292,6 +294,8 @@ export function useReaderSelection({
 
   const handleNativeSelectionAction = useCallback((event: ReaderSelectionActionEvent) => {
     const { action, highlightRequestId } = event.nativeEvent;
+    // TEMP DIAG (no EAS rebuild needed): trace native highlight-menu callbacks.
+    if (__DEV__) console.log('[HL_DIAG] native action', JSON.stringify({ action, highlightRequestId }));
     const request = highlightMenuRequestRef.current;
     const isHighlightAction = highlightRequestId !== undefined;
     if (isHighlightAction && (request?.id !== highlightRequestId || request.payload.bookId !== currentBookIdRef.current)) return;
