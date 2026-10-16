@@ -3,7 +3,7 @@ import type { Book } from '../library/library-types';
 import { markReaderOpen } from './reader-open-performance';
 import { readingProgressRepository, type ReadingProgress } from './reading-progress-repository';
 import { readerPageCacheRepository, type ReaderPageCountCache } from './reader-page-cache-repository';
-import { createReaderEpubSource } from './reader-resource-bridge';
+import { clearReaderResourceCache, createReaderEpubSource } from './reader-resource-bridge';
 import { readerSettingsRepository } from './reader-settings-repository';
 import type { ReaderSettings } from './reader-settings';
 import type { ReaderEpubSource } from './reader-types';
@@ -24,9 +24,15 @@ export type PreloadedReaderData = {
  */
 const pendingPreloads = new Map<string, Promise<PreloadedReaderData>>();
 
+export function invalidateReaderData() {
+  pendingPreloads.clear();
+  clearReaderResourceCache();
+}
+
 async function doLoadReaderData(bookId: string): Promise<PreloadedReaderData> {
   const book = await bookRepository.getBookById(bookId);
   if (!book) throw new Error('这本书已不在书库中。');
+  if (book.archivedAt) throw new Error('这本书的本地文件已移除，请重新导入同一 EPUB。摘录和阅读进度已保留。');
   markReaderOpen(book.id, 'BOOK_DATA_READY', book.fileSize);
   markReaderOpen(book.id, 'EPUB_FILE_READ_START', book.fileSize);
   markReaderOpen(book.id, 'EPUB_PREPARE_START', book.fileSize);
@@ -72,7 +78,7 @@ export function preloadReaderData(bookId: string): void {
   pendingPreloads.set(bookId, promise);
   // If nobody ever consumes this (transition cancelled, navigation failed),
   // drop it so a later tap retries fresh instead of reusing a stale failure.
-  // Resolved bytes stay in the bounded bookBytesCache, so the work isn't wasted.
+  // Decoded metadata/resources use the bounded resource cache.
   promise.catch(() => {
     if (pendingPreloads.get(bookId) === promise) pendingPreloads.delete(bookId);
   });

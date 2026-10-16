@@ -32,11 +32,23 @@ import type {
   ReadingAnalyticsSummary,
 } from './reading-analytics-types';
 
-async function loadNormalizedData(): Promise<{
+type AnalyticsSnapshot = {
   sessions: NormalizedAnalyticsSession[];
   excerpts: NormalizedAnalyticsExcerpt[];
   samples: NormalizedSpeedSample[];
-}> {
+  sessionRows: Awaited<ReturnType<typeof readingAnalyticsRepository.listSessionsForAnalytics>>;
+};
+let pendingSnapshot: Promise<AnalyticsSnapshot> | null = null;
+function loadNormalizedData(): Promise<AnalyticsSnapshot> {
+  // A single screen requests summary, daily and hourly statistics together.
+  // Share only the in-flight read; subsequent refreshes always read fresh rows.
+  if (!pendingSnapshot) {
+    pendingSnapshot = readNormalizedData().finally(() => { pendingSnapshot = null; });
+  }
+  return pendingSnapshot;
+}
+
+async function readNormalizedData(): Promise<AnalyticsSnapshot> {
   const [sessionRows, excerptRows, sampleRows] = await Promise.all([
     readingAnalyticsRepository.listSessionsForAnalytics(),
     readingAnalyticsRepository.listExcerptsForAnalytics(),
@@ -57,7 +69,7 @@ async function loadNormalizedData(): Promise<{
     const normalized = normalizeSpeedSample(row);
     if (normalized) samples.push(normalized);
   }
-  return { sessions, excerpts, samples };
+  return { sessions, excerpts, samples, sessionRows };
 }
 
 /**
@@ -107,6 +119,6 @@ export async function getDailyReadingStats(
 export async function getTodayHourlyActiveSeconds(
   now: Date = new Date(),
 ): Promise<number[]> {
-  const rows = await readingAnalyticsRepository.listSessionsForAnalytics();
-  return bucketActiveSecondsByLocalHour(rows, todayLocalDayKey(now), now.getTime());
+  const { sessionRows } = await loadNormalizedData();
+  return bucketActiveSecondsByLocalHour(sessionRows, todayLocalDayKey(now), now.getTime());
 }

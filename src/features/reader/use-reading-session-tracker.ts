@@ -7,6 +7,7 @@ import {
 } from './reading-session-tracker';
 import { readingSessionRepository } from './reading-session-repository';
 import type { ReaderTextMeasureResult } from './reader-types';
+import { reportReaderSaveError } from '../../shared/operation-errors';
 
 /**
  * Wires the ReadingSessionTracker into React Native lifecycle:
@@ -43,6 +44,7 @@ export function useReadingSessionTracker(
         else console.log(tag, JSON.stringify(data));
       },
       store: readingSessionRepository,
+      onStoreError: (_operation, error) => reportReaderSaveError(error),
       // The screen's requestTextMeasure always resolves (bridge timeout ->
       // ok:false), so the tracker's serial queue can never stall here.
       requestTextMeasure: (fromCfi, toCfi) => measureRef.current(fromCfi, toCfi),

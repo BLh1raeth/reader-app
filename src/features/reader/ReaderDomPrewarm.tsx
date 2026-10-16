@@ -44,7 +44,7 @@ export default function ReaderDomPrewarm() {
         highlightSnapshot={null}
         textMeasureRequest={null}
         onTextMeasureResult={noopAsync}
-        onHighlightDeleteRequest={noop}
+        onHighlightTap={noop}
         onReady={noopAsync}
         onLocation={noopAsync}
         onDiagnostic={noopAsync}

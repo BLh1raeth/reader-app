@@ -1,3 +1,5 @@
+import { useColorScheme } from 'react-native';
+import { resolveReaderAppearance } from './reader-settings';
 import { MenuView, type MenuAction } from '@expo/ui/community/menu';
 import { Slider } from '@expo/ui/community/slider';
 import { BottomSheet, Group, Host, RNHostView } from '@expo/ui/swift-ui';
@@ -90,7 +92,7 @@ function SettingsControlSurface({
   interactive = true,
   style,
 }: {
-  appearance: ReaderAppearance;
+  appearance: 'light' | 'dark';
   children: ReactNode;
   interactive?: boolean;
   style: StyleProp<ViewStyle>;
@@ -147,7 +149,8 @@ export function ReaderSettingsSheet({
 }: Props) {
   const insets = useSafeAreaInsets();
   const isDefault = readerSettingsEqual(settings, DEFAULT_READER_SETTINGS);
-  const isDark = settings.appearance === 'dark';
+  const appearance = resolveReaderAppearance(settings.appearance, useColorScheme());
+  const isDark = appearance === 'dark';
   const primaryColor = isDark ? '#f2f2f7' : '#1c1c1e';
   const secondaryColor = isDark ? 'rgba(235,235,245,0.60)' : 'rgba(60,60,67,0.60)';
   const trackColor = isDark ? 'rgba(235,235,245,0.20)' : 'rgba(60,60,67,0.18)';
@@ -195,6 +198,7 @@ export function ReaderSettingsSheet({
     { id: 'dissolve', title: uiText.settings.dissolve, state: settings.pageTransition === 'dissolve' ? 'on' : 'off' },
   ];
   const appearanceActions: MenuAction[] = [
+    { id: 'system', title: '跟随系统', state: settings.appearance === 'system' ? 'on' : 'off' },
     { id: 'light', title: uiText.settings.light, state: settings.appearance === 'light' ? 'on' : 'off' },
     { id: 'dark', title: uiText.settings.dark, state: settings.appearance === 'dark' ? 'on' : 'off' },
   ];
@@ -229,7 +233,7 @@ export function ReaderSettingsSheet({
 
                 <View style={styles.quickControls}>
                   <View style={styles.fontSizeStack}>
-                    <SettingsControlSurface appearance={settings.appearance} interactive={false} style={styles.fontSizeControl}>
+                    <SettingsControlSurface appearance={appearance} interactive={false} style={styles.fontSizeControl}>
                       <Pressable
                         accessibilityLabel={uiText.settings.decreaseFont}
                         accessibilityRole="button"
@@ -293,7 +297,7 @@ export function ReaderSettingsSheet({
                       onPressAction={() => update('pageTransition', 'dissolve')}
                       style={styles.modeMenu}
                     >
-                      <SettingsControlSurface appearance={settings.appearance} style={styles.modeCircle}>
+                      <SettingsControlSurface appearance={appearance} style={styles.modeCircle}>
                         <View accessibilityLabel={uiText.settings.pageTurnMode} accessibilityRole="button" style={styles.modeButton}>
                           <SymbolView name="square.stack.3d.up" size={20} tintColor={primaryColor} weight="medium" />
                         </View>
@@ -301,10 +305,10 @@ export function ReaderSettingsSheet({
                     </MenuView>
                     <MenuView
                       actions={appearanceActions}
-                      onPressAction={(event) => update('appearance', event.nativeEvent.event === 'dark' ? 'dark' : 'light')}
+                      onPressAction={(event) => update('appearance', event.nativeEvent.event === 'system' ? 'system' : event.nativeEvent.event === 'dark' ? 'dark' : 'light')}
                       style={styles.modeMenu}
                     >
-                      <SettingsControlSurface appearance={settings.appearance} style={styles.modeCircle}>
+                      <SettingsControlSurface appearance={appearance} style={styles.modeCircle}>
                         <View accessibilityLabel={uiText.settings.appearanceMode} accessibilityRole="button" style={styles.modeButton}>
                           <SymbolView
                             name={settings.appearance === 'dark' ? 'circle.righthalf.filled' : 'circle.lefthalf.filled'}
@@ -318,6 +322,15 @@ export function ReaderSettingsSheet({
                   </View>
                 </View>
 
+                <MenuView actions={[
+                  { id: 'system', title: '系统字体', state: settings.fontFamily === 'system' ? 'on' : 'off' },
+                  { id: 'serif', title: '宋体 / 衬线', state: settings.fontFamily === 'serif' ? 'on' : 'off' },
+                  { id: 'sans', title: '黑体 / 无衬线', state: settings.fontFamily === 'sans' ? 'on' : 'off' },
+                ]} onPressAction={(event) => update('fontFamily', event.nativeEvent.event === 'serif' ? 'serif' : event.nativeEvent.event === 'sans' ? 'sans' : 'system')}>
+                  <Text accessibilityRole="button" style={{ color: primaryColor, textAlign: 'center', padding: 8 }}>
+                    字体：{settings.fontFamily === 'serif' ? '宋体 / 衬线' : settings.fontFamily === 'sans' ? '黑体 / 无衬线' : '系统字体'}
+                  </Text>
+                </MenuView>
                 <View style={styles.metricsGroup}>
                   <View style={styles.metricRow}>
                     <Text style={[styles.settingLabel, { color: primaryColor }]}>{uiText.settings.lineHeight}</Text>

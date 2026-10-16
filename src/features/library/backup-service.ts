@@ -1,6 +1,9 @@
-import JSZip from 'jszip';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as SQLite from 'expo-sqlite';
+import { writeBackupArchive, type BackupSource, type BackupWriteOptions } from './backup-writer';
+import { invalidateReaderData } from '../reader/reader-preload';
+import { BACKUP_LIMITS, extractZipEntry, readZipDirectory, type ZipSource } from '../../shared/epub/zip';
+import { hashEpub } from '../../shared/epub/hash';
 
 import {
   DATABASE_NAME,
@@ -41,7 +44,7 @@ function extensionOf(uri: string): string {
  * Pack the whole library (database + EPUBs + covers + manifest) into a
  * single zip and return its file URI for sharing. Pure JS, no native work.
  */
-export async function exportBackup(now = new Date()): Promise<ExportBackupResult> {
+export async function exportBackup(now = new Date(), options: BackupWriteOptions = {}): Promise<ExportBackupResult> {
   const database = await getLibraryDatabase();
   const snapshot = await database.serializeAsync();
   const snapshotDatabase = await SQLite.deserializeDatabaseAsync(snapshot);
@@ -51,21 +54,22 @@ export async function exportBackup(now = new Date()): Promise<ExportBackupResult
     cover_uri: string | null;
     original_cover_uri: string | null;
     file_hash: string;
+    archived_at: string | null;
   }>;
   try {
     books = await snapshotDatabase.getAllAsync<{
       id: string; file_uri: string; cover_uri: string | null;
-      original_cover_uri: string | null; file_hash: string;
-    }>('SELECT id, file_uri, cover_uri, original_cover_uri, file_hash FROM books ORDER BY manual_order ASC;');
+      original_cover_uri: string | null; file_hash: string; archived_at: string | null;
+    }>('SELECT id, file_uri, cover_uri, original_cover_uri, file_hash, archived_at FROM books ORDER BY manual_order ASC;');
   } finally {
     await snapshotDatabase.closeAsync();
   }
 
-  const zip = new JSZip();
+  const sources: BackupSource[] = [];
 
   // SQLite's own snapshot includes committed WAL pages without reading a
   // live database file while another connection may still be writing it.
-  zip.file(DATABASE_NAME, snapshot);
+  sources.push({ name: DATABASE_NAME, data: snapshot });
 
   // 2. Book files + covers, keyed by book id. Import replaces the whole
   //    database, ids included, so the keys stay valid on the new device.
@@ -74,9 +78,9 @@ export async function exportBackup(now = new Date()): Promise<ExportBackupResult
     let hasFile = false;
     try {
       const source = new File(book.file_uri);
-      if (source.exists) {
+      if (!book.archived_at && source.exists) {
         // EPUBs are already zipped — STORE is faster and barely larger.
-        zip.file(`books/${book.id}.epub`, await source.arrayBuffer());
+        sources.push({ name: `books/${book.id}.epub`, data: source });
         hasFile = true;
       }
     } catch {
@@ -90,7 +94,7 @@ export async function exportBackup(now = new Date()): Promise<ExportBackupResult
         const coverSource = new File(book.cover_uri);
         if (coverSource.exists) {
           coverExtension = extensionOf(book.cover_uri);
-          zip.file(`covers/${book.id}.${coverExtension}`, await coverSource.arrayBuffer());
+          sources.push({ name: `covers/${book.id}.${coverExtension}`, data: coverSource });
           hasCover = true;
         }
       } catch {
@@ -104,7 +108,7 @@ export async function exportBackup(now = new Date()): Promise<ExportBackupResult
         const original = new File(book.original_cover_uri);
         if (original.exists) {
           originalCoverExtension = extensionOf(book.original_cover_uri);
-          zip.file(`covers/${book.id}-original.${originalCoverExtension}`, await original.arrayBuffer());
+          sources.push({ name: `covers/${book.id}-original.${originalCoverExtension}`, data: original });
           hasOriginalCover = true;
         }
       } catch {
@@ -124,11 +128,11 @@ export async function exportBackup(now = new Date()): Promise<ExportBackupResult
     schemaVersion: SCHEMA_VERSION,
     books: manifestBooks,
   };
-  zip.file('manifest.json', JSON.stringify(manifest));
+  sources.push({ name: 'manifest.json', data: new TextEncoder().encode(JSON.stringify(manifest)) });
 
   const fileName = backupFileName(now);
   const outFile = new File(Paths.cache, fileName);
-  outFile.write(await zip.generateAsync({ type: 'uint8array', compression: 'STORE' }));
+  await writeBackupArchive(outFile, sources, options);
   return { uri: outFile.uri, fileName, bookCount: books.length };
 }
 
@@ -140,21 +144,38 @@ export async function exportBackup(now = new Date()): Promise<ExportBackupResult
  * the old library before that commit.
  */
 export async function importBackup(zipUri: string): Promise<ImportBackupResult> {
-  const zip = await JSZip.loadAsync(await new File(zipUri).arrayBuffer(), { checkCRC32: true });
+  const input = new File(zipUri);
+  if (input.size > BACKUP_LIMITS.file) throw new Error('备份文件超过 512 MB。');
+  const handle = input.open();
+  try {
+    return await restoreBackupFromSource({ size: input.size, read: (start, length) => {
+      handle.offset = start;
+      return handle.readBytes(length);
+    } });
+  } finally { handle.close(); }
+}
 
-  const manifestFile = zip.file('manifest.json');
+async function restoreBackupFromSource(source: ZipSource): Promise<ImportBackupResult> {
+  const entries = new Map(readZipDirectory(source, BACKUP_LIMITS).map((entry) => [entry.name, entry]));
+  const readEntry = (name: string) => {
+    const entry = entries.get(name);
+    if (!entry) throw new BackupImportError('incomplete-backup');
+    return extractZipEntry(source, entry);
+  };
+  const manifestFile = entries.get('manifest.json');
   if (!manifestFile) throw new BackupImportError('not-a-reader-backup');
+  if (manifestFile.uncompressedSize > 16 * 1024 * 1024) throw new BackupImportError('not-a-reader-backup');
   let rawManifest: unknown;
   try {
-    rawManifest = JSON.parse(await manifestFile.async('string'));
+    rawManifest = JSON.parse(new TextDecoder().decode(readEntry('manifest.json')));
   } catch {
     throw new BackupImportError('not-a-reader-backup');
   }
   const manifest = parseBackupManifest(rawManifest, SCHEMA_VERSION);
 
-  const dbEntry = zip.file(DATABASE_NAME);
+  const dbEntry = entries.get(DATABASE_NAME);
   if (!dbEntry) throw new BackupImportError('missing-database');
-  const dbBytes = await dbEntry.async('uint8array');
+  const dbBytes = readEntry(DATABASE_NAME);
 
   // SQLite header: magic at 0..15, user_version (big-endian u32) at offset 60.
   if (dbBytes.byteLength < 100) throw new BackupImportError('not-a-database');
@@ -198,24 +219,20 @@ export async function importBackup(zipUri: string): Promise<ImportBackupResult> 
     for (const entry of manifest.books) {
       const bookFile = new File(booksDir, `${entry.id}.epub`);
       if (entry.hasFile) {
-        const packed = zip.file(`books/${entry.id}.epub`);
-        if (!packed) throw new BackupImportError('incomplete-backup');
-        bookFile.write(await packed.async('uint8array'));
+        const bytes = readEntry(`books/${entry.id}.epub`);
+        if (await hashEpub(bytes) !== entry.fileHash) throw new BackupImportError('incomplete-backup');
+        bookFile.write(bytes);
       }
       let coverUri: string | null = null;
       if (entry.hasCover && entry.coverExtension) {
-        const packed = zip.file(`covers/${entry.id}.${entry.coverExtension}`);
-        if (!packed) throw new BackupImportError('incomplete-backup');
         const coverFile = new File(coversDir, `${entry.id}.${entry.coverExtension}`);
-        coverFile.write(await packed.async('uint8array'));
+        coverFile.write(readEntry(`covers/${entry.id}.${entry.coverExtension}`));
         coverUri = coverFile.uri;
       }
       let originalCoverUri = coverUri;
       if (entry.hasOriginalCover && entry.originalCoverExtension) {
-        const packed = zip.file(`covers/${entry.id}-original.${entry.originalCoverExtension}`);
-        if (!packed) throw new BackupImportError('incomplete-backup');
         const originalFile = new File(coversDir, `${entry.id}-original.${entry.originalCoverExtension}`);
-        originalFile.write(await packed.async('uint8array'));
+        originalFile.write(readEntry(`covers/${entry.id}-original.${entry.originalCoverExtension}`));
         originalCoverUri = originalFile.uri;
       }
       await candidate.runAsync(
@@ -232,6 +249,7 @@ export async function importBackup(zipUri: string): Promise<ImportBackupResult> 
     }>('SELECT file_uri, cover_uri, original_cover_uri FROM books;');
     await SQLite.backupDatabaseAsync({ sourceDatabase: candidate, destDatabase: live });
     committed = true;
+    invalidateReaderData();
 
     const managedPrefix = new Directory(Paths.document, 'Library').uri.replace(/\/$/, '') + '/';
     const oldUris = new Set(oldAssets.flatMap((book) => [

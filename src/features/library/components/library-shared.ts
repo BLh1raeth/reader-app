@@ -8,9 +8,10 @@ export const LIBRARY_HEADER_SAFE_TOP_GAP = 2;
 export const LIBRARY_SCREEN_MARGIN = 20;
 
 export type SortMode = 'manual' | 'recentlyRead' | 'recentlyAdded' | 'title' | 'author';
-export type FilterMode = 'all' | ReadingStatus;
+export type FilterMode = 'all' | 'archived' | ReadingStatus | `tag:${string}`;
 export type LibraryBook = Book & { lastReadAt?: string; progress: number | null; state: ReadingStatus };
 export type BookMenuHandlers = {
+  onEditTags: (book: LibraryBook) => void;
   onEditCover: (book: LibraryBook) => void;
   onEditTitle: (book: LibraryBook) => void;
   onEditAuthor: (book: LibraryBook) => void;
@@ -54,11 +55,12 @@ export const sortLabels: Record<SortMode, string> = {
   author: '作者',
 };
 
-export const filterLabels: Record<FilterMode, string> = {
+export const filterLabels = {
   all: '全部',
   reading: '阅读中',
   unread: '未开始',
   finished: '已读完',
+  archived: '已移除本地文件',
 };
 
 export function toLibraryBook(book: Book): LibraryBook {
@@ -73,6 +75,7 @@ export const IMPORT_RING_RADIUS = 19;
 export const IMPORT_RING_CIRCUMFERENCE = 2 * Math.PI * IMPORT_RING_RADIUS;
 
 export function readingStateLabel(book: LibraryBook) {
+  if (book.archivedAt) return '本地文件已移除';
   if (book.state === 'finished') return '已读完';
   if (book.progress === null) return '未开始';
   return `${displayProgress(book)}%`;

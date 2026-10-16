@@ -62,7 +62,7 @@ export const excerptRepository = {
     // Freeze the device-local calendar day at creation time. This is the
     // excerpt's calendar identity for Analytics; created_at stays the
     // exact-time / ordering source. Never recomputed on update — there is
-    // no updateExcerpt path, and any future one must leave this column alone.
+    // Editing the quote leaves this column and the CFI anchor unchanged.
     const createdLocalDayKey = toLocalDayKey(now);
     const result = await database.runAsync(
       `INSERT INTO reader_excerpts (
@@ -122,5 +122,16 @@ export const excerptRepository = {
   async deleteExcerpt(id: number) {
     const database = await getLibraryDatabase();
     await database.runAsync('DELETE FROM reader_excerpts WHERE id = ?;', id);
+  },
+
+  async updateExcerptText(id: number, text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('摘录内容不能为空。');
+    const database = await getLibraryDatabase();
+    const result = await database.runAsync(
+      'UPDATE reader_excerpts SET text = ?, updated_at = ? WHERE id = ?;',
+      trimmed, new Date().toISOString(), id,
+    );
+    if (result.changes === 0) throw new Error('这条摘录已不存在。');
   },
 };

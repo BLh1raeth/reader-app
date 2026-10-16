@@ -7,7 +7,9 @@ import { filterLabels, sortLabels } from './library-shared';
 import type { FilterMode, SortMode } from './library-shared';
 import { LibraryMenuTrigger } from './LibraryMenuTrigger';
 
-export function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport, onSelect, onSort, onFilter, onAdjustOrder, onExportBackup, onImportBackup, selectionProgress, importProgress }: {
+export function LibraryOverflowMenu({ booksExist, filterMode, sortMode, tags, onSearch, onImport, onSelect, onSort, onFilter, onAdjustOrder, onExportBackup, onImportBackup, selectionProgress, importProgress }: {
+  tags: string[];
+  onSearch: () => void;
   booksExist: boolean;
   filterMode: FilterMode;
   sortMode: SortMode;
@@ -25,6 +27,7 @@ export function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport
   const bookActions: MenuAction[] = booksExist
     ? [
       { id: 'select', title: '选择', image: 'checkmark.circle' as SFSymbol },
+      { id: 'search', title: '搜索图书', image: 'magnifyingglass' as SFSymbol },
       { id: 'adjust-order', title: '调整顺序', image: 'line.3.horizontal' as SFSymbol },
         {
           id: 'sort',
@@ -40,11 +43,12 @@ export function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport
           id: 'filter',
           title: '筛选',
           image: 'line.3.horizontal.decrease.circle' as SFSymbol,
-          subactions: (Object.keys(filterLabels) as FilterMode[]).map((option) => ({
+          subactions: [...(Object.keys(filterLabels) as Array<keyof typeof filterLabels>).map((option) => ({
             id: `filter:${option}`,
             title: filterLabels[option],
-            state: filterMode === option ? 'on' : 'off',
-          })),
+            state: filterMode === option ? 'on' as const : 'off' as const,
+          })), ...tags.map((tag) => ({ id: `filter:tag:${tag}`, title: tag,
+            state: filterMode === `tag:${tag}` ? 'on' as const : 'off' as const }))],
         },
       ]
     : [];
@@ -63,6 +67,8 @@ export function LibraryOverflowMenu({ booksExist, filterMode, sortMode, onImport
   ];
 
   const handleMenuAction = (actionId: string) => {
+    if (importProgress !== null) return;
+    if (actionId === 'search') onSearch();
     if (actionId === 'import') {
       onImport();
     } else if (actionId === 'backup:export') {

@@ -10,6 +10,7 @@ import {
   TextInput,
   TouchableWithoutFeedback,
   View,
+  type GestureResponderEvent,
   type NativeSyntheticEvent,
   type TextLayoutEventData,
 } from 'react-native';
@@ -23,6 +24,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { SymbolView } from 'expo-symbols';
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -41,6 +43,19 @@ import {
   type ExcerptFeedItem,
 } from './excerpt-feed-repository';
 import { NativeExcerptSearchBar } from '../../../modules/excerpt-search-bar';
+import {
+  copyExcerpt,
+  deleteExcerpt,
+  editExcerpt,
+  exportExcerpts,
+  shareExcerpt,
+  showExcerptActions,
+} from './excerpt-actions';
+import {
+  isExcerptMenuNativeAvailable,
+  presentExcerptMenu,
+} from '../../../modules/excerpt-menu';
+import { reportOperationError } from '../../shared/operation-errors';
 
 const GROUP_LABELS = {
   today: uiText.excerpts.today,
@@ -92,6 +107,46 @@ function accessibilityLabelFor(item: ExcerptFeedItem): string {
   if (item.noteText) parts.push(item.noteText);
   parts.push(sourceLine(item));
   return parts.join('。');
+}
+
+/**
+ * 摘录卡长按：原生可用时弹 iOS 原生菜单（复制 / 分享 / 编辑内容 /
+ * 删除），按返回的 action 分发；不可用时（Expo Go）回退到 Alert 菜单。
+ * 锚点取长按事件的 pageX/pageY（窗口点），原生侧 1:1 映射到 root view。
+ */
+async function handleExcerptLongPress(item: ExcerptFeedItem, event: GestureResponderEvent) {
+  if (!isExcerptMenuNativeAvailable) {
+    showExcerptActions(item);
+    return;
+  }
+  let action: string;
+  try {
+    action = await presentExcerptMenu({
+      x: event.nativeEvent.pageX,
+      y: event.nativeEvent.pageY,
+    });
+  } catch {
+    // 原生菜单意外失败时回退到 Alert 菜单，不丢这次长按。
+    showExcerptActions(item);
+    return;
+  }
+  switch (action) {
+    case 'copy':
+      copyExcerpt(item);
+      break;
+    case 'share':
+      shareExcerpt(item);
+      break;
+    case 'edit':
+      editExcerpt(item);
+      break;
+    case 'delete':
+      deleteExcerpt(item);
+      break;
+    case 'dismiss':
+    default:
+      break;
+  }
 }
 
 /**
@@ -157,15 +212,15 @@ function ExpandableQuote({
 
   return (
     <Pressable
-      disabled={!canExpand}
-      onPress={() => onToggleExpand(item.id)}
+      onLongPress={(event) => { void handleExcerptLongPress(item, event); }}
+      onPress={() => { if (canExpand) onToggleExpand(item.id); }}
       // 无 pressed 视觉反馈：opacity 跳变会与正文切换叠在同一帧，
       // 在真机上被感知为文字闪烁。保持视觉极简。
-      accessible={canExpand}
+      accessible
       accessibilityRole={canExpand ? 'button' : undefined}
       accessibilityState={canExpand ? { expanded: isExpanded } : undefined}
-      accessibilityHint={canExpand ? (isExpanded ? '轻点收起摘录' : '轻点展开完整摘录') : undefined}
-      accessibilityLabel={canExpand ? item.quoteText : undefined}
+      accessibilityHint={canExpand ? '轻点展开或收起，长按复制、分享或管理摘录' : '长按复制、分享或管理摘录'}
+      accessibilityLabel={item.quoteText}
     >
       <Animated.View style={[styles.quoteClip, animatedStyle]}>
         <Text
@@ -200,7 +255,7 @@ function ExcerptFeedItemRow({
   isExpanded: boolean;
   /**
    * 基于真实 Text layout 的截断判定：
-   * true = 实际超过 2 行，可点击展开；false = 短摘录，完全不可交互；
+   * true = 实际超过 2 行，可点击展开；false = 短摘录，只支持长按管理；
    * undefined = 尚未完成不可见测量。
    */
   isTruncated: boolean | undefined;
@@ -235,10 +290,8 @@ function ExcerptFeedItemRow({
 
   return (
     <View
-      // 可展开时容器不再整体 accessible：让 quote 的 button 语义生效，
-      // 避免 VoiceOver 把内外合并成一个元素吞掉展开状态。
-      accessible={!isTruncated}
-      accessibilityLabel={isTruncated ? undefined : accessibilityLabelFor(item)}
+      // Quote and source each expose their own actions to VoiceOver.
+      accessible={false}
       style={[
         styles.item,
         isFirst && styles.itemFirst,
@@ -282,9 +335,10 @@ function ExcerptFeedItemRow({
             ? bookModeSourceAccessibilityLabel(item)
             : accessibilityLabelFor(item)
         }
-        accessibilityHint="轻点返回原文位置"
+        accessibilityHint="轻点返回原文位置，长按管理摘录"
         hitSlop={{ top: 8, bottom: 8 }}
         onPress={() => onSourcePress(item)}
+        onLongPress={(event) => { void handleExcerptLongPress(item, event); }}
         style={({ pressed }) => [styles.sourcePressable, pressed && styles.sourcePressed]}
       >
         <Text
@@ -369,14 +423,17 @@ export default function ExcerptsScreen() {
     setExpandedItemId((prev) => (prev === itemId ? null : itemId));
   }, []);
 
+  const [loadError, setLoadError] = useState(false);
   const loadFeed = useCallback(async () => {
     try {
       const items = await refreshExcerptFeed();
+      setLoadError(false);
       const ids = new Set(items.map((i) => i.id));
       // refresh 后展开项若已不存在（删书/删 annotation），清空悬空 id
       setExpandedItemId((prev) => (prev !== null && ids.has(prev) ? prev : null));
       // refreshExcerptFeed 将真正变化的快照通知页面；相同数据不重绘。
     } catch (error) {
+      setLoadError(true);
       if (__DEV__) console.error('[EXCERPT_FEED_LOAD_FAILED]', error);
       // 加载失败时保持旧数据，不闪成 empty state
     }
@@ -411,7 +468,13 @@ export default function ExcerptsScreen() {
   const sourceNavSeqRef = useRef(0);
   const handleSourcePress = useCallback(async (item: ExcerptFeedItem) => {
     const seq = ++sourceNavSeqRef.current;
-    const book = await bookRepository.getBookById(item.bookId).catch(() => null);
+    let book;
+    try {
+      book = await bookRepository.getBookById(item.bookId);
+    } catch (error) {
+      if (seq === sourceNavSeqRef.current) reportOperationError(error, '打开摘录原文失败');
+      return;
+    }
     if (seq !== sourceNavSeqRef.current) {
       if (__DEV__) console.log('[EXCERPT_NAVIGATE]', JSON.stringify({ bookId: item.bookId, itemKind: item.kind, aborted: 'superseded' }));
       return;
@@ -421,6 +484,10 @@ export default function ExcerptsScreen() {
       // 书已不存在：提示后刷新 Feed 让 stale item 消失，不进入空 Reader。
       Alert.alert(uiText.reader.cannotOpen, '这本书可能已被删除。');
       void loadFeed();
+      return;
+    }
+    if (book.archivedAt) {
+      Alert.alert(uiText.reader.cannotOpen, '本地文件已移除，请重新导入同一 EPUB。摘录和阅读进度仍然保留。');
       return;
     }
     // 畸形 CFI 不在 Excerpts 层拦截：照常发布请求并进 Reader，
@@ -494,6 +561,22 @@ export default function ExcerptsScreen() {
                 onTextChange={(event) => setQuery(event.nativeEvent.text)}
               />
             </Pressable>
+            {/* 右上角分享：液态玻璃圆钮，黑图标。 */}
+            {isGlassEffectAPIAvailable() ? (
+              <GlassView glassEffectStyle="regular" isInteractive style={styles.shareGlass}>
+                <Pressable accessibilityRole="button" accessibilityLabel="导出当前显示的摘录"
+                  onPress={() => { void exportExcerpts(visibleSections.flatMap((section) => section.data)); }}
+                  style={styles.shareGlassContent}>
+                  <SymbolView name="square.and.arrow.up" size={24} tintColor="#000000" weight="bold" />
+                </Pressable>
+              </GlassView>
+            ) : (
+              <Pressable accessibilityRole="button" accessibilityLabel="导出当前显示的摘录"
+                onPress={() => { void exportExcerpts(visibleSections.flatMap((section) => section.data)); }}
+                style={styles.shareGlassFallback}>
+                <SymbolView name="square.and.arrow.up" size={24} tintColor="#000000" weight="bold" />
+              </Pressable>
+            )}
           </View>
         </View>
         <AnimatedSectionList<ExcerptFeedItem, ExcerptFeedSection>
@@ -505,6 +588,11 @@ export default function ExcerptsScreen() {
           keyboardShouldPersistTaps="handled"
           onScroll={onScroll}
           scrollEventThrottle={16}
+          ListHeaderComponent={loadError ? (
+            <Pressable accessibilityRole="button" onPress={() => { void loadFeed(); }} style={{ paddingVertical: 16 }}>
+              <Text style={{ color: tokens.colors.secondaryLabel }}>摘录加载失败，轻点重试。原有内容仍然保留。</Text>
+            </Pressable>
+          ) : null}
         contentContainerStyle={[
           styles.content,
           // 浮动头部预留：insets.top + 2（头部 paddingTop）+ 40（headerRow 高）
@@ -627,6 +715,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     marginBottom: 12,
+  },
+  /** 右上角分享按钮：40pt 液态玻璃圆钮（与标题行高一致，顶对齐）。 */
+  shareGlass: { borderRadius: 20, height: 40, width: 40 },
+  shareGlassContent: { alignItems: 'center', flex: 1, justifyContent: 'center' },
+  shareGlassFallback: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(250,250,252,0.86)',
+    borderColor: 'rgba(60,60,67,0.15)',
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
   },
   headerTitle: {
     marginBottom: 0,

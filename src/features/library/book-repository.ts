@@ -14,6 +14,8 @@ type BookRow = {
   language: string | null;
   publisher: string | null;
   added_at: string;
+  archived_at: string | null;
+  tags_json: string | null;
   last_opened_at: string | null;
   reading_status: ReadingStatus;
   progress_percentage: number | null;
@@ -47,6 +49,8 @@ function mapRow(row: BookRow): Book {
     language: row.language,
     publisher: row.publisher,
     addedAt: row.added_at,
+    archivedAt: row.archived_at,
+    tags: row.tags_json ? JSON.parse(row.tags_json) as string[] : [],
     lastOpenedAt: row.last_opened_at,
     readingStatus: row.reading_status,
     readingProgress: row.progress_percentage,
@@ -62,21 +66,24 @@ function mapRow(row: BookRow): Book {
 }
 
 export const bookRepository = {
-  async getAllBooks() {
+  async getAllBooks(includeArchived = false) {
     const database = await getLibraryDatabase();
     const rows = await database.getAllAsync<BookRow>(`
-      SELECT books.*, reading_progress.percentage AS progress_percentage
+      SELECT books.*, reading_progress.percentage AS progress_percentage,
+        (SELECT json_group_array(tag) FROM book_tags WHERE book_id = books.id) AS tags_json
       FROM books
       LEFT JOIN reading_progress ON reading_progress.book_id = books.id
+      WHERE (? = 1 OR books.archived_at IS NULL)
       ORDER BY books.manual_order ASC, books.added_at ASC;
-    `);
+    `, includeArchived ? 1 : 0);
     return rows.map(mapRow);
   },
 
   async getBookById(bookId: string) {
     const database = await getLibraryDatabase();
     const row = await database.getFirstAsync<BookRow>(`
-      SELECT books.*, reading_progress.percentage AS progress_percentage
+      SELECT books.*, reading_progress.percentage AS progress_percentage,
+        (SELECT json_group_array(tag) FROM book_tags WHERE book_id = books.id) AS tags_json
       FROM books
       LEFT JOIN reading_progress ON reading_progress.book_id = books.id
       WHERE books.id = ?;
@@ -93,16 +100,19 @@ export const bookRepository = {
     const normalizedTitle = title.trim();
     const row = identifier
       ? await database.getFirstAsync<BookRow>(`
-        SELECT books.*, reading_progress.percentage AS progress_percentage
+        SELECT books.*, reading_progress.percentage AS progress_percentage,
+        (SELECT json_group_array(tag) FROM book_tags WHERE book_id = books.id) AS tags_json
         FROM books LEFT JOIN reading_progress ON reading_progress.book_id = books.id
         WHERE books.file_hash = ?
-          OR (books.identifier = ? AND books.title COLLATE NOCASE = ?)
+          OR (books.archived_at IS NULL AND books.identifier = ? AND books.title COLLATE NOCASE = ?)
+        ORDER BY (books.file_hash = ?) DESC, (books.archived_at IS NULL) DESC
         LIMIT 1;
-      `, fileHash, identifier, normalizedTitle)
+      `, fileHash, identifier, normalizedTitle, fileHash)
       : await database.getFirstAsync<BookRow>(`
-        SELECT books.*, reading_progress.percentage AS progress_percentage
+        SELECT books.*, reading_progress.percentage AS progress_percentage,
+        (SELECT json_group_array(tag) FROM book_tags WHERE book_id = books.id) AS tags_json
         FROM books LEFT JOIN reading_progress ON reading_progress.book_id = books.id
-        WHERE books.file_hash = ? LIMIT 1;
+        WHERE books.file_hash = ? ORDER BY (books.archived_at IS NULL) DESC LIMIT 1;
       `, fileHash);
     return row ? mapRow(row) : null;
   },
@@ -171,8 +181,42 @@ export const bookRepository = {
     });
   },
 
-  async deleteBook(bookId: string) {
+  async restoreBookFile(bookId: string, fileUri: string, coverUri: string | null) {
     const database = await getLibraryDatabase();
-    await database.runAsync('DELETE FROM books WHERE id = ?;', bookId);
+    await database.runAsync(
+      'UPDATE books SET file_uri = ?, cover_uri = ?, original_cover_uri = ?, archived_at = NULL WHERE id = ?;',
+      fileUri, coverUri, coverUri, bookId,
+    );
+  },
+
+  async updateTags(bookId: string, tags: string[]) {
+    const normalized = [...new Set(tags.map((tag) => tag.trim().normalize('NFC')).filter(Boolean))];
+    if (normalized.length > 20 || normalized.some((tag) => tag.length > 40)) throw new Error('标签过多或过长。');
+    const database = await getLibraryDatabase();
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.runAsync('DELETE FROM book_tags WHERE book_id = ?;', bookId);
+      for (const tag of normalized) {
+        await transaction.runAsync('INSERT INTO book_tags (book_id, tag) VALUES (?, ?);', bookId, tag);
+      }
+    });
+  },
+
+  async removeBooks(books: Book[], permanently: boolean) {
+    const database = await getLibraryDatabase();
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      for (const book of books) {
+        for (const uri of new Set([book.fileUri, book.coverUri, book.originalCoverUri])) {
+          if (uri) await transaction.runAsync('INSERT OR IGNORE INTO library_file_cleanup (uri) VALUES (?);', uri);
+        }
+        if (permanently) {
+          await transaction.runAsync('DELETE FROM books WHERE id = ?;', book.id);
+        } else {
+          await transaction.runAsync(
+            'UPDATE books SET archived_at = ?, cover_uri = NULL, original_cover_uri = NULL WHERE id = ?;',
+            new Date().toISOString(), book.id,
+          );
+        }
+      }
+    });
   },
 };

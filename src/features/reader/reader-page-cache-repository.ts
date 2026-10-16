@@ -72,5 +72,11 @@ export const readerPageCacheRepository = {
       JSON.stringify(cache.sectionPages),
       cache.updatedAt,
     );
+    await database.runAsync(
+      `DELETE FROM reader_page_cache WHERE book_id = ? AND layout_signature NOT IN (
+        SELECT layout_signature FROM reader_page_cache WHERE book_id = ?
+        ORDER BY (layout_signature = ?) DESC, updated_at DESC LIMIT 3
+      );`, cache.bookId, cache.bookId, cache.layoutSignature,
+    );
   },
 };

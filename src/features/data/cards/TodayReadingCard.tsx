@@ -143,6 +143,7 @@ export function TodayReadingCard({
   onCardPress,
 }: TodayReadingCardProps) {
   const theme = useDataTheme();
+  const rings = theme.pageBackground === '#000000' ? RINGS.map((ring, index) => ({ ...ring, color: [theme.primaryText, theme.chartSecondary, theme.chartLight][index] })) : RINGS;
 
   const durationText = activeSeconds === null ? '—' : formatDuration(activeSeconds);
   const charsText =
@@ -175,7 +176,7 @@ export function TodayReadingCard({
               onPress={onRingPress}
             >
               <Svg width={RING_SIZE} height={RING_SIZE}>
-                {RINGS.map((ring, index) => (
+                {rings.map((ring, index) => (
                   <AnimatedRing
                     key={ring.color}
                     size={RING_SIZE}
@@ -192,11 +193,11 @@ export function TodayReadingCard({
 
           <View style={styles.textCol}>
             <View style={styles.metricRow} accessible={false}>
-              <Text style={[styles.durationLabel, { color: RINGS[0].color }]}>
+              <Text style={[styles.durationLabel, { color: rings[0].color }]}>
                 {uiText.data.todayMetricDuration}
               </Text>
               <Text
-                style={[styles.durationValue, { color: RINGS[0].color }]}
+                style={[styles.durationValue, { color: rings[0].color }]}
                 numberOfLines={1}
                 adjustsFontSizeToFit
                 minimumFontScale={0.6}
@@ -210,18 +211,18 @@ export function TodayReadingCard({
              * 让它们的视觉中心对齐。
              */}
             <View style={styles.metricRow} accessible={false}>
-              <Text style={[styles.charsName, { color: RINGS[1].color }]}>
+              <Text style={[styles.charsName, { color: rings[1].color }]}>
                 {uiText.data.todayMetricChars}
               </Text>
-              <Text style={[styles.charsValue, { color: RINGS[1].color }]}>
+              <Text style={[styles.charsValue, { color: rings[1].color }]}>
                 {charsText}
               </Text>
             </View>
             <View style={styles.metricRow} accessible={false}>
-              <Text style={[styles.excerptName, { color: RINGS[2].color }]}>
+              <Text style={[styles.excerptName, { color: rings[2].color }]}>
                 {uiText.data.todayMetricExcerpts}
               </Text>
-              <Text style={[styles.excerptValue, { color: RINGS[2].color }]}>
+              <Text style={[styles.excerptValue, { color: rings[2].color }]}>
                 {excerptText}
               </Text>
             </View>

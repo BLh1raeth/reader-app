@@ -9,7 +9,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.3wxss.4hd2",
       "supportsTablet": false,
