@@ -481,7 +481,6 @@ export class FoliateEpubEngineAdapter {
   }
 
   applySettings(settings: ReaderSettings) {
-    this.dismissHighlightMenu();
     const normalized = normalizeReaderSettings(settings);
     const sessionAnchorCfi = this.settingsSessionAnchorCfi;
     this.settingsApplyQueue = this.settingsApplyQueue
@@ -2351,6 +2350,11 @@ export class FoliateEpubEngineAdapter {
   private async applySettingsInternal(nextSettings: ReaderSettings, sessionAnchorCfi: string | null) {
     const previousSettings = this.readerSettings;
     if (readerSettingsEqual(previousSettings, nextSettings)) return;
+    // Expo DOM re-serializes props on native re-renders, including the one
+    // that opens the highlight menu. Equal settings arrive as a new object;
+    // dismissing before this value check cancels that very menu request.
+    // Compare inside the queue so duplicate queued updates are also no-ops.
+    this.dismissHighlightMenu();
     const selectionToVerify = this.activeSelection?.payload ?? null;
     const layoutChanged = !readerLayoutSettingsEqual(previousSettings, nextSettings);
     const appearanceChanged = previousSettings.appearance !== nextSettings.appearance;

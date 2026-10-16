@@ -146,6 +146,19 @@ test('real Foliate reader blocks book scripts and remote assets while preserving
         const highlightTapLeavesPage = engine.getLocation().cfi === beforeTapCfi && chromeTaps === 0;
         const noDeleteBubble = !frame.querySelector('[data-reader-highlight-bubble]');
         const paintKeptUntilDelete = engine.highlightRanges.get(frame)?.some((item) => item.rangeCfi === rangeCfi);
+        // Expo DOM serializes all props again after the native highlight
+        // request changes. Its readerSettings object has a new identity even
+        // though its values are unchanged. Reproduce that round trip while
+        // UIKit would be waiting for the delayed menu presentation.
+        await Promise.all(Array.from({ length: 3 }, () =>
+          engine.applySettings(JSON.parse(JSON.stringify(DEFAULT_READER_SETTINGS)))));
+        await new Promise((resolve) => setTimeout(resolve, 160));
+        const highlightSurvivesPropsRoundTrip = window.highlightTap === highlightTap;
+        // An actual settings change must still invalidate the old anchor.
+        await engine.applySettings({ ...DEFAULT_READER_SETTINGS, colorTemp: 0.25 });
+        const highlightDismissedOnSettingsChange = window.highlightTap === null;
+        await engine.applySettings({ ...DEFAULT_READER_SETTINGS });
+        tapHighlight();
         await engine.removeAnnotation(rangeCfi);
         const highlightRemoved = !engine.highlightRanges.get(frame)?.some((item) => item.rangeCfi === rangeCfi) && window.highlightTap === null;
         await engine.addAnnotation(rangeCfi, 0); tapHighlight();
@@ -178,7 +191,8 @@ test('real Foliate reader blocks book scripts and remote assets while preserving
         engine.destroy();
         return { safe, localStylesLoaded, localImageLoaded, footnote, fontAnchorVisible, fontApplied,
           highlightTap, expectedRect, highlightTextMatchesCfi, highlightTapLeavesPage, noDeleteBubble,
-          paintKeptUntilDelete, highlightRemoved, highlightDismissedOnTurn, unguardedLayoutFailed, cfi: opened.cfi, restoredCfi: restored.cfi };
+          paintKeptUntilDelete, highlightSurvivesPropsRoundTrip, highlightDismissedOnSettingsChange,
+          highlightRemoved, highlightDismissedOnTurn, unguardedLayoutFailed, cfi: opened.cfi, restoredCfi: restored.cfi };
       }, { entries, base64, sourceKind });
       assert.equal(result.safe, true, sourceKind);
       assert.equal(result.localImageLoaded, true, sourceKind);
@@ -195,6 +209,8 @@ test('real Foliate reader blocks book scripts and remote assets while preserving
       assert.equal(result.highlightTapLeavesPage, true, 'highlight taps do not turn pages or toggle chrome');
       assert.equal(result.noDeleteBubble, true, 'the abandoned DOM delete bubble is absent');
       assert.equal(result.paintKeptUntilDelete, true, 'opening a menu does not delete its highlight');
+      assert.equal(result.highlightSurvivesPropsRoundTrip, true, 'unchanged settings delivered by the DOM bridge must not cancel the native menu request');
+      assert.equal(result.highlightDismissedOnSettingsChange, true, 'a real settings change still invalidates the native menu request');
       assert.equal(result.highlightRemoved, true, 'explicit removal clears the paint and menu request');
       assert.equal(result.highlightDismissedOnTurn, true, 'page navigation invalidates the menu anchor');
       assert.equal(result.unguardedLayoutFailed, true, 'the missing-body fixture reproduces Foliate\'s null-style error while the guarded render succeeds');
